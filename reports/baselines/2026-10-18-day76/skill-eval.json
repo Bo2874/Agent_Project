@@ -1,0 +1,13 @@
+{
+  "gate": "skill-eval",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-m",
+    "scripts.evaluate_skills"
+  ],
+  "started_at_utc": "2026-10-18T07:35:55.271542+00:00",
+  "duration_seconds": 8.376,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "skill-eval.log"
+}

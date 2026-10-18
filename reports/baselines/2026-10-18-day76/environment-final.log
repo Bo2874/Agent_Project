@@ -1,0 +1,31 @@
+{
+  "snapshot": "environment-snapshot.json",
+  "source_fingerprint_sha256": "98ff5404a4371a7e92eb8fb60418a1c0f300c623f8f4042260a09546ad9c2245",
+  "direct_requirements_satisfied": true,
+  "dependency_count": 26,
+  "git_repository": false,
+  "lock_files_present": [],
+  "configuration": {
+    "app_env": "development",
+    "model": "deepseek-flash",
+    "llm_key_configured": true,
+    "langsmith_enabled": false,
+    "mcp_demo_enabled": true,
+    "python_sandbox_enabled": true,
+    "auth_cookie_secure": false
+  },
+  "health": {
+    "/health/live": {
+      "status_code": 200,
+      "body": {
+        "status": "ok"
+      }
+    },
+    "/health/ready": {
+      "status_code": 200,
+      "body": {
+        "status": "ready"
+      }
+    }
+  }
+}

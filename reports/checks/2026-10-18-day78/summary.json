@@ -1,0 +1,36 @@
+{
+  "day": 78,
+  "date": "2026-10-18",
+  "status": "pass",
+  "clean_project": "agent-day78-20261018-clean",
+  "cold_build": true,
+  "fresh_volumes": true,
+  "migration_revisions": 22,
+  "regression": {
+    "offline": 420,
+    "mcp": 1,
+    "failed": 0,
+    "skipped": 0
+  },
+  "pgvector": "0.8.7",
+  "postgres": "17.11 (Debian 17.11-1.pgdg12+2)",
+  "python": "3.11.17",
+  "image_config_ids": {
+    "app": "sha256:9a1385470b1649641fc175e4006bc8f384a4487784098fe49bb463f44e3bbbb6",
+    "migrate": "sha256:dd7ee4fde3f924d4ccb700ab45b5a1e1eb3f4b9ee23e0731a1bf45d16e1c03a5",
+    "postgres": "sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d",
+    "worker": "sha256:f54e97107414356d941bb23b5eb0ae7b75c3e992529cf70bb0e79fc9e38b0df9"
+  },
+  "persistence_job_id": "14c085f3-e5f3-40b3-84a3-24c78f379a67",
+  "migration_failure_gates_runtime": true,
+  "llm_provider_calls": 0,
+  "test_stacks_stopped": true,
+  "data_volumes_retained": true,
+  "host_env_database_unchanged": true,
+  "limitations": [
+    "Existing Docker Desktop host, not an OS reinstall",
+    "Dependency lock deferred to Day 79",
+    "Live LLM eval not run",
+    "Sandbox runner deferred to M6"
+  ]
+}

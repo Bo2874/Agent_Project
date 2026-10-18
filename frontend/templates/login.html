@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Đăng nhập · Personal Agent{% endblock %}
+{% block body %}
+<main class="auth-layout">
+    <section class="brand-panel">
+        <a class="brand" href="/">Personal<span>Agent</span></a>
+        <div>
+            <p class="eyebrow">Không gian AI của riêng bạn</p>
+            <h1>Tiếp tục cuộc trò chuyện của bạn.</h1>
+            <p class="lead">Một nơi để làm việc cùng Agent, quản lý tri thức và giữ trải nghiệm phù hợp với bạn.</p>
+        </div>
+        <p class="footnote">Project học tập · Phiên bản 0.1</p>
+    </section>
+
+    <section class="form-panel">
+        <div class="form-card">
+            <p class="eyebrow">Chào mừng trở lại</p>
+            <h2>Đăng nhập</h2>
+            <p class="muted">Nhập thông tin tài khoản để tiếp tục.</p>
+
+            <form class="auth-form" data-auth-form data-endpoint="/api/auth/login" data-next="/dashboard" novalidate>
+                <label>Email
+                    <input type="email" name="email" autocomplete="email" placeholder="ban@example.com" required>
+                </label>
+                <label>Mật khẩu
+                    <input type="password" name="password" autocomplete="current-password" placeholder="Ít nhất 8 ký tự" required>
+                </label>
+                <p class="form-error" data-form-error aria-live="polite"></p>
+                <button type="submit">Đăng nhập <span>→</span></button>
+            </form>
+
+            <p class="switch-link">Chưa có tài khoản? <a href="/register">Đăng ký ngay</a></p>
+        </div>
+    </section>
+</main>
+{% endblock %}

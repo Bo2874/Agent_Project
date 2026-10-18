@@ -1,0 +1,13 @@
+{
+  "gate": "server-stopped",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-c",
+    "import socket; s=socket.socket(); s.settimeout(2); stopped=s.connect_ex(('127.0.0.1',8000)) != 0; s.close(); print('baseline_server_stopped:',stopped); raise SystemExit(0 if stopped else 1)"
+  ],
+  "started_at_utc": "2026-10-18T07:48:16.607610+00:00",
+  "duration_seconds": 2.267,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "server-stopped.log"
+}

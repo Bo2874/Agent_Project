@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "name": "multi_step_calculation",
+    "version": "1.0.0",
+    "description": "Giải phép tính số học gồm nhiều bước bằng các phép cộng, trừ, nhân và chia có thể kiểm chứng.",
+    "tags": ["calculation", "calculate", "math", "arithmetic", "add", "subtract", "multiply", "divide", "tinh_toan", "phep_tinh", "nhieu_buoc", "cong_tru_nhan_chia"]
+  },
+  "required_tools": ["demo__calculate"]
+}

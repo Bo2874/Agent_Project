@@ -1,0 +1,13 @@
+{
+  "gate": "postgres-checkpoint",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-m",
+    "scripts.check_langgraph_checkpoint"
+  ],
+  "started_at_utc": "2026-10-18T07:43:36.131881+00:00",
+  "duration_seconds": 10.609,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "postgres-checkpoint.log"
+}

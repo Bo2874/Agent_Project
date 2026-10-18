@@ -1,0 +1,262 @@
+[
+    {
+        "name":  "/agent-day78-20261018-app-1",
+        "image_id":  "sha256:9a1385470b1649641fc175e4006bc8f384a4487784098fe49bb463f44e3bbbb6",
+        "state":  {
+                      "Status":  "running",
+                      "Running":  true,
+                      "Paused":  false,
+                      "Restarting":  false,
+                      "OOMKilled":  false,
+                      "Dead":  false,
+                      "Pid":  7666,
+                      "ExitCode":  0,
+                      "Error":  "",
+                      "StartedAt":  "2026-10-18T08:46:44.477151638Z",
+                      "FinishedAt":  "0001-01-01T00:00:00Z",
+                      "Health":  {
+                                     "Status":  "healthy",
+                                     "FailingStreak":  0,
+                                     "Log":  [
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:32.23445784Z",
+                                                     "End":  "2026-10-18T08:48:32.999214073Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:38.001254238Z",
+                                                     "End":  "2026-10-18T08:48:38.446466199Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:43.447561164Z",
+                                                     "End":  "2026-10-18T08:48:43.900381124Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:48.901658847Z",
+                                                     "End":  "2026-10-18T08:48:49.310385628Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:54.311058889Z",
+                                                     "End":  "2026-10-18T08:48:54.787386925Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 }
+                                             ]
+                                 }
+                  },
+        "user":  "10001:10001",
+        "read_only":  true,
+        "cap_drop":  [
+                         "ALL"
+                     ],
+        "security_opt":  [
+                             "no-new-privileges:true"
+                         ],
+        "mounts":  [
+                       {
+                           "Type":  "volume",
+                           "Name":  "agent-day78-20261018_document_data",
+                           "Source":  "/var/lib/docker/volumes/agent-day78-20261018_document_data/_data",
+                           "Destination":  "/app/data/documents",
+                           "Driver":  "local",
+                           "Mode":  "rw",
+                           "RW":  true,
+                           "Propagation":  ""
+                       }
+                   ],
+        "ports":  {
+                      "8000/tcp":  [
+                                       {
+                                           "HostIp":  "127.0.0.1",
+                                           "HostPort":  "8000"
+                                       }
+                                   ]
+                  }
+    },
+    {
+        "name":  "/agent-day78-20261018-migrate-1",
+        "image_id":  "sha256:dd7ee4fde3f924d4ccb700ab45b5a1e1eb3f4b9ee23e0731a1bf45d16e1c03a5",
+        "state":  {
+                      "Status":  "exited",
+                      "Running":  false,
+                      "Paused":  false,
+                      "Restarting":  false,
+                      "OOMKilled":  false,
+                      "Dead":  false,
+                      "Pid":  0,
+                      "ExitCode":  0,
+                      "Error":  "",
+                      "StartedAt":  "2026-10-18T08:46:41.309567782Z",
+                      "FinishedAt":  "2026-10-18T08:46:44.046264737Z"
+                  },
+        "user":  "10001:10001",
+        "read_only":  true,
+        "cap_drop":  [
+                         "ALL"
+                     ],
+        "security_opt":  [
+                             "no-new-privileges:true"
+                         ],
+        "mounts":  [
+
+                   ],
+        "ports":  {
+
+                  }
+    },
+    {
+        "name":  "/agent-day78-20261018-postgres-1",
+        "image_id":  "sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d",
+        "state":  {
+                      "Status":  "running",
+                      "Running":  true,
+                      "Paused":  false,
+                      "Restarting":  false,
+                      "OOMKilled":  false,
+                      "Dead":  false,
+                      "Pid":  7438,
+                      "ExitCode":  0,
+                      "Error":  "",
+                      "StartedAt":  "2026-10-18T08:46:35.462391071Z",
+                      "FinishedAt":  "0001-01-01T00:00:00Z",
+                      "Health":  {
+                                     "Status":  "healthy",
+                                     "FailingStreak":  0,
+                                     "Log":  [
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:36.529565466Z",
+                                                     "End":  "2026-10-18T08:48:36.648220155Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  "127.0.0.1:5432 - accepting connections\n"
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:41.64925862Z",
+                                                     "End":  "2026-10-18T08:48:41.776885009Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  "127.0.0.1:5432 - accepting connections\n"
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:46.777844115Z",
+                                                     "End":  "2026-10-18T08:48:46.912283904Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  "127.0.0.1:5432 - accepting connections\n"
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:51.913871635Z",
+                                                     "End":  "2026-10-18T08:48:52.042667507Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  "127.0.0.1:5432 - accepting connections\n"
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:58.0132276Z",
+                                                     "End":  "2026-10-18T08:48:58.157397196Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  "127.0.0.1:5432 - accepting connections\n"
+                                                 }
+                                             ]
+                                 }
+                  },
+        "user":  "",
+        "read_only":  false,
+        "cap_drop":  null,
+        "security_opt":  null,
+        "mounts":  [
+                       {
+                           "Type":  "volume",
+                           "Name":  "agent-day78-20261018_postgres_data",
+                           "Source":  "/var/lib/docker/volumes/agent-day78-20261018_postgres_data/_data",
+                           "Destination":  "/var/lib/postgresql/data",
+                           "Driver":  "local",
+                           "Mode":  "rw",
+                           "RW":  true,
+                           "Propagation":  ""
+                       }
+                   ],
+        "ports":  {
+
+                  }
+    },
+    {
+        "name":  "/agent-day78-20261018-worker-1",
+        "image_id":  "sha256:f54e97107414356d941bb23b5eb0ae7b75c3e992529cf70bb0e79fc9e38b0df9",
+        "state":  {
+                      "Status":  "running",
+                      "Running":  true,
+                      "Paused":  false,
+                      "Restarting":  false,
+                      "OOMKilled":  false,
+                      "Dead":  false,
+                      "Pid":  7655,
+                      "ExitCode":  0,
+                      "Error":  "",
+                      "StartedAt":  "2026-10-18T08:46:44.456600803Z",
+                      "FinishedAt":  "0001-01-01T00:00:00Z",
+                      "Health":  {
+                                     "Status":  "healthy",
+                                     "FailingStreak":  0,
+                                     "Log":  [
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:31.334799418Z",
+                                                     "End":  "2026-10-18T08:48:31.861117872Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:36.862628637Z",
+                                                     "End":  "2026-10-18T08:48:37.350065994Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:42.350863359Z",
+                                                     "End":  "2026-10-18T08:48:42.792565921Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:47.79358256Z",
+                                                     "End":  "2026-10-18T08:48:48.199167008Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 },
+                                                 {
+                                                     "Start":  "2026-10-18T08:48:53.200366554Z",
+                                                     "End":  "2026-10-18T08:48:53.607098967Z",
+                                                     "ExitCode":  0,
+                                                     "Output":  ""
+                                                 }
+                                             ]
+                                 }
+                  },
+        "user":  "10001:10001",
+        "read_only":  true,
+        "cap_drop":  [
+                         "ALL"
+                     ],
+        "security_opt":  [
+                             "no-new-privileges:true"
+                         ],
+        "mounts":  [
+                       {
+                           "Type":  "volume",
+                           "Name":  "agent-day78-20261018_document_data",
+                           "Source":  "/var/lib/docker/volumes/agent-day78-20261018_document_data/_data",
+                           "Destination":  "/app/data/documents",
+                           "Driver":  "local",
+                           "Mode":  "rw",
+                           "RW":  true,
+                           "Propagation":  ""
+                       }
+                   ],
+        "ports":  {
+
+                  }
+    }
+]

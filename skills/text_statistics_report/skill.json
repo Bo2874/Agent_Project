@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "name": "text_statistics_report",
+    "version": "1.0.0",
+    "description": "Đếm ký tự, từ, dòng và lập báo cáo so sánh độ dài cho một hoặc nhiều đoạn văn bản.",
+    "tags": ["text", "statistics", "count", "thong_ke", "van_ban", "dem_tu", "ky_tu", "so_dong", "do_dai"]
+  },
+  "required_tools": ["demo__count_text", "demo__calculate"]
+}

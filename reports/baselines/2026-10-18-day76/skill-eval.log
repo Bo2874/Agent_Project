@@ -1,0 +1,14 @@
+{
+  "selection": {
+    "total": 13,
+    "passed": 13,
+    "pass_rate": 1.0,
+    "failures": []
+  },
+  "adherence": {
+    "total": 2,
+    "passed": 2,
+    "pass_rate": 1.0,
+    "failures": []
+  }
+}

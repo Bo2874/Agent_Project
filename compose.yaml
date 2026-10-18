@@ -1,0 +1,112 @@
+name: personal-agent-dev
+
+x-runtime-environment: &runtime-environment
+  APP_ENV: development
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_NAME: "${DEV_DB_NAME:-personal_agent_dev}"
+  DB_USER: "${DEV_DB_USER:-agent}"
+  DB_PASSWORD: "${DEV_DB_PASSWORD:-dev-only-postgres-password}"
+  AUTH_SECRET_KEY: "${DEV_AUTH_SECRET_KEY:-dev-only-auth-secret-change-before-sharing}"
+  AUTH_COOKIE_SECURE: "false"
+  DEEPSEEK_API_KEY: "${DEV_DEEPSEEK_API_KEY:-}"
+  DEEPSEEK_MODEL: "${DEV_DEEPSEEK_MODEL:-deepseek-flash}"
+  MEMORY_EXTRACTION_ENABLED: "${DEV_MEMORY_EXTRACTION_ENABLED:-false}"
+  MCP_DEMO_ENABLED: "true"
+  PYTHON_SANDBOX_ENABLED: "false"
+  LANGSMITH_TRACING_ENABLED: "false"
+  LANGGRAPH_CHECKPOINT_AUTO_SETUP: "false"
+  V2_ENABLED: "false"
+  V2_PLUGINS_ENABLED: "false"
+  V2_ROUTING_ENABLED: "false"
+  V2_RAG_ENABLED: "false"
+  V2_PLANNING_ENABLED: "false"
+  V2_PARALLEL_ENABLED: "false"
+  V2_REDIS_CACHE_ENABLED: "false"
+  V2_EVENTS_ENABLED: "false"
+  BACKGROUND_QUEUE_NAME: default
+  BACKGROUND_WORKER_HEARTBEAT_PATH: /tmp/agent-worker/heartbeat.json
+  BACKGROUND_WORKER_HEARTBEAT_MAX_AGE_SECONDS: "15"
+
+x-runtime: &runtime
+  init: true
+  environment: *runtime-environment
+  read_only: true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  stop_grace_period: 45s
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17-bookworm
+    environment:
+      POSTGRES_DB: "${DEV_DB_NAME:-personal_agent_dev}"
+      POSTGRES_USER: "${DEV_DB_USER:-agent}"
+      POSTGRES_PASSWORD: "${DEV_DB_PASSWORD:-dev-only-postgres-password}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 12
+    restart: unless-stopped
+    shm_size: 128mb
+
+  migrate:
+    <<: *runtime
+    image: "${DEV_IMAGE_PREFIX:-personal-agent}-migrate:${DEV_IMAGE_TAG:-dev}"
+    build:
+      context: .
+      dockerfile: infra/docker/app/Dockerfile
+      target: app
+    command: [python, -m, scripts.migrate_database]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  app:
+    <<: *runtime
+    image: "${DEV_IMAGE_PREFIX:-personal-agent}-app:${DEV_IMAGE_TAG:-dev}"
+    build:
+      context: .
+      dockerfile: infra/docker/app/Dockerfile
+      target: app
+    ports:
+      - "127.0.0.1:${DEV_HTTP_PORT:-8000}:8000"
+    volumes:
+      - document_data:/app/data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    <<: *runtime
+    image: "${DEV_IMAGE_PREFIX:-personal-agent}-worker:${DEV_IMAGE_TAG:-dev}"
+    build:
+      context: .
+      dockerfile: infra/docker/app/Dockerfile
+      target: worker
+    volumes:
+      - document_data:/app/data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  document_data:

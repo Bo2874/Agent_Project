@@ -1,0 +1,13 @@
+{
+  "gate": "health",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-c",
+    "import httpx; print([(p,httpx.get('http://127.0.0.1:8000'+p,timeout=5).status_code) for p in ['/health/live','/health/ready']])"
+  ],
+  "started_at_utc": "2026-10-18T07:42:10.783736+00:00",
+  "duration_seconds": 1.536,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "health.log"
+}

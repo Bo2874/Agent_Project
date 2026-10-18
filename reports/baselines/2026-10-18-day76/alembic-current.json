@@ -1,0 +1,12 @@
+{
+  "gate": "alembic-current",
+  "command": [
+    ".venv/Scripts/alembic.exe",
+    "current"
+  ],
+  "started_at_utc": "2026-10-18T07:35:55.876051+00:00",
+  "duration_seconds": 5.937,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "alembic-current.log"
+}

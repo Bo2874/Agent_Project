@@ -1,0 +1,16 @@
+{
+  "gate": "pytest-mcp-unsandboxed",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_mcp.py",
+    "--junitxml=reports/baselines/2026-10-18-day76/pytest-mcp-unsandboxed.xml"
+  ],
+  "started_at_utc": "2026-10-18T07:39:21.162267+00:00",
+  "duration_seconds": 10.543,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "pytest-mcp-unsandboxed.log"
+}

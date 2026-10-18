@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Vận hành · Personal Agent{% endblock %}
+{% block body %}
+<main class="shell admin-page" data-admin-dashboard>
+    <nav>
+        <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
+        <div class="nav-actions">
+            <a class="text-link" href="/chat">Chat</a>
+            <a class="text-link" href="/dashboard">Trang cá nhân</a>
+            <button class="ghost-button" data-logout>Đăng xuất</button>
+        </div>
+    </nav>
+
+    <header class="admin-hero">
+        <div>
+            <p class="eyebrow">Khu vực quản trị</p>
+            <h1>Agent operations</h1>
+            <p class="lead">Theo dõi mức sử dụng model, vòng lặp agent, tool và lỗi vận hành.</p>
+        </div>
+        <div class="admin-window-control" aria-label="Khoảng thời gian thống kê">
+            <button type="button" data-admin-days="1">24 giờ</button>
+            <button type="button" data-admin-days="7" class="is-active">7 ngày</button>
+            <button type="button" data-admin-days="30">30 ngày</button>
+            <button type="button" class="admin-refresh" data-admin-refresh aria-label="Tải lại">↻</button>
+        </div>
+    </header>
+
+    <p class="admin-status" data-admin-status>Đang tải dữ liệu vận hành…</p>
+
+    <section class="admin-alert-panel" data-admin-alert-panel hidden>
+        <div class="admin-panel-heading">
+            <div>
+                <p class="eyebrow">Operational alerts</p>
+                <h2>Cảnh báo cần chú ý</h2>
+            </div>
+            <span class="admin-panel-note"><span data-admin-alert-count>0</span> cảnh báo</span>
+        </div>
+        <div class="admin-alert-list" data-admin-alerts></div>
+    </section>
+
+    <section class="admin-metric-grid" aria-label="Chỉ số tổng quan">
+        <article class="admin-metric-card metric-token">
+            <span class="metric-index">01</span>
+            <p>Token</p>
+            <strong data-admin-metric="total_tokens">—</strong>
+            <small><span data-admin-metric="prompt_tokens">—</span> input · <span data-admin-metric="completion_tokens">—</span> output</small>
+        </article>
+        <article class="admin-metric-card">
+            <span class="metric-index">02</span>
+            <p>Model turns</p>
+            <strong data-admin-metric="model_turns">—</strong>
+            <small><span data-admin-metric="agent_runs">—</span> agent runs</small>
+        </article>
+        <article class="admin-metric-card">
+            <span class="metric-index">03</span>
+            <p>Tool calls</p>
+            <strong data-admin-metric="tool_calls">—</strong>
+            <small><span data-admin-metric="tool_completed">—</span> hoàn thành</small>
+        </article>
+        <article class="admin-metric-card">
+            <span class="metric-index">04</span>
+            <p>Model latency</p>
+            <strong data-admin-metric="model_latency">—</strong>
+            <small>trung bình mỗi model call</small>
+        </article>
+        <article class="admin-metric-card metric-error">
+            <span class="metric-index">05</span>
+            <p>Lỗi</p>
+            <strong data-admin-metric="errors">—</strong>
+            <small>agent + model + tool</small>
+        </article>
+        <article class="admin-metric-card metric-cost">
+            <span class="metric-index">06</span>
+            <p>Chi phí ước tính</p>
+            <strong data-admin-metric="estimated_cost">—</strong>
+            <small>theo bảng giá cấu hình</small>
+        </article>
+        <article class="admin-metric-card metric-cache">
+            <span class="metric-index">07</span>
+            <p>Cache hit</p>
+            <strong data-admin-metric="cache_hit_rate">—</strong>
+            <small>trên token có thông tin cache</small>
+        </article>
+    </section>
+
+    <section class="admin-detail-grid">
+        <article class="admin-panel admin-breakdown-panel">
+            <div class="admin-panel-heading">
+                <div>
+                    <p class="eyebrow">Token mix</p>
+                    <h2>Phân bổ context</h2>
+                </div>
+                <span class="admin-panel-note" data-admin-window-label>7 ngày</span>
+            </div>
+            <div class="token-breakdown">
+                <div><span>Prompt</span><strong data-admin-metric="prompt_tokens_detail">—</strong></div>
+                <div><span>Completion</span><strong data-admin-metric="completion_tokens_detail">—</strong></div>
+                <div><span>Cache hit</span><strong data-admin-metric="cached_tokens">—</strong></div>
+                <div><span>Cache miss</span><strong data-admin-metric="cache_miss_tokens">—</strong></div>
+            </div>
+            <div class="cost-breakdown">
+                <div><span>Cached input</span><strong data-admin-metric="cached_cost">—</strong></div>
+                <div><span>Miss input</span><strong data-admin-metric="cache_miss_cost">—</strong></div>
+                <div><span>Output</span><strong data-admin-metric="output_cost">—</strong></div>
+            </div>
+        </article>
+        <article class="admin-panel admin-breakdown-panel">
+            <div class="admin-panel-heading">
+                <div>
+                    <p class="eyebrow">Run health</p>
+                    <h2>Trạng thái agent</h2>
+                </div>
+                <span class="admin-panel-note"><span data-admin-metric="model_calls">—</span> model calls</span>
+            </div>
+            <div class="run-status-list" data-admin-run-statuses></div>
+            <div class="latency-distribution">
+                <div><span>Model P50</span><strong data-admin-metric="model_p50">—</strong></div>
+                <div><span>Model P95</span><strong data-admin-metric="model_p95">—</strong></div>
+                <div><span>Tool P50</span><strong data-admin-metric="tool_p50">—</strong></div>
+                <div><span>Tool P95</span><strong data-admin-metric="tool_p95">—</strong></div>
+            </div>
+        </article>
+    </section>
+
+    <section class="admin-panel admin-table-panel admin-runs-panel">
+        <div class="admin-panel-heading">
+            <div>
+                <p class="eyebrow">Run explorer</p>
+                <h2>Agent run gần đây</h2>
+            </div>
+            <span class="admin-panel-note">Chọn một run để xem từng step</span>
+        </div>
+        <div class="admin-table-wrap">
+            <table>
+                <thead><tr><th>Run ID</th><th>Trạng thái</th><th>Step</th><th>Thời gian chạy</th><th>Điều kiện dừng</th><th>Bắt đầu</th><th></th></tr></thead>
+                <tbody data-admin-agent-runs></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="admin-panel admin-eval-panel">
+        <div class="admin-panel-heading">
+            <div>
+                <p class="eyebrow">Evaluation quality</p>
+                <h2>Pass rate theo phiên bản</h2>
+            </div>
+            <span class="admin-panel-note">20 run gần nhất</span>
+        </div>
+        <p class="admin-eval-status" data-admin-eval-status>Đang tải eval runs…</p>
+        <div class="admin-eval-compare-controls">
+            <label>
+                Baseline
+                <select data-admin-eval-baseline aria-label="Eval baseline"></select>
+            </label>
+            <span class="compare-arrow">→</span>
+            <label>
+                Candidate
+                <select data-admin-eval-candidate aria-label="Eval candidate"></select>
+            </label>
+            <button type="button" data-admin-eval-compare>So sánh</button>
+        </div>
+        <div class="admin-eval-comparison" data-admin-eval-comparison hidden>
+            <div class="eval-compare-headline">
+                <div><span>Baseline</span><strong data-eval-value="baseline_pass">—</strong></div>
+                <div><span>Candidate</span><strong data-eval-value="candidate_pass">—</strong></div>
+                <div class="eval-delta-card"><span>Chênh lệch</span><strong data-eval-value="pass_delta">—</strong></div>
+                <div><span>Tool success Δ</span><strong data-eval-value="tool_delta">—</strong></div>
+            </div>
+            <div class="eval-comparison-body">
+                <div>
+                    <h3>Pass rate theo nhóm</h3>
+                    <div class="eval-category-comparison" data-admin-eval-categories></div>
+                </div>
+                <div>
+                    <h3>Thay đổi failure</h3>
+                    <div class="eval-failure-comparison" data-admin-eval-failures></div>
+                </div>
+            </div>
+            <div class="eval-warning-list" data-admin-eval-warnings></div>
+        </div>
+        <div class="admin-table-wrap admin-eval-table-wrap">
+            <table>
+                <thead><tr><th>Thời gian</th><th>Dataset</th><th>Model</th><th>Prompt</th><th>Pass rate</th><th>Tool success</th><th>Cases</th><th>Trạng thái</th></tr></thead>
+                <tbody data-admin-eval-runs></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="admin-panel admin-table-panel">
+        <div class="admin-panel-heading">
+            <div>
+                <p class="eyebrow">Model activity</p>
+                <h2>Model call gần đây</h2>
+            </div>
+        </div>
+        <div class="admin-table-wrap">
+            <table>
+                <thead><tr><th>Model</th><th>Trạng thái</th><th>Token</th><th>Latency</th><th>Prompt</th><th>Thời gian</th></tr></thead>
+                <tbody data-admin-model-calls></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="admin-detail-grid admin-activity-grid">
+        <article class="admin-panel admin-table-panel">
+            <div class="admin-panel-heading">
+                <div>
+                    <p class="eyebrow">Tool activity</p>
+                    <h2>Tool call gần đây</h2>
+                </div>
+                <span class="admin-panel-note"><span data-admin-metric="tool_denied">—</span> bị từ chối</span>
+            </div>
+            <div class="admin-table-wrap">
+                <table>
+                    <thead><tr><th>Tool</th><th>Trạng thái</th><th>Latency</th><th>Thời gian</th></tr></thead>
+                    <tbody data-admin-tool-calls></tbody>
+                </table>
+            </div>
+        </article>
+        <article class="admin-panel admin-table-panel admin-error-panel">
+            <div class="admin-panel-heading">
+                <div>
+                    <p class="eyebrow">Error inbox</p>
+                    <h2>Lỗi gần đây</h2>
+                </div>
+            </div>
+            <div class="admin-error-list" data-admin-errors></div>
+        </article>
+    </section>
+
+    <section class="admin-panel admin-table-panel admin-audit-panel">
+        <div class="admin-panel-heading">
+            <div>
+                <p class="eyebrow">Security trail</p>
+                <h2>Audit log gần đây</h2>
+            </div>
+            <span class="admin-panel-note">Metadata đã được redact</span>
+        </div>
+        <p class="admin-eval-status" data-admin-audit-status>Đang tải audit log…</p>
+        <div class="admin-table-wrap">
+            <table>
+                <thead><tr><th>Thời gian</th><th>Actor</th><th>Action</th><th>Target</th><th>Kết quả</th></tr></thead>
+                <tbody data-admin-audit-logs></tbody>
+            </table>
+        </div>
+    </section>
+</main>
+
+<dialog class="admin-run-dialog" data-admin-run-dialog>
+    <div class="run-dialog-shell">
+        <header>
+            <div>
+                <p class="eyebrow">Agent run drill-down</p>
+                <h2 data-run-detail-title>Chi tiết run</h2>
+            </div>
+            <button type="button" class="run-dialog-close" data-run-detail-close aria-label="Đóng">×</button>
+        </header>
+        <p class="admin-status" data-run-detail-status>Đang tải chi tiết…</p>
+        <div data-run-detail-content hidden>
+            <div class="run-detail-metrics" data-run-detail-metrics></div>
+            <div class="run-detail-meta" data-run-detail-meta></div>
+            <div class="run-step-list" data-run-detail-steps></div>
+        </div>
+    </div>
+</dialog>
+<script src="{{ url_for('static', path='/admin.js') }}" defer></script>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Đăng ký · Personal Agent{% endblock %}
+{% block body %}
+<main class="auth-layout">
+    <section class="brand-panel">
+        <a class="brand" href="/">Personal<span>Agent</span></a>
+        <div>
+            <p class="eyebrow">Bắt đầu từ một hồ sơ riêng</p>
+            <h1>Agent hiểu cách bạn muốn làm việc.</h1>
+            <p class="lead">Tạo tài khoản để xây dựng không gian trò chuyện và tri thức cá nhân của bạn.</p>
+        </div>
+        <p class="footnote">Project học tập · Phiên bản 0.1</p>
+    </section>
+
+    <section class="form-panel">
+        <div class="form-card">
+            <p class="eyebrow">Tạo tài khoản</p>
+            <h2>Đăng ký</h2>
+            <p class="muted">Bạn có thể bổ sung hồ sơ cá nhân sau.</p>
+
+            <form class="auth-form" data-auth-form data-endpoint="/api/auth/register" data-next="/dashboard" novalidate>
+                <label>Tên hiển thị
+                    <input type="text" name="full_name" autocomplete="name" maxlength="120" placeholder="Nguyễn Văn A">
+                </label>
+                <label>Email
+                    <input type="email" name="email" autocomplete="email" placeholder="ban@example.com" required>
+                </label>
+                <label>Mật khẩu
+                    <input type="password" name="password" autocomplete="new-password" minlength="8" maxlength="128" placeholder="Ít nhất 8 ký tự" required>
+                </label>
+                <p class="form-error" data-form-error aria-live="polite"></p>
+                <button type="submit">Tạo tài khoản <span>→</span></button>
+            </form>
+
+            <p class="switch-link">Đã có tài khoản? <a href="/login">Đăng nhập</a></p>
+        </div>
+    </section>
+</main>
+{% endblock %}

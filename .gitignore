@@ -1,0 +1,84 @@
+# Local environment and secrets; keep only the reviewed configuration templates.
+.env
+.env.*
+!.env.example
+!.env.docker.example
+.envrc
+.netrc
+.pypirc
+/.ssh/
+/.aws/
+/.azure/
+/.gcloud/
+/secrets/
+/credentials*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local Python environments, downloaded tools and caches.
+.venv/
+.venv-*/
+venv/
+env/
+.tools/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.tox/
+.nox/
+.ipynb_checkpoints/
+
+# Coverage and build output. Dependency lockfiles must remain tracked.
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+dist/
+build/
+*.egg-info/
+node_modules/
+
+# Runtime data, uploaded documents, backups and local database files.
+/data/
+/uploads/
+/storage/
+/artifacts/
+/logs/
+/tmp/
+/temp/
+backups/
+*.dump
+*.sql.gz
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite3-journal
+*.db
+*.db-journal
+
+# Ad hoc logs; retain the versioned, redacted regression evidence.
+*.log
+!/reports/baselines/**/*.log
+!/reports/checks/**/*.log
+
+# Local reference document and archives; do not hide future PDF test fixtures.
+/Hiểu sâu về AI Agent.pdf
+/*.zip
+/*.7z
+/*.tar
+/*.tar.gz
+
+# Editor and operating-system files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~

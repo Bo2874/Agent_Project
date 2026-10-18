@@ -1,0 +1,13 @@
+{
+  "gate": "alembic-upgrade",
+  "command": [
+    ".venv/Scripts/alembic.exe",
+    "upgrade",
+    "head"
+  ],
+  "started_at_utc": "2026-10-18T07:39:31.317263+00:00",
+  "duration_seconds": 3.032,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "alembic-upgrade.log"
+}

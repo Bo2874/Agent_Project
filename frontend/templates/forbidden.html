@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Không có quyền · Personal Agent{% endblock %}
+{% block body %}
+<main class="centered-page">
+    <section class="form-card status-card">
+        <p class="eyebrow">403</p>
+        <h1>Không có quyền truy cập</h1>
+        <p class="muted">Tài khoản {{ user.email }} không có quyền admin.</p>
+        <a class="primary-link" href="/dashboard">Quay lại trang cá nhân</a>
+    </section>
+</main>
+{% endblock %}

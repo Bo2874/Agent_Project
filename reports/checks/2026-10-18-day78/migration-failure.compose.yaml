@@ -1,0 +1,3 @@
+services:
+  migrate:
+    command: [python, -c, "raise SystemExit(17)"]

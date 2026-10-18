@@ -1,0 +1,13 @@
+{
+  "gate": "backup-restore",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-m",
+    "scripts.verify_database_backup"
+  ],
+  "started_at_utc": "2026-10-18T07:41:18.844414+00:00",
+  "duration_seconds": 5.946,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "backup-restore.log"
+}

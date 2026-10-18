@@ -1,0 +1,25 @@
+# Allow-list: local secrets, virtualenv, backups, PDFs and reports never enter the build context.
+**
+!pyproject.toml
+!alembic.ini
+!agent_core/
+!agent_core/**
+!backend/
+!backend/**
+!frontend/
+!frontend/**
+!skills/
+!skills/**
+!scripts/
+!scripts/**
+!migrations/
+!migrations/**
+!infra/
+!infra/docker/
+!infra/docker/app/
+!infra/docker/app/**
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.env
+**/.env.*

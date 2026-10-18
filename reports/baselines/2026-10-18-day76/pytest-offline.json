@@ -1,0 +1,16 @@
+{
+  "gate": "pytest-offline",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-m",
+    "pytest",
+    "-q",
+    "--ignore=tests/test_mcp.py",
+    "--junitxml=reports/baselines/2026-10-18-day76/pytest-offline.xml"
+  ],
+  "started_at_utc": "2026-10-18T07:35:17.826365+00:00",
+  "duration_seconds": 20.942,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "pytest-offline.log"
+}

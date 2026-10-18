@@ -1,0 +1,37 @@
+docker :  Container agent-day78-20261018-postgres-1  Running
+At line:2 char:1
++ docker compose --env-file .env.docker.example --project-name agent-da ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ( Container agen...gres-1  Running:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ Container agent-day78-20261018-migrate-1  Recreate
+ Container agent-day78-20261018-migrate-1  Recreated
+ Container agent-day78-20261018-worker-1  Recreate
+ Container agent-day78-20261018-app-1  Recreate
+ Container agent-day78-20261018-app-1  Recreated
+ Container agent-day78-20261018-worker-1  Recreated
+ Container agent-day78-20261018-postgres-1  Waiting
+ Container agent-day78-20261018-postgres-1  Healthy
+ Container agent-day78-20261018-migrate-1  Starting
+ Container agent-day78-20261018-migrate-1  Started
+ Container agent-day78-20261018-migrate-1  Waiting
+ Container agent-day78-20261018-postgres-1  Waiting
+ Container agent-day78-20261018-migrate-1  Waiting
+ Container agent-day78-20261018-postgres-1  Waiting
+ Container agent-day78-20261018-postgres-1  Healthy
+ Container agent-day78-20261018-postgres-1  Healthy
+ Container agent-day78-20261018-migrate-1  Exited
+ Container agent-day78-20261018-worker-1  Starting
+ Container agent-day78-20261018-migrate-1  Exited
+ Container agent-day78-20261018-app-1  Starting
+ Container agent-day78-20261018-worker-1  Started
+ Container agent-day78-20261018-app-1  Started
+ Container agent-day78-20261018-postgres-1  Waiting
+ Container agent-day78-20261018-migrate-1  Waiting
+ Container agent-day78-20261018-app-1  Waiting
+ Container agent-day78-20261018-worker-1  Waiting
+ Container agent-day78-20261018-postgres-1  Healthy
+ Container agent-day78-20261018-migrate-1  Exited
+ Container agent-day78-20261018-worker-1  Healthy
+ Container agent-day78-20261018-app-1  Healthy

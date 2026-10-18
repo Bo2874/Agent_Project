@@ -1,0 +1,12 @@
+status: PASSED
+stdout: PASSED
+stderr: PASSED
+artifact_names: PASSED
+outside_not_returned: PASSED
+unsafe_type_rejected: PASSED
+symlink_rejected: PASSED
+checksum_data.json: PASSED
+size_data.json: PASSED
+checksum_report.txt: PASSED
+size_report.txt: PASSED
+SANDBOX_ARTIFACTS_PASSED

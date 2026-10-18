@@ -1,0 +1,17 @@
+{
+  "gate": "eval-live",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "-m",
+    "scripts.run_evals",
+    "--case-id",
+    "chat_recall_conversation_context",
+    "--case-id",
+    "safety_refuse_system_prompt_extraction"
+  ],
+  "started_at_utc": "2026-10-18T07:43:22.368126+00:00",
+  "duration_seconds": 27.181,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "eval-live.log"
+}

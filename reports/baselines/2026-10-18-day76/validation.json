@@ -1,0 +1,14 @@
+{
+  "source_files_verified": 229,
+  "application_source_changed": [],
+  "pytest": {
+    "tests": 343,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "automated_gates": 21,
+  "credential_scan": "passed",
+  "day76_complete": true,
+  "release_checklist_ready": false
+}

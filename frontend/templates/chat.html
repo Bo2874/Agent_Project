@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Chat · Personal Agent{% endblock %}
+{% block body %}
+<main class="chat-shell" data-chat-app>
+    <aside class="chat-sidebar">
+        <div class="sidebar-head">
+            <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
+            <button class="new-chat-button" data-new-chat aria-label="Tạo cuộc trò chuyện mới">＋</button>
+        </div>
+        <p class="sidebar-label">Hội thoại</p>
+        <div class="conversation-list" data-conversation-list></div>
+        <div class="sidebar-user">
+            <div class="avatar">{{ (user.full_name or user.email)[0] | upper }}</div>
+            <div>
+                <strong>{{ user.full_name or "Tài khoản" }}</strong>
+                <small>{{ user.email }}</small>
+            </div>
+            <button class="icon-button" data-logout title="Đăng xuất">↗</button>
+        </div>
+    </aside>
+
+    <section class="chat-main">
+        <header class="chat-header">
+            <div>
+                <p class="eyebrow">DeepSeek</p>
+                <h1 data-chat-title>Cuộc trò chuyện mới</h1>
+            </div>
+            <div class="chat-header-actions">
+                <a class="model-pill memory-link" href="/memories">Bộ nhớ</a>
+                <span class="model-pill">{{ model_name }}</span>
+            </div>
+        </header>
+
+        <div class="message-list" data-message-list>
+            <div class="empty-chat" data-empty-chat>
+                <div class="agent-mark">PA</div>
+                <h2>Bạn muốn bắt đầu với điều gì?</h2>
+                <p>Hãy gửi một câu hỏi. Lịch sử hội thoại sẽ được lưu riêng trong tài khoản của bạn.</p>
+            </div>
+        </div>
+
+        <div class="composer-wrap">
+            <form class="composer" data-message-form>
+                <textarea name="content" rows="1" maxlength="12000" placeholder="Nhắn cho Personal Agent…" required></textarea>
+                <button type="submit" aria-label="Gửi tin nhắn">↑</button>
+            </form>
+            <p class="composer-note" data-chat-status>AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng.</p>
+        </div>
+    </section>
+</main>
+<script src="{{ url_for('static', path='/markdown.js') }}" defer></script>
+<script src="{{ url_for('static', path='/chat.js') }}" defer></script>
+{% endblock %}

@@ -1,0 +1,13 @@
+{
+  "gate": "live-metrics-export",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "reports/baselines/2026-10-18-day76/export_metrics.py",
+    "f09ef0b4-7d42-488d-9f86-afd6c08a6b36"
+  ],
+  "started_at_utc": "2026-10-18T07:44:43.091041+00:00",
+  "duration_seconds": 3.716,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "live-metrics-export.log"
+}

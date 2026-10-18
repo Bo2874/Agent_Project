@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Trang cá nhân · Personal Agent{% endblock %}
+{% block body %}
+<main class="shell">
+    <nav>
+        <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
+        <div class="nav-actions">
+            <a class="text-link" href="/memories">Bộ nhớ</a>
+            {% if user.role == "admin" %}<a class="text-link" href="/admin">Quản trị</a>{% endif %}
+            <button class="ghost-button" data-logout>Đăng xuất</button>
+        </div>
+    </nav>
+    <section class="welcome-card">
+        <p class="eyebrow">Đã đăng nhập</p>
+        <h1>Xin chào, {{ user.full_name or user.email }}.</h1>
+        <p class="lead">Tài khoản và không gian chat đã sẵn sàng. Bạn có thể bắt đầu một cuộc trò chuyện với Agent.</p>
+        <a class="primary-link dashboard-action" href="/chat">Mở cuộc trò chuyện <span>→</span></a>
+        <div class="identity-row">
+            <span>{{ user.email }}</span>
+            <span class="role-badge">{{ user.role }}</span>
+        </div>
+    </section>
+</main>
+{% endblock %}

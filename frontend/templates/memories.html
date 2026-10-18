@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Bộ nhớ cá nhân · Personal Agent{% endblock %}
+{% block body %}
+<main class="shell memory-page" data-memory-app>
+    <nav>
+        <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
+        <div class="nav-actions">
+            <a class="text-link" href="/chat">Trở lại chat</a>
+            <button class="ghost-button" data-logout>Đăng xuất</button>
+        </div>
+    </nav>
+
+    <header class="memory-hero">
+        <div>
+            <p class="eyebrow">Personalization</p>
+            <h1>Bộ nhớ của bạn</h1>
+            <p class="lead">Kiểm tra những điều Agent đang ghi nhớ. Bạn có thể sửa, ghim hoặc xóa bất kỳ mục nào.</p>
+        </div>
+        <div class="memory-count" data-memory-count>0 memory</div>
+    </header>
+
+    <section class="memory-toolbar" aria-label="Lọc memory">
+        <div class="memory-filters" data-memory-filters>
+            <button type="button" class="is-active" data-filter="all">Tất cả</button>
+            <button type="button" data-filter="pinned">Đã ghim</button>
+            <button type="button" data-filter="fact">Fact</button>
+            <button type="button" data-filter="preference">Preference</button>
+            <button type="button" data-filter="goal">Goal</button>
+            <button type="button" data-filter="constraint">Constraint</button>
+        </div>
+        <p class="memory-page-status" data-memory-status aria-live="polite">Đang tải bộ nhớ…</p>
+    </section>
+
+    <section class="memory-grid" data-memory-list aria-live="polite"></section>
+</main>
+<script src="{{ url_for('static', path='/memories.js') }}" defer></script>
+{% endblock %}

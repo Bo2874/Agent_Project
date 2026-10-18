@@ -1,0 +1,12 @@
+{
+  "gate": "environment",
+  "command": [
+    ".venv/Scripts/python.exe",
+    "reports/baselines/2026-10-18-day76/inspect_environment.py"
+  ],
+  "started_at_utc": "2026-10-18T07:36:42.446733+00:00",
+  "duration_seconds": 9.194,
+  "exit_code": 0,
+  "status": "passed",
+  "log": "environment.log"
+}

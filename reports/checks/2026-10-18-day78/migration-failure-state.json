@@ -1,0 +1,103 @@
+[
+    {
+        "Command":  "\"python -m uvicorn b…\"",
+        "CreatedAt":  "2026-10-18 15:47:47 +0700 +07",
+        "ExitCode":  0,
+        "Health":  "",
+        "ID":  "9e2a18ab6702",
+        "Image":  "personal-agent-app:dev",
+        "Labels":  "com.docker.compose.container-number=1,com.docker.compose.depends_on=migrate:service_completed_successfully:false,postgres:service_healthy:false,com.docker.compose.image=sha256:9a1385470b1649641fc175e4006bc8f384a4487784098fe49bb463f44e3bbbb6,com.docker.compose.oneoff=False,com.docker.compose.project=agent-day78-20261018-negative,com.docker.compose.service=app,desktop.docker.io/ports/8000/tcp=127.0.0.1:8000,com.docker.compose.config-hash=a61f5966b1c972cf235008c98ae960e6e4f7e2c1679267e385d8ab6f3c36c3e8,com.docker.compose.project.config_files=C:\\Agent_Project\\compose.yaml,C:\\Agent_Project\\reports\\checks\\2026-10-18-day78\\migration-failure.compose.yaml,com.docker.compose.project.environment_file=C:\\Agent_Project\\.env.docker.example,com.docker.compose.project.working_dir=C:\\Agent_Project,com.docker.compose.version=2.38.1,desktop.docker.io/ports.scheme=v2",
+        "LocalVolumes":  "1",
+        "Mounts":  "agent-day78-20…",
+        "Name":  "agent-day78-20261018-negative-app-1",
+        "Names":  "agent-day78-20261018-negative-app-1",
+        "Networks":  "agent-day78-20261018-negative_default",
+        "Ports":  "",
+        "Project":  "agent-day78-20261018-negative",
+        "Publishers":  [
+
+                       ],
+        "RunningFor":  "Less than a second ago",
+        "Service":  "app",
+        "Size":  "0B",
+        "State":  "created",
+        "Status":  "Created"
+    },
+    {
+        "Command":  "\"python -c \u0027raise Sy…\"",
+        "CreatedAt":  "2026-10-18 15:47:46 +0700 +07",
+        "ExitCode":  17,
+        "Health":  "",
+        "ID":  "4bed6dfd9ba8",
+        "Image":  "personal-agent-migrate:dev",
+        "Labels":  "com.docker.compose.container-number=1,com.docker.compose.depends_on=postgres:service_healthy:false,com.docker.compose.project=agent-day78-20261018-negative,com.docker.compose.config-hash=758d24a4d51ff92600e4c1fd5eb235eec1d6404860f0e68392272999f9fac830,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=C:\\Agent_Project\\compose.yaml,C:\\Agent_Project\\reports\\checks\\2026-10-18-day78\\migration-failure.compose.yaml,com.docker.compose.project.environment_file=C:\\Agent_Project\\.env.docker.example,com.docker.compose.project.working_dir=C:\\Agent_Project,com.docker.compose.service=migrate,com.docker.compose.version=2.38.1,desktop.docker.io/ports.scheme=v2,com.docker.compose.image=sha256:dd7ee4fde3f924d4ccb700ab45b5a1e1eb3f4b9ee23e0731a1bf45d16e1c03a5",
+        "LocalVolumes":  "0",
+        "Mounts":  "",
+        "Name":  "agent-day78-20261018-negative-migrate-1",
+        "Names":  "agent-day78-20261018-negative-migrate-1",
+        "Networks":  "agent-day78-20261018-negative_default",
+        "Ports":  "",
+        "Project":  "agent-day78-20261018-negative",
+        "Publishers":  [
+
+                       ],
+        "RunningFor":  "Less than a second ago",
+        "Service":  "migrate",
+        "Size":  "0B",
+        "State":  "exited",
+        "Status":  "Exited (17) Less than a second ago"
+    },
+    {
+        "Command":  "\"docker-entrypoint.s…\"",
+        "CreatedAt":  "2026-10-18 15:47:46 +0700 +07",
+        "ExitCode":  0,
+        "Health":  "healthy",
+        "ID":  "85714bbe5732",
+        "Image":  "pgvector/pgvector:0.8.7-pg17-bookworm",
+        "Labels":  "com.docker.compose.container-number=1,com.docker.compose.image=sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d,com.docker.compose.project.config_files=C:\\Agent_Project\\compose.yaml,C:\\Agent_Project\\reports\\checks\\2026-10-18-day78\\migration-failure.compose.yaml,com.docker.compose.project.working_dir=C:\\Agent_Project,com.docker.compose.version=2.38.1,com.docker.compose.config-hash=5b3eb4d4f60885a930226b4b610b9f55b4c97567cd0e91a0cefe7a9ae1491a8a,com.docker.compose.depends_on=,com.docker.compose.oneoff=False,com.docker.compose.project=agent-day78-20261018-negative,com.docker.compose.project.environment_file=C:\\Agent_Project\\.env.docker.example,com.docker.compose.service=postgres,desktop.docker.io/ports.scheme=v2",
+        "LocalVolumes":  "1",
+        "Mounts":  "agent-day78-20…",
+        "Name":  "agent-day78-20261018-negative-postgres-1",
+        "Names":  "agent-day78-20261018-negative-postgres-1",
+        "Networks":  "agent-day78-20261018-negative_default",
+        "Ports":  "5432/tcp",
+        "Project":  "agent-day78-20261018-negative",
+        "Publishers":  [
+                           {
+                               "URL":  "",
+                               "TargetPort":  5432,
+                               "PublishedPort":  0,
+                               "Protocol":  "tcp"
+                           }
+                       ],
+        "RunningFor":  "Less than a second ago",
+        "Service":  "postgres",
+        "Size":  "0B",
+        "State":  "running",
+        "Status":  "Up 7 seconds (healthy)"
+    },
+    {
+        "Command":  "\"python -m scripts.r…\"",
+        "CreatedAt":  "2026-10-18 15:47:47 +0700 +07",
+        "ExitCode":  0,
+        "Health":  "",
+        "ID":  "cb8b614a0a68",
+        "Image":  "personal-agent-worker:dev",
+        "Labels":  "com.docker.compose.version=2.38.1,desktop.docker.io/ports.scheme=v2,com.docker.compose.config-hash=a591e3ba24c2a6cd01268ae598d04baf5fc1335c4eada36ef31824d060db41bb,com.docker.compose.depends_on=postgres:service_healthy:false,migrate:service_completed_successfully:false,com.docker.compose.oneoff=False,com.docker.compose.project.config_files=C:\\Agent_Project\\compose.yaml,C:\\Agent_Project\\reports\\checks\\2026-10-18-day78\\migration-failure.compose.yaml,com.docker.compose.project.environment_file=C:\\Agent_Project\\.env.docker.example,com.docker.compose.project.working_dir=C:\\Agent_Project,com.docker.compose.service=worker,com.docker.compose.container-number=1,com.docker.compose.image=sha256:f54e97107414356d941bb23b5eb0ae7b75c3e992529cf70bb0e79fc9e38b0df9,com.docker.compose.project=agent-day78-20261018-negative",
+        "LocalVolumes":  "1",
+        "Mounts":  "agent-day78-20…",
+        "Name":  "agent-day78-20261018-negative-worker-1",
+        "Names":  "agent-day78-20261018-negative-worker-1",
+        "Networks":  "agent-day78-20261018-negative_default",
+        "Ports":  "",
+        "Project":  "agent-day78-20261018-negative",
+        "Publishers":  [
+
+                       ],
+        "RunningFor":  "Less than a second ago",
+        "Service":  "worker",
+        "Size":  "0B",
+        "State":  "created",
+        "Status":  "Created"
+    }
+]
