@@ -1,11 +1,13 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
 from agent_core.contracts.features import FeatureFlags
+from agent_core.tools.email import SMTPConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,6 +40,28 @@ class Settings(BaseSettings):
     auth_secret_key: SecretStr = Field(min_length=32)
     auth_token_expire_minutes: int = Field(default=60, ge=5, le=1440)
     auth_cookie_secure: bool = False
+
+    openrouter_api_key: SecretStr | None = None
+    jev_base_url: str = "https://openrouter.ai/api"
+    jev_model: str = "typesafe/jev-1.14"
+    jev_timeout_seconds: float = Field(default=15, gt=0, le=120)
+    jev_total_timeout_seconds: float = Field(default=20, gt=0, le=180)
+    routing_mode: Literal["active", "shadow"] = "active"
+    routing_query_max_state_chars: int = Field(default=32768, ge=128, le=131072)
+    routing_query_max_payload_bytes: int = Field(default=131072, ge=512, le=524288)
+    routing_fallback_enabled: bool = True
+    routing_primary_timeout_seconds: float = Field(default=8, gt=0, le=120)
+    routing_max_provider_calls: int = Field(default=12, ge=1, le=100)
+    routing_max_reserved_tokens: int = Field(default=20000, ge=256, le=1000000)
+    routing_min_probability: float = Field(default=0.6, ge=0, le=1)
+    routing_min_margin: float = Field(default=0.1, ge=0, le=1)
+    routing_breaker_threshold: int = Field(default=3, ge=1, le=100)
+    routing_breaker_cooldown_seconds: float = Field(default=30, gt=0, le=3600)
+    routing_allow_external: bool = True
+    routing_send_observations: bool = True
+    routing_redact_pii: bool = True
+    routing_max_state_chars: int = Field(default=32768, ge=128, le=32768)
+    routing_max_payload_bytes: int = Field(default=131072, ge=512, le=131072)
 
     deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -86,7 +110,19 @@ class Settings(BaseSettings):
     agent_tokens_per_day: int = Field(default=1_000_000, ge=1_000, le=1_000_000_000)
     agent_tool_calls_per_day: int = Field(default=500, ge=1, le=10_000_000)
     mcp_demo_enabled: bool = True
+    mcp_stdio_config_path: Path = PROJECT_ROOT / "plugins/stdio/servers.json"
+    mcp_http_config_path: Path = PROJECT_ROOT / "plugins/http/servers.json"
+    plugin_packages_config_path: Path = PROJECT_ROOT / "plugins/packages.json"
+    mcp_credential_encryption_keys: SecretStr | None = None
     python_sandbox_enabled: bool = True
+    email_enabled: bool = False
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+    smtp_security: Literal["ssl", "starttls"] = "ssl"
+    smtp_username: str = ""
+    smtp_password: SecretStr = Field(default=SecretStr(""), repr=False)
+    smtp_from_email: str = ""
+    smtp_timeout_seconds: float = Field(default=20, gt=0, le=60)
     background_queue_name: str = Field(default="default", pattern=r"^[a-z][a-z0-9_-]{0,39}$")
     background_worker_poll_seconds: float = Field(default=1.0, gt=0, le=60)
     background_worker_heartbeat_path: Path | None = None
@@ -101,7 +137,7 @@ class Settings(BaseSettings):
     tool_allowlist: str = (
         "demo__get_server_time,demo__calculate,demo__count_text,"
         "demo__convert_temperature,demo__simulate_sensitive_action,"
-        "demo__get_admin_runtime_info,run_python_code"
+        "demo__get_admin_runtime_info,run_python_code,send_email"
     )
     tool_approval_timeout_seconds: float = Field(default=300, gt=0, le=3600)
     tool_lazy_load_threshold: int = Field(default=4, ge=1, le=1000)
@@ -123,6 +159,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_context_budgets(self) -> "Settings":
         _ = self.v2_features  # Validate feature dependencies at configuration load time.
+        _ = self.email_config
         if self.langgraph_checkpoint_pool_min_size > self.langgraph_checkpoint_pool_max_size:
             raise ValueError(
                 "LANGGRAPH_CHECKPOINT_POOL_MIN_SIZE không được vượt "
@@ -159,6 +196,20 @@ class Settings(BaseSettings):
         if section_total > self.context_max_input_tokens:
             raise ValueError("Tổng context section budget vượt CONTEXT_MAX_INPUT_TOKENS")
         return self
+
+    @property
+    def email_config(self) -> SMTPConfig | None:
+        if not self.email_enabled:
+            return None
+        return SMTPConfig(
+            host=self.smtp_host,
+            port=self.smtp_port,
+            security=self.smtp_security,
+            username=self.smtp_username,
+            password=self.smtp_password,
+            from_email=self.smtp_from_email or self.smtp_username,
+            timeout_seconds=self.smtp_timeout_seconds,
+        )
 
     @property
     def v2_features(self) -> FeatureFlags:

@@ -1,1 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="1" time="7.141" timestamp="2026-10-18T14:39:24.103892+07:00" hostname="DESKTOP-FTK8BSV"><testcase classname="tests.test_mcp" name="test_mcp_stdio_server_discovers_registers_and_calls_tool" time="4.298" /></testsuite></testsuites>

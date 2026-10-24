@@ -1,8 +1,11 @@
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 
+from backend.core.config import get_settings
 from backend.dependencies import CurrentAdmin, DbSession
+from backend.dependencies_tools import get_plugin_manager
 from backend.schemas.admin import (
     AdminAgentRunDetail,
     AdminAgentRunsResponse,
@@ -21,8 +24,56 @@ from backend.services.admin_evaluations import (
 )
 from backend.services.admin_metrics import get_admin_overview
 from backend.services.audit_logs import list_admin_audit_logs, record_audit_event
+from backend.services.routing import routing_metrics, shared_breaker
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.get("/routing")
+async def admin_routing_metrics(
+    session: DbSession,
+    _: CurrentAdmin,
+    days: int = Query(default=7, ge=1, le=90),
+    limit: int = Query(default=30, ge=1, le=100),
+    run_id: UUID | None = None,
+    mode: Literal["active", "shadow"] | None = None,
+) -> dict:
+    settings = get_settings()
+    data = await routing_metrics(session, days=days, run_id=run_id, limit=limit, mode=mode)
+    data["mode"] = settings.routing_mode
+    data["circuit"] = shared_breaker(
+        settings.jev_base_url,
+        settings.jev_model,
+        settings.routing_breaker_threshold,
+        settings.routing_breaker_cooldown_seconds,
+    ).snapshot()
+    return data
+
+
+@router.get("/mcp-runtime")
+async def mcp_runtime(_: CurrentAdmin) -> dict:
+    return get_plugin_manager().health_payload()
+
+
+@router.post("/mcp-runtime/{server_name}/discover")
+async def refresh_mcp_discovery(server_name: str, session: DbSession, admin: CurrentAdmin) -> dict:
+    if not get_settings().v2_features.is_enabled("plugins"):
+        raise HTTPException(status_code=404, detail="Plugin APIs are disabled")
+    try:
+        result = await get_plugin_manager().refresh_discovery(server_name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown MCP server") from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    await record_audit_event(
+        session,
+        actor_user_id=admin.id,
+        action="admin.mcp.discovery",
+        target_type="mcp_server",
+        target_id=server_name,
+        metadata={"tool_count": len(result["tool_names"])},
+    )
+    return result
 
 
 @router.get("/overview", response_model=AdminOverviewResponse)

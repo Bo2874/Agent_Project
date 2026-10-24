@@ -62,6 +62,7 @@ backups/
 *.db-journal
 
 # Ad hoc logs; retain the versioned, redacted regression evidence.
+/reports/ci/
 *.log
 !/reports/baselines/**/*.log
 !/reports/checks/**/*.log

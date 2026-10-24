@@ -1,6 +1,6 @@
 # Kế hoạch phát triển Personal AI Agent
 
-Cập nhật: 2026-10-18
+Cập nhật: 2026-10-22
 
 Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memory, Skills, sandbox và trang quản trị đủ tốt để học và trình bày khi phỏng vấn.
 
@@ -8,7 +8,7 @@ Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, 
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần
 [Lộ trình mở rộng V2](#lộ-trình-mở-rộng-v2) bên dưới. Đây là kế hoạch triển khai, chưa phải các chức năng đã có.
 
-Tiến độ: **Ngày 78 đã hoàn thành Docker dev và kiểm tra startup sạch; tiếp theo là Ngày 79 — dependency lock và CI**.
+Tiến độ: **M2: người dùng đã nghiệm thu Jev phân 4 route; đã gỡ bảng route/xác suất và nối quyết định vào luồng thật. Chat/tool_task dùng phần thực thi hiện có; document_qa/planned_task có điểm nhận chờ lõi. Đã sửa cuộn/xóa hội thoại và dòng nhắc cố định. Tiếp theo bàn thiết kế Choice chọn tool động. Ngày 87 và connector/Skill Ngày 86 tiếp tục hoãn theo yêu cầu**.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),
 [mapping module](#4-mapping-module-và-dữ-liệu-dự-kiến),
@@ -228,13 +228,13 @@ Các checkbox hoàn thành ở phần trên giữ nguyên lịch sử nghiệm t
 
 | Thành phần | Hiện trạng đọc từ code | Việc cần bổ sung |
 | --- | --- | --- |
-| MCP | `agent_core/mcp/client.py` hỗ trợ stdio; `backend/dependencies_tools.py` cấu hình server demo cố định | Manifest plugin, nhiều server, HTTP, credential riêng, quản lý vòng đời |
+| MCP | Stdio demo hiện tại; đã có manifest/namespace/host policy và catalog metadata versioned | DB/connection/grant, nhiều server, HTTP, credential riêng, quản lý vòng đời |
 | Chọn tool/Skill | Chấm điểm từ khóa trong `tools/selector.py`, `skills/selector.py`; có lazy loading | Catalog retrieval, Jev, fallback và khám phá thêm tool giữa run |
 | Graph | `graph/workflow.py` có context/model/approval/tool/final, checkpoint PostgreSQL | Nhánh RAG, planner, DAG task, worker subgraph, fan-out/fan-in |
 | RAG | Có dependency LlamaIndex và context contract; chưa có upload/retrieval thực tế | Ingestion, pgvector, lexical search, citations, UI và eval |
 | Background | PostgreSQL queue, lease/heartbeat, retry và idempotency | Job ingestion và job agent dài; event replay cho UI |
 | Cache | Prompt cache của provider; một số cache trong process | Redis cache chia sẻ, có version và cô lập user |
-| Deploy | Docker app/worker, Compose dev PostgreSQL/pgvector, migration one-shot; sandbox và backup riêng | Dependency lock, CI/CD và Docker production |
+| Deploy | Docker app/worker, Compose dev PostgreSQL/pgvector, uv.lock và CI lint/unit/migration/integration; sandbox và backup riêng | CI chạy trên GitHub sau push workflow, CD và Docker production |
 
 Sản phẩm đích có bốn luồng demo kiểm chứng được:
 
@@ -327,12 +327,12 @@ fallback để các mốc khác vẫn triển khai được. Route RAG/planner c
 - [x] Ngày 76: Chạy lại regression gate trong `OPERATIONS.md`, lưu baseline pass rate/latency/token; kiểm tra trạng thái Git/repo, dependency và Docker trên máy hiện tại.
 - [x] Ngày 77: Chốt contract `CapabilityDescriptor`, `RoutingDecision`, `RetrievalResult`, `TaskSpec`, event; feature flag mặc định tắt và ADR mô tả ownership giữa các lớp. (contract là quy định dữ liệu được trao đổi phải có những trường nào, kiểu gì và điều kiện hợp lệ)
 - [x] Ngày 78: Tạo Dockerfile app/worker và Compose dev với PostgreSQL có pgvector; volume dữ liệu riêng, healthcheck, migration one-shot; xác minh startup từ máy sạch.
-- [ ] Ngày 79: Khóa dependency tái lập, dựng CI lint/unit/migration/integration nền tảng; tạo fixture/dataset khung cho routing, retrieval và task orchestration.
+- [x] Ngày 79: Khóa dependency tái lập, dựng CI lint/unit/migration/integration nền tảng; tạo fixture/dataset khung cho routing, retrieval và task orchestration.
 
 Nghiệm thu: luồng chat/demo tool/memory chạy qua Compose và vượt regression gate tương ứng;
 tắt toàn bộ feature flag V2 vẫn chạy các luồng này. Sandbox được kiểm tra riêng theo runbook
-cho đến khi tích hợp runner ở M6. CI offline không cần key model. Máy hiện tại không được Git nhận là repository
-trong lượt khảo sát; M0 phải xác định repo đích trước khi cấu hình GitHub Actions thực tế.
+cho đến khi tích hợp runner ở M6. CI offline không cần key model. Repo đích đã xác định là
+`Bo2874/Agent_Project`; workflow Ngày 79 cần commit/push để tạo GitHub Actions run đầu tiên.
 
 Kết quả Ngày 76 (2026-10-18): pytest 343/343 pass sau khi chạy MCP ngoài Windows sandbox;
 Skill selection 13/13, adherence 2/2; E2E DeepSeek, migration, backup/restore, checkpoint và Docker
@@ -358,6 +358,16 @@ migration exit 17 chặn app/worker khởi động. Ruff và 421/421 regression 
 Đây là kiểm tra môi trường Docker sạch trên máy hiện tại; live LLM eval và production deploy chưa thuộc lượt này.
 Chi tiết: [nghiệm thu Ngày 78](reports/checks/2026-10-18-day78/STARTUP.md),
 [runbook Docker dev](infra/docker/app/README.md).
+
+Kết quả Ngày 79 (2026-10-18): uv.lock khóa 137 package entry cho Python 3.11.17/uv 0.13.1,
+Windows x64 và Linux x86_64; Docker dùng lock cùng image digest. Workflow pin action SHA, có
+actionlint, lint/unit matrix và migration/integration Compose không cần model key.
+Local gate: Windows 438/438, Linux Docker 438/438; Skill selection 13/13, adherence 2/2;
+migration/drift/idempotence, queue/checkpoint, HTTP/memory, persistence và migration failure gate đạt.
+Có 21 fixture V2 synthetic (8 routing, 7 retrieval, 6 orchestration), 17 test mới; chưa đo quality runtime V2.
+Chưa push workflow mới/chưa có GitHub Actions run cho thay đổi này; local equivalent gates đã đạt.
+Chi tiết: [nghiệm thu Ngày 79](reports/checks/2026-10-18-day79/VALIDATION.md),
+[dependency/CI](docs/DEPENDENCIES_AND_CI.md), [dataset scaffold](evals/datasets/foundation/README.md).
 
 ### M1 — Plugin platform và nhiều MCP server
 
@@ -392,16 +402,86 @@ với phạm vi đọc và [Tavily MCP](https://docs.tavily.com/documentation/mc
 Kết nối thật cần tài khoản/key do người triển khai cấu hình; test CI dùng fixture cùng contract.
 Output web có URL, thời điểm lấy, title và đoạn nội dung để phục vụ citation; giới hạn fetch/output.
 
-- [ ] Ngày 80: Định nghĩa/validate manifest, namespace và policy; tạo catalog plugin có version.
-- [ ] Ngày 81: Tạo bảng plugin/connection/grant, credential reference và API bật/tắt theo user/admin.
-- [ ] Ngày 82: Tách cấu hình demo cố định thành PluginManager nhiều stdio server; timeout/health và cô lập lỗi.
-- [ ] Ngày 83: Thêm HTTP adapter, token/OAuth lifecycle cần thiết, SSRF checks và protocol compatibility test.
-- [ ] Ngày 84: Tạo capability catalog, index metadata và discovery giữa run; schema lazy loading giữ token budget.
-- [ ] Ngày 85: Nối Skill của plugin, dependency validation, refresh/version invalidation và thu hồi quyền đang chạy.
-- [ ] Ngày 86: UI Plugins/Connections, hai connector GitHub đọc + web search, Skill mẫu research/report.
+- [x] Ngày 80: Định nghĩa/validate manifest, namespace và policy; tạo catalog plugin có version.
+- [x] Ngày 81: Tạo bảng plugin/connection/grant, credential reference và API bật/tắt theo user/admin.
+- [x] Ngày 82: Tách cấu hình demo cố định thành PluginManager nhiều stdio server; timeout/health và cô lập lỗi.
+- [x] Ngày 83: Thêm HTTP adapter, token/OAuth lifecycle cần thiết, SSRF checks và protocol compatibility test.
+- [x] Ngày 84: Tạo capability catalog, index metadata và discovery giữa run; schema lazy loading giữ token budget.
+- [x] Ngày 85: Nối Skill của plugin, dependency validation, refresh/version invalidation và thu hồi quyền đang chạy.
+- [x] Ngày 86 (phạm vi đã chốt): UI Plugins/Connections theo user/admin.
+- [ ] Phần Ngày 86 hoãn theo yêu cầu: hai connector GitHub đọc + web search, Skill mẫu research/report; người dùng tự setup/test sau.
 - [ ] Ngày 87: Test thêm/xóa server, trùng tên, mất kết nối, credential chéo user, giả mạo annotation và catalog 100+ tool.
 
-Nghiệm thu: thêm plugin bằng manifest không sửa lõi graph; demo và hai connector thực tế hoạt động;
+Kết quả Ngày 80 (2026-10-18): `agent_core/plugins/` có schema 1.0, exact SemVer, namespace/alias,
+policy bảo thủ, Skill dependency validation và catalog snapshot revision + SHA-256 với CAS/failure atomic.
+Hai manifest mẫu có 3 server/8 tool/1 Skill; validate offline tạo 9 capability metadata, tất cả disabled.
+Có CLI, JSON Schema, plugin guide/ADR 0002 và CI gate; 86 test mới, Windows 524/524 và Linux 524/524 đạt.
+Compose validate manifest trong app image và vượt regression integration legacy với V2 tắt.
+Chưa có DB/API/PluginManager/connector mới; catalog metadata không cấp quyền hoặc mở connection.
+Chi tiết: [nghiệm thu Ngày 80](reports/checks/2026-10-18-day80/VALIDATION.md), [Plugin guide](docs/plugins/README.md).
+
+Kết quả Ngày 81 (2026-10-18): migration `20261018_0023` tạo catalog/history, grant scoped capability,
+connection theo owner và credential reference UUID opaque. API có auth user/admin, default-off feature
+gate, composite owner FK, transaction/audit và CAS nhiều process. Đổi manifest không khôi phục quyền cũ;
+revoke/rotate/regrant cần user bật lại. 41 test mới, Windows 565/565, Linux 565/565 và Compose gate đạt;
+migration round-trip giữ user cũ, API kiểm tra IDOR/CAS đồng thời/role demotion trên PostgreSQL thật.
+`runtime_connected=false`; chưa thêm transport/resolver/UI. Chi tiết: [nghiệm thu Ngày 81](reports/checks/2026-10-18-day81/VALIDATION.md),
+[API guide](docs/plugins/API.md) và [ADR 0003](docs/adr/0003-plugin-persistence-and-user-ownership.md).
+
+Kết quả Ngày 82 (2026-10-18): backend đọc manifest/profile host từ `plugins/stdio/servers.json`;
+PluginManager có owner task riêng, startup song song, timeout/health/circuit breaker và restart qua
+cooldown. Registry publish batch atomic, cleanup đúng owner; canonical binding dùng host policy,
+demo giữ alias V1. Admin xem `/api/admin/mcp-runtime`. 39 test mới; Windows 604/604, Linux 604/604
+và Compose gate đạt, gồm process thật startup hang/exit, request timeout/crash, restart và cleanup.
+Connection DB theo user vẫn chưa nối transport, không tự đưa grant/credential vào registry host.
+Chi tiết: [runtime guide](docs/plugins/STDIO_RUNTIME.md),
+[ADR 0004](docs/adr/0004-stdio-plugin-manager.md) và [nghiệm thu Ngày 82](reports/checks/2026-10-18-day82/VALIDATION.md).
+
+Kết quả Ngày 83 (2026-10-18): Streamable HTTP adapter dùng SDK lock, chặn URL/redirect/proxy và ghim
+IP sau kiểm tra DNS, giữ TLS SNI/verify. Migration 0024 thêm encrypted secret và OAuth state theo owner;
+API PAT/bearer và OAuth public client preregistered có PKCE/state/issuer/resource, concurrent refresh,
+rotation và revoke local/provider. Private runtime factory pin owner/role/grant/reference, chưa nối graph/UI.
+46 test mới; Windows 650/650, Linux 650/650 và Compose gate đạt. TLS matrix JSON/SSE với protocol
+2025-11-25/2026-07-28; PostgreSQL probe kiểm tra state replay, stale consent, invalid grant và isolation.
+HTTP config mặc định rỗng/V2 tắt; chưa có DCR/auto-discovery/confidential OAuth hoặc provider live eval.
+Chi tiết: [HTTP/OAuth guide](docs/plugins/HTTP_AND_OAUTH.md),
+[ADR 0005](docs/adr/0005-http-mcp-credentials-and-oauth.md) và [nghiệm thu Ngày 83](reports/checks/2026-10-18-day83/VALIDATION.md).
+
+Kết quả Ngày 84 (2026-10-18): capability catalog schema-free có revision/SHA-256, index từ/phrase,
+kind/plugin/tag và view theo role/allowlist. API metadata không trả schema/secret; admin refresh
+tools/list cache-bypass, publish atomic, no-op giữ generation và reject cô lập server lỗi.
+Run pin definitions/registration; executor chặn generation đổi trước cache/execute. Lazy schema cache
+giữ nguyên JSON Schema MCP, fit budget context thực; required Skill không vừa trọn nhóm sẽ fail.
+27 test mới; Windows 677/677, Linux 677/677 và Compose gate đạt. Probe 200 tool chỉ convert 1 schema:
+573/800 token ước lượng, so với eager 114.461 token (giảm 99,5% trong fixture synthetic).
+Không đổi dependency/lock/migration, default V2 tắt; chưa bridge Skill/private connection vào graph,
+chưa có distributed invalidation/notification hoặc quality benchmark provider.
+Chi tiết: [catalog guide](docs/plugins/CAPABILITY_CATALOG.md),
+[ADR 0006](docs/adr/0006-capability-discovery-and-schema-budget.md),
+[nghiệm thu Ngày 84](reports/checks/2026-10-18-day84/VALIDATION.md).
+
+Kết quả Ngày 85 (2026-10-19): package Skill do host review, pin manifest/instructions SHA-256,
+validate metadata/dependency/path và lazy loading. Chat/SSE/resume dùng registry theo user/run,
+stdio binding đúng release và HTTP manager riêng. Fresh authority guard trước model/cache/retry/RPC,
+sau RPC và checkpoint digest chặn quyền/version cũ; không replay tool ghi sau revoke.
+24 test mới; Windows 701/701, Linux 701/701 và Compose gate cuối trên project mới đạt.
+Không đổi dependency/lock/migration, V2 mặc định tắt, package bindings mặc định rỗng; provider call 0.
+Clock WSL/Docker còn nhảy khoảng 570 giây, đã lưu bằng chứng; cần ổn định trước release.
+Chi tiết: [Skill guide](docs/plugins/PLUGIN_SKILLS.md),
+[ADR 0007](docs/adr/0007-plugin-skills-and-run-authorization.md),
+[nghiệm thu Ngày 85](reports/checks/2026-10-18-day85/VALIDATION.md).
+
+Kết quả Ngày 86 (2026-10-19): UI `/plugins` theo owner, `/admin/plugins` theo admin;
+catalog/manifest, grant theo capability, tạo/bật/tắt connection và quản lý token/OAuth/reference.
+Feature off có màn hình giải thích, không tải API; trạng thái configured không báo server online.
+Mutation dùng version snapshot, chống gửi trùng và không replay sau lỗi; render text an toàn.
+13 test mới; Windows 714/714, Linux 714/714, UI Chrome desktop/mobile và Compose đạt.
+Không thêm dependency/migration hoặc bật V2 mặc định. Hoãn connector GitHub/web search và Skill
+research/report theo yêu cầu; chưa nghiệm thu hai connector live hoặc toàn bộ M1.
+Chi tiết: [UI guide](docs/plugins/PLUGINS_UI.md),
+[nghiệm thu Ngày 86](reports/checks/2026-10-19-day86/VALIDATION.md).
+
+Nghiệm thu M1: thêm plugin bằng manifest không sửa lõi graph; demo và hai connector thực tế hoạt động;
 100+ tool trong fixture không làm prompt nạp mọi schema; server chết có trạng thái lỗi riêng;
 disable/revoke chặn cả lời gọi mới lẫn retry chưa thực thi. Catalog refresh không làm đổi tool đang
 thực thi âm thầm: pin version theo call và báo mismatch trước call tiếp theo.
@@ -424,7 +504,8 @@ Luồng quyết định đề xuất:
 2. Tạo state gọn: query hiện tại, ngữ cảnh hội thoại cần thiết, tài liệu đang chọn, tiến độ,
    summary observation và capability hợp lệ. Giữ nguyên phủ định/số/mã định danh khi chuẩn hóa.
 3. Rules hoặc cache quyết định chính xác được ưu tiên; nếu chưa đủ thì gọi Jev chọn
-   `chat`, `tool_task`, `document_qa`, `planned_task`, `clarify`. Nhánh không sẵn sàng bị loại.
+   `chat`, `tool_task`, `document_qa`, `planned_task`; chat nhận cả yêu cầu cần hỏi rõ.
+   Trong preview, RAG/planner chưa có lõi vẫn là lựa chọn hợp lệ để kiểm tra ý định.
    Web search là capability của `tool_task` hoặc một task trong `planned_task`.
 4. Với tool/Skill: lấy shortlist metadata theo capability → Jev chọn Skill/tool phù hợp → nạp
    hướng dẫn/schema → LLM sinh arguments theo Pydantic → ToolExecutor validate và thực thi.
@@ -447,14 +528,99 @@ Noul không có trường confidence riêng. Không dùng Jev để cấp quyề
 sinh plan tự do hoặc sinh đối số văn bản dài.
 [Confidence](https://docs.typesafe.ai/confidence), [giới hạn Jev 1.13](https://docs.typesafe.ai/model-jaggedness/jev-1.13).
 
-- [ ] Ngày 88: Tạo `DecisionProvider` và Jev async adapter; config, timeout tổng, usage và model version; mock contract.
-- [ ] Ngày 89: Viết taxonomy route và bộ query gán nhãn tiếng Việt/Anh, nhiều lượt, phủ định, không tool và thiếu thông tin.
-- [ ] Ngày 90: Tích hợp query router trước graph; rules, feature flags và route capability-aware.
-- [ ] Ngày 91: Jev chọn Skill/tool trên shortlist; `none`/`search_more`, nạp schema động và re-route sau observation.
-- [ ] Ngày 92: Fallback LLM, circuit breaker và state budget; giới hạn dữ liệu gửi provider theo cấu hình privacy.
+- [x] Ngày 88 (phạm vi đã chốt): Tạo `DecisionProvider` và Jev async adapter nhận client từ caller; chưa nối graph.
+- [x] Phần Ngày 88 bổ sung: config/lifecycle, timeout tổng, usage/model version và contract với SDK thật qua HTTP giả lập; kết nối Jev OpenRouter đã kiểm tra live riêng.
+- [x] Ngày 89: Viết taxonomy route và bộ query gán nhãn tiếng Việt/Anh, nhiều lượt, phủ định, không tool và thiếu thông tin.
+- [x] Ngày 90: Tích hợp query router trước graph; rules, feature flags và route capability-aware.
+- [x] Ngày 91 (phần code/injection): Nối DecisionProvider/Jev adapter vào chọn Skill/tool trên shortlist; `none`/`search_more`, nạp schema động và re-route sau observation.
+- [ ] Nghiệm thu thực tế Jev Ngày 91: người dùng kiểm tra chat/Skill/tool live; SDK/DI live và contract tự động đã đạt, không thay thế E2E thực tế.
+- [x] Ngày 92: Fallback LLM JSON, circuit breaker, budget theo run/resume và privacy; kiểm thử tự động logic khó quan sát, chất lượng live do người dùng kiểm tra.
 - [ ] Ngày 93: Benchmark rules/keyword, LLM router, Jev và cascade; hiệu chỉnh threshold theo loại query và số candidate.
-- [ ] Ngày 94: Thêm route trace/admin metric và chế độ shadow chỉ ghi quyết định, không thực thi thêm tool.
+- [x] Ngày 94 (chức năng): trace PostgreSQL, admin metric/UI và shadow giữ baseline, không thực thi thêm tool; nghiệm thu UI/live do người dùng thực hiện.
 - [ ] Ngày 95: Canary routing, kiểm tra hồi quy với quyền/tool thật; chọn version và policy dùng mặc định từ kết quả đo.
+
+Phạm vi nghiệm thu thủ công bổ sung 2026-10-22:
+
+- [x] Thêm `query_router.py`: query mới nhất + history gần nhất, một Choice đủ bốn route,
+  lấy xác suất cao nhất không ngưỡng; đồng hạng chính xác chuyển `chat`, giữ xác suất gốc.
+  Theo yêu cầu cập nhật: bỏ Choice clarify, bổ sung hỏi rõ vào chat; giữ tiêu chí tool/planner.
+  Sau cập nhật bốn Choice: lint/format và 216 regression đạt; probe inline kiểm tra argmax,
+  đồng hạng về chat, history, trace và SSE. Manual thêm hai kịch bản nhiều lượt cùng hội thoại.
+- [x] Chế độ web `ROUTING_PREVIEW_ONLY`: trả route và phân phối ngay trong chat rồi kết thúc,
+  không gọi DeepSeek/fallback, memory, plugin runtime, Skill/tool hoặc agent. RAG/planner chưa có
+  lõi vẫn là lựa chọn hợp lệ; không đổi thành clarify vì chưa triển khai handler.
+- [x] Ghi query trace, usage/model/latency thật; lỗi Jev trả lỗi thay vì giả kết quả phân loại.
+- [x] Tạo duy nhất tài liệu kiểm tra mới [30 case thủ công](docs/routing/MANUAL_JEV_CASES.md).
+  Không khôi phục các Markdown routing đã được người dùng xóa, không tạo file test tự động mới.
+- [x] Lint và 216 regression routing hiện có đạt. Probe inline không ghi file xác minh cả năm route,
+  xác suất thấp, đồng hạng/gần nhau, history/privacy, SDK thật qua HTTP fixture, query usage trace,
+  API chat/SSE, chặn resume và không khởi tạo DeepSeek hoặc chạy plugin/agent. Không gọi Jev live.
+- [x] Người dùng kiểm tra bộ case trên web và xác nhận Jev routing đã ổn (2026-10-22).
+  Đây là nghiệm thu thủ công của preview, chưa thay thế benchmark/canary Ngày 93/95.
+- [x] Sửa danh sách hội thoại: vùng cuộn riêng, hàng không co/chèn nhau, tiêu đề dài có ellipsis.
+  Thêm nút xóa có xác nhận, xử lý hội thoại đang mở/cuối cùng; API DELETE theo owner,
+  chặn tác vụ đang chạy, dọn checkpoint/job và dữ liệu cascade. Không thêm file hoặc migration.
+  77 regression đạt; Chrome headless kiểm tra 70 hội thoại và luồng xóa với API fixture;
+  PostgreSQL/API kiểm tra quyền, busy, cascade và checkpoint qua probe inline đã rollback.
+- [x] Giữ dòng nhắc dưới ô nhập cố định; chuyển trạng thái thao tác/lỗi sang vùng riêng ở header,
+  không để thông báo xóa hội thoại hoặc stream ghi đè nội dung nhắc.
+- [x] Sau nghiệm thu: gỡ code sinh bảng route/xác suất, stream preview và cờ preview;
+  nối quyết định Jev vào bốn nhánh. Chat/tool_task dùng graph/model/selector hiện có;
+  document_qa/planned_task trả thông báo chưa có lõi. Chat tự hỏi rõ khi cần bằng model hiện có.
+  Giữ route/provider/catalog/policy trong checkpoint; resume không phân loại lại, không ghi trùng
+  query usage. 216 regression đạt; probe inline xác minh bốn nhánh, chat/tool execution,
+  nhánh chờ lõi, resume/policy pin và SSE trả nội dung thay cho bảng debug. Không gọi model live.
+- [ ] Bàn tiếp tool_task: Choice sinh từ catalog local/plugin theo quyền, chọn một capability
+  mỗi bước hoặc chọn nhiều capability; chưa thay đổi policy chọn tool trong đợt gỡ preview.
+
+Cập nhật chức năng M2 (2026-10-19): hoàn tất phần còn lại Ngày 88 và chức năng Ngày 92/94;
+43 test mới, Windows 905/905 và Linux 905/905 đạt. PostgreSQL scratch kiểm tra migration,
+usage/model, ownership, quota, budget resume và cascade; probe CI read-only đạt.
+DB local đã nâng `0022 → 0025`. Không coi kết quả tự động là benchmark chất lượng hoặc
+nghiệm thu UI/live; hướng dẫn: [Jev runtime](docs/routing/PROVIDER_RUNTIME.md),
+[kiểm tra tự động](reports/checks/2026-10-19-m2-runtime/VALIDATION.md).
+
+Kết quả phần đầu Ngày 88 (2026-10-19): `agent_core/routing` có Protocol DecisionProvider,
+Choice request/result và JevDecisionProvider await public `system_one` trên client được inject.
+Kiểm tra exact option set, distribution và lỗi trả về an toàn; chưa import/cài SDK, tạo client hoặc
+đọc key/config. 19 test validation dữ liệu cục bộ và Windows regression 733/733 đạt; chưa mock
+client/HTTP hay xác minh SDK/live. Không tạo RoutingDecision bằng usage/model version giả,
+không đổi dependency/lock/flags/selector/graph. Ngày 87 và phần còn lại Ngày 88 chưa hoàn thành.
+Chi tiết: [decision provider guide](docs/routing/README.md),
+[kiểm tra phần đầu Ngày 88](reports/checks/2026-10-19-day88/VALIDATION.md).
+
+Kết quả Ngày 89 (2026-10-19): taxonomy 1.0.0 định nghĩa đủ 5 route của contract hiện có;
+300 query = 150 tình huống Việt/Anh, 30 family, dev/test 200/100, mỗi route 60 query.
+Có 58 query nhiều lượt, 86 phủ định, 60 không tool và 48 thiếu thông tin; ngôn ngữ cùng family
+không tách split. Loader validate reference/readiness/annotation, trùng full input đã normalize;
+projection eval bỏ label/note/tag/ID annotation/split. Nguồn synthetic initial single-pass chưa review độc lập.
+33 test mới; Windows 766/766 và Linux 766/766 đạt, CI thêm validator offline và actionlint đạt.
+Không gọi model, chưa đo F1/recall hoặc nối router vào graph; không thay lock/migration/flags.
+Chi tiết: [taxonomy](docs/routing/TAXONOMY.md), [corpus](evals/datasets/routing/README.md),
+[kiểm tra Ngày 89](reports/checks/2026-10-19-day89/VALIDATION.md).
+
+Kết quả Ngày 90 (2026-10-19): rules router dùng runtime catalog theo quyền, chạy trước Skill/tool
+middleware và graph; master/routing mặc định tắt. Chat nạp 0 tool/Skill, tool_task giữ selector/
+executor/quota/approval cũ, clarify hoàn tất message/run không gọi model. RAG/planner chưa có
+handler không thành available chỉ vì bật flag. SSE thêm `routing`; checkpoint pin quyết định/
+policy/catalog, resume không re-route và từ chối catalog/policy thay đổi trước approval/tool/model.
+57 test mới; Windows 823/823, Linux 823/823 và Compose gate đạt, gồm cookie auth/SSE/PostgreSQL
+checkpoint/resume với model fixture. Không gọi Jev/DeepSeek, không đổi lock/migration hoặc bật flag.
+Rules là baseline keyword, chưa đo macro-F1/shortlist recall; không thay nhãn corpus Ngày 89.
+Chi tiết: [Query router](docs/routing/QUERY_ROUTER.md), [ADR 0008](docs/adr/0008-query-routing-before-graph.md),
+[kiểm tra Ngày 90](reports/checks/2026-10-19-day90/VALIDATION.md).
+
+Kết quả phần code Ngày 91 (2026-10-19): ShortlistRouter chọn một tool/Skill hoặc none/search_more
+qua DecisionProvider inject, chỉ nạp schema/instructions đã chọn và đủ dependency/token budget.
+Metadata Skill có guard riêng; quyền/approval/quota vẫn giữ nguyên. Context node chọn lại sau mỗi
+observation batch; checkpoint pin choice/schema/Skill/policy limits, resume không reselect pending
+approval hoặc tự fallback V1. Xử lý cả pending context writes khi commit checkpoint lỗi.
+Backend dependency mặc định None, flags vẫn tắt; chưa cấu hình/mock SDK/gọi Jev hoặc tạo telemetry giả.
+39 test mới; Windows 862/862, Linux 862/862 và Compose gate bản cuối đạt với Protocol/model fixture,
+cookie/SSE/PostgreSQL thật. Rules 1.1.0 thêm đường Skill metadata khi inject; rules 1.0.0 cần run mới.
+Chi tiết: [Shortlist guide](docs/routing/CAPABILITY_SHORTLIST.md),
+[ADR 0009](docs/adr/0009-capability-shortlist-and-observation-routing.md),
+[kiểm tra Ngày 91](reports/checks/2026-10-19-day91/VALIDATION.md).
 
 Nghiệm thu đề xuất: tập 300+ query có nhãn, chia dev/test tránh paraphrase leakage; macro-F1 route
 ≥ 0,90 và recall shortlist@8 ≥ 0,95; lỗi trên phần tự route ≤ 2% tại coverage được báo cáo.
@@ -466,21 +632,55 @@ nhưng vẫn benchmark catalog riêng của project.
 ### M3 — Upload tài liệu, hybrid RAG và citation
 
 Phạm vi đầu tiên: tài liệu riêng theo `user_id`, chọn một/nhiều tài liệu trong chat; tìm kiếm tài liệu
-và tìm đoạn văn là hai thao tác UI riêng. Chưa cần tổ chức/team sharing, OCR hay GraphRAG để ra bản đầu.
+và tìm đoạn văn là hai thao tác UI riêng. File thuộc thư viện user, tồn tại qua nhiều hội thoại;
+upload trong chat đồng thời chọn file cho hội thoại đó. Mở hội thoại mới có thể chọn lại file cũ;
+bỏ chọn/xóa hội thoại không xóa file thư viện. Mặc định hỏi trong các file đang chọn.
+Chưa cần tổ chức/team sharing, OCR hay GraphRAG để ra bản đầu.
+
+Thiết kế chốt với user ngày 2026-10-24: parse bằng Docling (PDF/Word), LibreOffice cho DOC cũ,
+Python cho TXT; LlamaIndex cho pipeline RAG, LangGraph điều phối, PostgreSQL + pgvector lưu index.
+Embedding `codefuse-ai/F2LLM-v2-0.6B`, rerank `Qwen/Qwen3-Reranker-0.6B`; model chat hiện có
+thực hiện rewrite và trả lời. Triển khai từng phần nhỏ, dừng sau mỗi phần để user review và tự
+commit/push; chưa tạo/chạy test chức năng, fixture, benchmark hay eval. Kiểm thử trực quan do user
+thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế nghiệm thu chức năng.
+
+**Các phần nhỏ và tiến độ code**
+
+- [x] M3.1: Model/migration nền dữ liệu: document/version/chunk, tiến độ ingestion trên queue hiện có,
+  file trong hội thoại và citation; vector 1.024 chiều, GIN và ràng buộc liên kết cùng owner.
+  Code migration `20261024_0026`; chưa áp dụng database, chưa có API/UI hoặc kiểm thử runtime.
+  Thêm khóa ghép ở `conversations`/`messages` để liên kết không thể trỏ sang hội thoại user khác.
+  Chưa có dịch vụ upload/quota, query filter quyền, kiểm tra ready khi publish và handler ingestion.
+- [ ] M3.2: Storage và API upload/list/status/download/delete, ownership/quota và chống file không hợp lệ.
+- [ ] M3.3: Thư viện trên web, upload/chọn file trong hội thoại, giữ scope khi mở lại.
+- [ ] M3.4: Worker ingestion, parse/chuẩn hóa/chunk có nguồn; trạng thái, retry và cancel.
+- [ ] M3.5: Embedding F2LLM, lexical index và retrieval lọc owner/document/active version.
+- [ ] M3.6: Hybrid/RRF, Qwen rerank, LLM rewrite và đóng gói evidence theo budget.
+- [ ] M3.7: Nhánh document_qa, hỏi nối tiếp/nhiều ý/tóm tắt có độ phủ, citation bền vững và UI mở nguồn.
+- [ ] M3.8: Hoàn thiện delete/re-index/invalidation, user test tay trên web và sửa theo kết quả.
+
+M3.1 chỉ chuẩn bị schema, không bật RAG hoặc tự tải model. `document_ingestion_jobs` ghi tiến độ,
+liên kết `background_jobs`; không tạo scheduler/queue thứ hai. Cột embedding cho phép NULL trong
+lúc ingestion; worker về sau phải kiểm tra đủ chunk/vector trước khi publish `active_version`.
+Ràng buộc owner ở khóa ngoại ngăn liên kết sai chủ, không thay thế filter quyền khi SELECT/API.
+Exact search là baseline; chưa tạo HNSW ở phần này. Downgrade chỉ gỡ schema M3, giữ extension dùng chung.
 
 **Upload và ingestion**
 
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;
    ghi storage bằng ID do server sinh. Mức khởi đầu đề xuất: 20 MiB/file, 200 MiB/user,
    500 trang/PDF; cấu hình được và phải có test biên. Chặn archive/decompression bomb của DOCX.
-2. Lưu `documents`, `document_versions`, `ingestion_jobs`; dùng queue PostgreSQL hiện tại.
+2. Lưu `documents`, `document_versions`, `document_chunks`, `document_ingestion_jobs`,
+   `conversation_documents`, `document_citations`; dùng queue PostgreSQL hiện tại.
    Status: `uploaded → queued → parsing → chunking → embedding → indexing → ready`,
    có `failed`, `cancelled`, `deleting`, mã lỗi và retry theo từng stage.
-3. Worker parse PDF có text, DOCX, TXT, Markdown; giữ page/heading/offset/table metadata.
-   PDF scan/khóa mã hóa được báo rõ chưa hỗ trợ; parser có timeout/memory limit và chạy tách khỏi web.
-4. Chunk theo cấu trúc và tokenizer của embedding model; thử khoảng 250–400 token, overlap 40–60,
-   giữ title/heading trong phần dùng để embedding. Số này là cấu hình benchmark, không áp dụng
-   mù quáng cho mọi model hoặc cắt làm mất ngữ cảnh bảng.
+3. Worker parse PDF có text, Word DOC/DOCX và TXT; tắt OCR rõ ràng, giữ page/heading/offset/table
+   metadata. PDF scan/khóa mã hóa được báo rõ chưa hỗ trợ; file trộn trang scan phải báo phần chưa đọc.
+   Parser có timeout/memory limit và chạy tách khỏi web. Giữ bản trích gốc riêng với bản chuẩn hóa
+   Unicode NFC/khoảng trắng; không làm mất số liệu, mã và phủ định, không rewrite tài liệu bằng LLM.
+4. Chunk theo cấu trúc heading/đoạn/câu và tokenizer F2LLM, tối đa 512 token gồm ngữ cảnh tiêu đề,
+   overlap 64 khi chia mục dài. Không overlap giữa file/mục không liên quan; bảng chia theo nhóm hàng
+   và giữ header. Metadata nguồn phải trỏ đúng bản gốc. Các con số là cấu hình khởi đầu để user test.
 5. Pipeline hash gồm owner, file hash, parser/chunker/embedding version; upload trùng trong cùng
    phạm vi được tái sử dụng, không tiết lộ user khác đã upload cùng file. Index build tạm;
    chỉ đổi `active_version` nguyên tử khi toàn bộ version mới sẵn sàng.
@@ -493,26 +693,28 @@ LlamaIndex có ingestion pipeline và cơ chế document hash phục vụ xử l
 
 **Retrieval và trả lời**
 
-- Embedding là provider riêng với model/version/dimension được lưu. Baseline đề xuất
-  `intfloat/multilingual-e5-small` chạy local, tuân thủ prefix/tokenizer trong model card;
-  benchmark thêm BGE-M3 nếu phần cứng cho phép. Đo tiếng Việt có dấu/không dấu, mã sản phẩm,
-  tên riêng và tài liệu lẫn tiếng Anh trước khi chọn mặc định.
-  [E5 model card](https://huggingface.co/intfloat/multilingual-e5-small),
-  [BGE-M3 model card](https://huggingface.co/BAAI/bge-m3).
+- Embedding là provider riêng với model/revision/dimension được lưu. Dùng
+  `codefuse-ai/F2LLM-v2-0.6B` local, đủ 1.024 chiều, chuẩn hóa vector và cosine;
+  `encode_query`/`encode_document` theo hướng dẫn model, không sao chép prompt Octen/E5.
+  Model cache dùng chung do hệ thống quản lý; device/batch theo phần cứng, không load model mỗi request.
+  [F2LLM model card](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B).
 - PostgreSQL/pgvector lưu vector cùng chunk identity và version; dùng exact search làm baseline
   rồi HNSW khi corpus đủ lớn. SQL phải có owner/document/version filter trước khi trả evidence.
   ANN có thể thiếu kết quả khi filter chặt: benchmark exact-vs-HNSW và iterative scan,
   cân nhắc partition khi có số liệu. [pgvector filtering](https://github.com/pgvector/pgvector#filtering)
-- Lexical baseline: PostgreSQL FTS + GIN, có tokenizer phù hợp tài liệu tiếng Việt;
-  `ts_rank` không phải BM25. Nhánh nâng cao dùng LlamaIndex BM25, snapshot riêng theo
-  owner/collection/version, có giới hạn RAM và LRU. Không dựng BM25 trên toàn bộ tài liệu mọi user
-  rồi mới lọc kết quả. Benchmark FTS và BM25 để chọn nhánh mặc định.
-- Hybrid: dense top-20 và lexical top-20 chạy độc lập → RRF → rerank tối đa 20 ứng viên →
-  4–8 evidence trong context budget. Các top-k là điểm bắt đầu để đo; không cộng trực tiếp
-  cosine score với BM25 score. BM25 snapshot cần tái tạo khi tài liệu bị sửa/xóa.
-- `Reranker` có interface riêng: baseline không rerank, candidate cross-encoder đa ngôn ngữ
-  và candidate Jev chấm từng passage. Chỉ bật phương án cải thiện nDCG/answer quality trong budget.
-  Query rewrite chỉ chạy khi query phụ thuộc hội thoại hoặc thiếu rõ ràng; giữ cả query gốc để fusion.
+- Lexical baseline: PostgreSQL FTS + GIN, xử lý có dấu/không dấu nhất quán và ưu tiên heading;
+  rút cụm quan trọng, không AND mọi từ trong câu hỏi. `ts_rank` không phải BM25; BM25 để cân nhắc sau.
+- Hybrid: dense top-20 và lexical top-20 chạy độc lập → RRF trọng số bằng nhau, hằng số 60 →
+  loại trùng → tối đa 20 ứng viên cho rerank → mục tiêu 6, tối đa 8 evidence trong context budget.
+  Các top-k là cấu hình ban đầu; không cộng trực tiếp cosine với lexical score, không coi score là
+  bảo đảm câu trả lời đúng. HNSW khi cần: m=16, ef_construction=128, ef_search=100, iterative strict_order.
+- Rerank bật trong luồng chính bằng `Qwen/Qwen3-Reranker-0.6B`, tuân thủ template/scoring của model.
+  [Qwen reranker](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B).
+  Trong document_qa, không có history thì dùng query hiện tại; có history thì gọi model chat hiện có
+  một lần để tạo query tự đủ nghĩa (giữ nguyên nếu đã rõ). Đầu vào gồm query/history/metadata file,
+  không phải toàn tài liệu; lưu query gốc/query rewrite và usage/latency vào run.
+  JEV nhận metadata file đã chọn để phân route; không chọn từng bước embedding/rerank như tool_task.
+  Câu nhiều ý có truy vấn con; tóm tắt toàn tài liệu phải đọc phủ các phần, không chỉ top-k thông thường.
 - `RetrievalResult` gồm `document_id`, `version_id`, `chunk_id`, title, page/section, score,
   đoạn trích nguyên gốc và retrieval config version. Metadata phân quyền lấy từ runtime,
   không nhận `user_id` do model truyền vào.
@@ -800,9 +1002,32 @@ Không mặc định các số liệu hiệu năng trong sách áp dụng cho pr
 
 ## Task tiếp theo
 
-Ngày 79 — Khóa dependency tái lập, dựng CI lint/unit/migration/integration nền tảng;
-tạo fixture/dataset khung cho routing, retrieval và task orchestration.
+Jev phân bốn route đã được người dùng nghiệm thu và nối vào luồng thật; cờ/code preview đã gỡ.
+Chat và tool_task dùng phần thực thi hiện có; RAG/planner chưa có lõi sẽ thông báo chưa sẵn sàng.
+Tiếp theo: thống nhất thiết kế Choice động và cách chọn một/nhiều tool trong tool_task trước khi sửa.
+Ngày 93/95 vẫn chưa nghiệm thu; regression/probe fixture không thay thế benchmark chất lượng.
 
-Ngày 76–78 đã hoàn thành baseline, contract/config và Docker dev. Trước release cần đối soát run cũ đang `running`
+Ngày 87 vẫn chưa thực hiện: test thêm/xóa server, trùng tên, mất kết nối, credential chéo user,
+giả mạo annotation và catalog 100+ tool. Không coi việc hoàn thành code Ngày 91 là nghiệm thu M1.
+
+Ngày 88 đã có thêm config/lifecycle, deadline tổng, usage/model version và SDK compatibility test.
+Ngày 92/94 có fallback JSON/circuit/budget/privacy, trace/admin/shadow; regression tự động và
+PostgreSQL scratch kiểm tra phần khó xác minh bằng tay. Benchmark/canary vẫn chưa nghiệm thu.
+
+Ngày 90–91 đã tích hợp rules router và shortlist qua provider inject, schema/Skill động cùng pin
+khi resume. Đã nối Jev OpenRouter và bổ sung fallback/trace/admin/shadow; chưa benchmark hoặc canary.
+
+Ngày 89 đã có taxonomy và corpus song ngữ/validator offline; nhãn ban đầu chưa review độc lập,
+chưa có router quality benchmark, không xác minh Jev runtime hay bỏ qua phần config Ngày 88.
+
+Phần hoãn Ngày 86: hai connector GitHub đọc + web search và Skill mẫu research/report;
+người dùng sẽ tự setup/test sau. UI đã hoàn thành, chưa coi connector live hay toàn bộ M1 đạt.
+
+Ngày 76–86 đã hoàn thành baseline, contract/config, Docker dev, lockfile, CI/fixture, plugin metadata,
+control API theo owner, PluginManager stdio/HTTP, SSRF, encrypted credential/OAuth lifecycle,
+runtime capability catalog, discovery, schema token budget, Skill plugin/private HTTP bridge và
+authority/version guard theo run và UI Plugins/Connections. Clock WSL/Docker cần đồng bộ ổn định trước release.
+Trước release cần đối soát run cũ đang `running`
 gây cảnh báo critical; không tự coi regression pass là toàn bộ release checklist đã đạt.
-Việc xác định repo Git đích và dependency lock còn nằm trong M0/Ngày 79.
+Repo Git đích đã có: `Bo2874/Agent_Project`. Commit/push thay đổi Ngày 79–86, phần đầu Ngày 88 và Ngày 89–91 để GitHub Actions chạy;
+không coi kết quả gate local là bằng chứng một GitHub-hosted run đã thành công.

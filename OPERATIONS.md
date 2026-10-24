@@ -145,12 +145,27 @@ message log mới. Sau sự cố, ghi lại thời gian, tác động, nguyên n
 
 ## 8. Regression gate sau migration framework
 
+Từ Ngày 79, cài dependency bằng uv 0.13.1 và lockfile trước khi chạy gate:
+
+```powershell
+uv sync --locked --extra dev --no-install-project --no-build
+uv lock --check --offline
+uv pip check
+```
+
+Workflow [Foundation CI](.github/workflows/ci.yml) chạy lint/unit trên Windows/Linux và
+migration/integration trên Compose với database mới; không cần model key. Hướng dẫn cài mới,
+nâng dependency, gate local và kích hoạt GitHub Actions:
+[Dependency và CI](docs/DEPENDENCIES_AND_CI.md).
+
 Chạy phần offline trước:
 
 ```powershell
 .\.venv\Scripts\ruff.exe check agent_core backend migrations scripts tests
 .\.venv\Scripts\python.exe -m pytest -q --ignore=tests/test_mcp.py
 .\.venv\Scripts\python.exe -m scripts.validate_eval_dataset
+.\.venv\Scripts\python.exe -m scripts.validate_foundation_datasets
+.\.venv\Scripts\python.exe -m scripts.validate_plugin_manifests
 .\.venv\Scripts\python.exe -m scripts.evaluate_skills
 ```
 
@@ -172,6 +187,15 @@ Eval smoke thật trước release:
 `--with-llm` và `run_evals` gọi DeepSeek thật. Chỉ đánh dấu release gate hoàn tất khi Docker Desktop
 đang chạy và `python -m scripts.check_python_sandbox` cùng `python -m scripts.check_python_tool_result`
 đều đạt.
+
+Gate Compose nền tảng có thể chạy độc lập, không gọi provider:
+
+```powershell
+python -m scripts.ci_compose_gate --cold-build --output-dir reports/ci/compose
+```
+
+Gate dùng project/volume mới, từ chối namespace có sẵn, giữ volume và dừng container trong
+finally. Dataset V2 là scaffold; validation không phải quality eval của router/retriever/planner.
 
 ## 9. Baseline trước V2
 
@@ -202,13 +226,107 @@ Các biến `V2_ENABLED`, `V2_PLUGINS_ENABLED`, `V2_ROUTING_ENABLED`, `V2_RAG_EN
 Planning cần routing và parallel cần planning; cấu hình thiếu dependency làm startup báo lỗi
 validation ngay cả khi master false. Thay env cần restart vì Settings được cache theo process.
 
-Ngày 77 mới chốt contract/config; bật flag không tự tạo runtime plugin/RAG/planner/cache chưa
-triển khai. Flag không thay quyền user/tool, quota hoặc approval. MCP demo/sandbox và SSE hiện tại
-vẫn dùng luồng V1. Chi tiết và ví dụ tại [contract V2](docs/contracts/README.md) và
+Từ Ngày 80 có manifest/catalog metadata tại `agent_core/plugins/`; hướng dẫn field, policy,
+namespace, version và trust boundary ở [Plugin guide](docs/plugins/README.md).
+`python -m scripts.validate_plugin_manifests` kiểm tra offline, xây catalog tạm disabled và
+không start server. Bật flag hoặc đặt catalog entry enabled vẫn chưa tạo connection/grant/runtime.
+
+Ngày 81 thêm API và bảng PostgreSQL cho plugin/grant/connection/credential reference, head
+`20261018_0023`. Backup trước khi upgrade DB có dữ liệu; không downgrade 0023 nếu cần giữ dữ liệu
+plugin mới. Migration chỉ seed catalog state, không import manifest hay cấp quyền tự động.
+Bật cả master/plugins mở các API có auth; admin đăng ký/cấp grant, user bật connection của mình.
+Compose nhận `DEV_V2_ENABLED` và `DEV_V2_PLUGINS_ENABLED`, đều mặc định false.
+Hướng dẫn request/version/revoke ở [Plugin API](docs/plugins/API.md), ownership ở
+[ADR 0003](docs/adr/0003-plugin-persistence-and-user-ownership.md).
+Gate `scripts.ci_compose_gate` kiểm tra migration round-trip trên DB tạm và API thật với user synthetic;
+không chạy probe này trên DB host/production. `runtime_connected` vẫn false cho connection V2.
+
+Ngày 82: stdio host profile nằm ở `plugins/stdio/servers.json`, chọn bằng `MCP_STDIO_CONFIG_PATH`
+(Compose: `DEV_MCP_STDIO_CONFIG_PATH`). Restart process sau khi đổi cấu hình; demo giữ alias cũ.
+Manager startup từng server độc lập, có timeout/health/circuit breaker; admin xem
+`GET /api/admin/mcp-runtime`. Server lỗi không làm readiness DB fail, nhưng health báo degraded.
+Không tự reconnect/replay; sửa config rồi restart app hoặc dùng API restart nội bộ sau cooldown.
+Kiểm tra độc lập: `python -m scripts.check_plugin_manager`; xem [runtime guide](docs/plugins/STDIO_RUNTIME.md).
+
+Ngày 83: head `20261018_0024` thêm encrypted credential/OAuth state. Backup DB và giữ encryption key
+riêng trước khi upgrade; downgrade 0024 sẽ mất các bảng credential/state mới. Host HTTP profile ở
+`plugins/http/servers.json`, chọn bằng `MCP_HTTP_CONFIG_PATH`; mặc định rỗng. Key ring riêng
+`MCP_CREDENTIAL_ENCRYPTION_KEYS` không có default/fallback JWT; Compose dùng các biến `DEV_*` tương ứng.
+Thiếu key chỉ làm thao tác cần mã hóa trả 503. Không đưa token hoặc key ring vào manifest/image/Git.
+HTTP chỉ đi URL host đã review, DNS public được ghim IP, TLS verify, không redirect/proxy. Revoke
+local commit trước provider; remote fail không tự retry. Khi invalid grant hoặc đổi grant/role/reference,
+hãy reauthorize/reconnect; không replay tool ghi. Chi tiết [HTTP/OAuth](docs/plugins/HTTP_AND_OAUTH.md).
+Probe `python -m scripts.check_http_plugins` chạy TLS localhost; credential probe nằm trong Compose gate,
+không chạy trên PostgreSQL host/production. Tại mốc Ngày 83, connection chưa được nối vào graph;
+runtime riêng theo run được bổ sung ở Ngày 85 bên dưới.
+
+Ngày 84: `GET /api/capabilities` trả metadata host runtime đã lọc role/allowlist, không trả schema.
+Admin bật master/plugins có thể gọi `POST /api/admin/mcp-runtime/{server_name}/discover` để refresh
+toàn bộ trang tools/list với cache bypass. No-op giữ version; discovery lỗi withdraw riêng server đó.
+Run mới dùng schema mới, run đang chạy báo `tool_catalog_changed` trước call tiếp theo nếu binding đổi.
+Schema được lazy convert/cache theo registration và fit `CONTEXT_TOOL_TOKEN_BUDGET`; required Skill
+không vừa budget sẽ fail trước model call. Probe: `python -m scripts.check_capability_catalog`,
+đã tích hợp Compose gate. Xem [catalog guide](docs/plugins/CAPABILITY_CATALOG.md).
+
+Ngày 85: package bindings ở `plugins/packages.json`, root `plugins/packages/`, chọn bằng
+`PLUGIN_PACKAGES_CONFIG_PATH` (`DEV_PLUGIN_PACKAGES_CONFIG_PATH` trong Compose). Mặc định rỗng.
+Pin manifest fingerprint và từng instructions SHA-256; metadata/required canonical tool alias phải
+khớp manifest. Không chỉnh file package trực tiếp khi đang phục vụ run; review release/hash mới và
+host stdio binding tương ứng trước khi user bật lại connection. Giữ `TOOL_ALLOWLIST` cho alias mới.
+Chat khi bật master/plugins dùng runtime riêng, fresh authority check trước model/cache/retry/RPC
+và sau RPC. Revoke/version đổi yêu cầu run mới, không replay pending write; checkpoint lệch pin bị
+từ chối. Private MCP session chỉ sống trong run, control `runtime_connected=false` không phải inventory.
+Probe PostgreSQL `scripts.check_plugin_skills` chỉ chạy trong Compose gate synthetic. Chi tiết:
+[Skill runtime](docs/plugins/PLUGIN_SKILLS.md), [ADR 0007](docs/adr/0007-plugin-skills-and-run-authorization.md).
+
+Ngày 86 (UI): `/plugins` cho user, `/admin/plugins` cho admin. Default flags vẫn tắt; bật master/plugins
+trong cấu hình private rồi restart app để dùng catalog/grant/connection. Không tự setup connector.
+OAuth UI cần reviewed redirect URI `<app-origin>/plugins/oauth/callback`; callback cũ trả JSON vẫn dùng
+được. Thao tác bị 409 cần tải lại, không tự replay; trạng thái configured không xác nhận server online.
+Guide và cách test Chrome offline: [Plugins UI](docs/plugins/PLUGINS_UI.md).
+
+Ngày 77 chốt contract/config; plugin runtime đã được bổ sung đến Ngày 85, các phần
+RAG/planner/cache chưa triển khai vẫn cần task tương ứng. Flag không thay quyền user/tool,
+quota hoặc approval. Khi tắt master/plugins, MCP demo/sandbox và SSE giữ luồng V1.
+Chi tiết và ví dụ tại [contract V2](docs/contracts/README.md) và
 [ADR ownership](docs/adr/0001-v2-contracts-and-layer-ownership.md).
+
+Ngày 90: rules query router opt-in cần cả master/routing; Compose nhận `DEV_V2_ROUTING_ENABLED`
+(mặc định false). Router chỉ thấy runtime catalog theo quyền; chat không nạp tool/Skill, tool_task
+giữ executor/approval cũ, clarify hoàn tất message/run mà không gọi model. RAG/planner chưa có
+handler sẽ hỏi lại, không tự khả dụng khi bật flag. Jev config/metadata/mock contract tiếp tục hoãn.
+Restart app sau đổi env. Tắt switch đưa run mới về V1; resume giữ route đã pin. Catalog/policy đổi
+báo `routing_checkpoint_changed`, cần run mới; checkpoint lỗi báo `routing_checkpoint_invalid`.
+SSE thêm `routing` khi bật, UI cũ tiếp tục dùng event hiện có. Compose gate đã thêm probe cookie/
+SSE/PostgreSQL offline; không chạy `scripts.check_query_routing` trên DB host/production.
+Chi tiết: [Query router](docs/routing/QUERY_ROUTER.md), [ADR 0008](docs/adr/0008-query-routing-before-graph.md).
+
+Ngày 91: `get_decision_provider` mặc định None; hai flag routing chưa đủ để gọi Jev. Khi host
+inject provider đã cấu hình, context node chọn capability trên shortlist và chọn lại sau mỗi batch
+observation; none/exhaustion nạp 0 tool. Search_more chỉ mở trang metadata, không discovery server.
+Choice/schema/Skill/policy limits pin vào checkpoint; tháo provider khỏi run đang pin báo
+`selection_provider_unavailable`, không fallback V1. Catalog/policy/budget đổi cần run mới.
+Rules tăng 1.1.0 nên checkpoint rules 1.0.0 cũng cần run mới; không replay pending write để migrate.
+Config/usage/model version/deadline/mock SDK Jev vẫn hoãn, privacy/LLM fallback thuộc Ngày 92.
+Compose gate thêm `scripts.check_capability_shortlist` với Protocol fixture, cookie/SSE/PostgreSQL;
+không gọi Jev/DeepSeek và không chạy probe trên DB host/production.
+[Shortlist guide](docs/routing/CAPABILITY_SHORTLIST.md), [ADR 0009](docs/adr/0009-capability-shortlist-and-observation-routing.md).
 
 Kiểm tra riêng contract/config, không gọi provider hoặc cần DB:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q tests/test_v2_contracts.py tests/test_v2_features.py
 ```
+
+## Cập nhật Jev runtime — 2026-10-19
+
+Phần config/SDK/usage của Ngày 88 và chức năng Ngày 92/94 đã bổ sung. Khi hai flag V2/routing
+bật, dependency tạo Jev client thật; fallback dùng DeepSeek JSON, có deadline/circuit/budget/privacy.
+Mặc định trong code tắt; cấu hình local đặt trong `.env`. Schema cần head `20261019_0025`.
+Admin xem `/admin` hoặc `/api/admin/routing`; shadow ghi choice, giữ nguyên baseline thực thi.
+Chi tiết cấu hình và các bước người dùng tự test: [Jev runtime](docs/routing/PROVIDER_RUNTIME.md).
+
+Regression SDK/mock HTTP, timeout/cancellation/circuit, privacy, budget/resume, auth và shadow
+chạy bằng unit. Compose CI gọi thêm `scripts.check_routing_runtime` trên scratch database;
+probe kiểm tra migration/drift/ownership/quota/cascade và không gọi model. Không chạy downgrade
+trên database đang dùng. Kết quả ở `reports/checks/2026-10-19-m2-runtime/`.

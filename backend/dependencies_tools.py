@@ -1,64 +1,41 @@
-import sys
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
 
 from agent_core.code_execution import register_python_execution_tool
-from agent_core.mcp import MCPClientAdapter, MCPStdioConfig
+from agent_core.plugins.manager import PluginManager
 from agent_core.tools import ToolRegistry
+from agent_core.tools.email import register_email_tool
 from backend.core.config import get_settings
+from backend.core.mcp_config import load_stdio_configs
+from backend.core.mcp_http_config import load_http_configs
 
 settings = get_settings()
 tool_registry = ToolRegistry(allowlist=settings.tool_allowlist_names)
 if settings.python_sandbox_enabled:
     register_python_execution_tool(tool_registry)
-_mcp_clients: list[MCPClientAdapter] = []
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if (email_config := settings.email_config) is not None:
+    register_email_tool(tool_registry, email_config)
+_plugin_manager: PluginManager | None = None
+
+
+def get_plugin_manager() -> PluginManager:
+    global _plugin_manager
+    if _plugin_manager is None:
+        _plugin_manager = PluginManager(
+            tool_registry,
+            load_stdio_configs(settings) + load_http_configs(settings),
+        )
+    return _plugin_manager
 
 
 async def start_tool_connections() -> None:
-    if not settings.mcp_demo_enabled or _mcp_clients:
-        return
-
-    client = MCPClientAdapter(
-        MCPStdioConfig(
-            name="demo",
-            command=sys.executable,
-            args=("-m", "agent_core.mcp.demo_server"),
-            cwd=str(PROJECT_ROOT),
-            tool_timeout_seconds=settings.tool_timeout_seconds,
-            tool_max_retries=settings.tool_max_retries,
-            tool_retry_backoff_seconds=settings.tool_retry_backoff_seconds,
-            admin_only_tools=frozenset({"get_admin_runtime_info"}),
-            approval_required_tools=frozenset({"simulate_sensitive_action"}),
-            routing_keywords_by_tool={
-                "get_server_time": frozenset(
-                    {"thời gian", "mấy giờ", "ngày giờ", "utc", "server time"}
-                ),
-                "calculate": frozenset(
-                    {"tính", "phép toán", "cộng", "trừ", "nhân", "chia", "calculate"}
-                ),
-                "count_text": frozenset({"đếm", "ký tự", "bao nhiêu từ", "số dòng", "count text"}),
-                "convert_temperature": frozenset(
-                    {"nhiệt độ", "độ c", "độ f", "celsius", "fahrenheit", "kelvin"}
-                ),
-                "simulate_sensitive_action": frozenset(
-                    {"mô phỏng", "hành động nhạy cảm", "simulate sensitive"}
-                ),
-                "get_admin_runtime_info": frozenset(
-                    {"runtime", "thông tin server", "phiên bản server"}
-                ),
-            },
-        )
-    )
-    await client.connect_and_register(tool_registry)
-    _mcp_clients.append(client)
+    await get_plugin_manager().start()
 
 
 async def close_tool_connections() -> None:
-    while _mcp_clients:
-        await _mcp_clients.pop().close()
+    if _plugin_manager is not None:
+        await _plugin_manager.close()
 
 
 def get_tool_registry() -> ToolRegistry:

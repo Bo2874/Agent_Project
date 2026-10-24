@@ -1103,9 +1103,12 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
+    { name = "cryptography" },
     { name = "email-validator" },
     { name = "fastapi" },
+    { name = "httpcore2" },
     { name = "httpx" },
+    { name = "httpx2" },
     { name = "jinja2" },
     { name = "jsonschema" },
     { name = "langchain" },
@@ -1117,12 +1120,14 @@ dependencies = [
     { name = "llama-index-retrievers-bm25" },
     { name = "llama-index-vector-stores-postgres" },
     { name = "mcp" },
+    { name = "pgvector" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pwdlib", extra = ["argon2"] },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "python-multipart" },
     { name = "sqlalchemy" },
+    { name = "typesafe-sdk" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1138,9 +1143,12 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "asyncpg", specifier = ">=0.30,<1" },
+    { name = "cryptography", specifier = ">=50.0.2,<51" },
     { name = "email-validator", specifier = ">=2.2,<3" },
     { name = "fastapi", specifier = ">=0.116,<1" },
+    { name = "httpcore2", specifier = "==2.13.1" },
     { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "httpx2", specifier = "==2.13.1" },
     { name = "jinja2", specifier = ">=3.1,<4" },
     { name = "jsonschema", specifier = ">=4.25,<5" },
     { name = "langchain", specifier = ">=1.4.3,<1.5" },
@@ -1152,6 +1160,7 @@ requires-dist = [
     { name = "llama-index-retrievers-bm25", specifier = ">=0.8.0,<0.9" },
     { name = "llama-index-vector-stores-postgres", specifier = ">=0.9.0,<0.10" },
     { name = "mcp", specifier = ">=2.2,<3" },
+    { name = "pgvector", specifier = ">=0.5.1,<0.6" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2,<4" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.2,<1" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },
@@ -1162,6 +1171,7 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6,<7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12,<1" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
+    { name = "typesafe-sdk", specifier = "==0.7.5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<1" },
 ]
 provides-extras = ["dev"]
@@ -1636,6 +1646,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ee/9f/c5201d42a484c061e528825fc8e2d565f5abd50a4ced6fb7d29c4ec99b2b/truststore-0.10.5.tar.gz", hash = "sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd", size = 28091, upload-time = "2026-10-12T22:27:31.808Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/e9/3a7820be2bb0fe53b6bc9c3be26d3d1158004e4c3ab953aa6840b955b1e9/truststore-0.10.5-py3-none-any.whl", hash = "sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c", size = 19017, upload-time = "2026-10-12T22:27:30.377Z" },
+]
+
+[[package]]
+name = "typesafe-sdk"
+version = "0.7.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpx2" },
+    { name = "packaging" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "tenacity" },
+    { name = "truststore" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/4d/383aa14f4cfe5fb41023ea1cab52d7f79cc31ab200ee7314317cf89db744/typesafe_sdk-0.7.5.tar.gz", hash = "sha256:1eeeb0dc80a7161d84896db42a5016dc0a7c8872fa16540b70163e5357b6d398", size = 34152, upload-time = "2026-10-14T21:21:42.837Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/f6/bee4c3b49570c2d312057c9e37c1446cf37eb1b86bf5872f7a797e803326/typesafe_sdk-0.7.5-py3-none-any.whl", hash = "sha256:967a8b61494d536abb55ee3f3a2b10e81685cb6baad6ccdcab588bdc6c9b86d2", size = 49948, upload-time = "2026-10-14T21:21:41.337Z" },
 ]
 
 [[package]]

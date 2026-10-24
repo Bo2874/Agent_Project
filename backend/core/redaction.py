@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any
+from urllib.parse import unquote
 
 REDACTED = "[REDACTED]"
 _SENSITIVE_KEY = re.compile(
@@ -19,10 +20,20 @@ _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _DATABASE_URL = re.compile(r"(?i)\b(postgresql|postgres|redis)://[^\s]+")
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _CARD = re.compile(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)")
+_OAUTH_FIELDS = {"code", "state", "code_verifier", "client_secret", "id_token", "error_description"}
+_QUERY_VALUE = re.compile(r"([?&])([^=&#\s]+)=([^&#\s\"']+)")
 
 
 def redact_text(value: object, *, max_length: int | None = None) -> str:
     text = str(value)
+    text = _QUERY_VALUE.sub(
+        lambda m: (
+            f"{m.group(1)}{m.group(2)}={REDACTED}"
+            if unquote(m.group(2)).casefold() in _OAUTH_FIELDS
+            else m.group(0)
+        ),
+        text,
+    )
     text = _BEARER.sub(f"Bearer {REDACTED}", text)
     text = _KEY_VALUE.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
     text = _DATABASE_URL.sub(lambda match: f"{match.group(1)}://{REDACTED}", text)
@@ -34,7 +45,9 @@ def redact_text(value: object, *, max_length: int | None = None) -> str:
 def redact_data(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
-            str(key): REDACTED if _SENSITIVE_KEY.search(str(key)) else redact_data(item)
+            str(key): REDACTED
+            if _SENSITIVE_KEY.search(str(key)) or str(key).casefold() in _OAUTH_FIELDS
+            else redact_data(item)
             for key, item in value.items()
         }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):

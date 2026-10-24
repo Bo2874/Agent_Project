@@ -9,10 +9,22 @@ if (chatApp) {
   const title = chatApp.querySelector("[data-chat-title]");
   const status = chatApp.querySelector("[data-chat-status]");
   let activeConversationId = null;
+  let conversationMutationPending = false;
+  let streamInProgress = false;
+
+  function updateConversationControls() {
+    const disabled = streamInProgress || conversationMutationPending;
+    textarea.disabled = disabled;
+    sendButton.disabled = disabled;
+    chatApp.querySelector("[data-new-chat]").disabled = disabled;
+    conversationList.querySelectorAll("button").forEach((button) => {
+      button.disabled = disabled;
+    });
+  }
 
   function setBusy(isBusy) {
-    textarea.disabled = isBusy;
-    sendButton.disabled = isBusy;
+    streamInProgress = isBusy;
+    updateConversationControls();
     if (isBusy) status.textContent = "Agent đang bắt đầu xử lý…";
   }
 
@@ -35,22 +47,68 @@ if (chatApp) {
       window.location.assign("/login");
       throw new Error("Phiên đăng nhập đã hết hạn.");
     }
-    const result = await response.json();
+    const result = response.status === 204 ? null : await response.json();
     if (!response.ok) throw new Error(result.detail || "Không thể xử lý yêu cầu.");
     return result;
   }
 
   function renderConversationItems(conversations) {
+    const scrollTop = conversationList.scrollTop;
     conversationList.replaceChildren();
     for (const conversation of conversations) {
+      const row = document.createElement("div");
+      row.className = "conversation-row";
+      row.dataset.id = conversation.id;
+      row.classList.toggle("is-active", conversation.id === activeConversationId);
       const button = document.createElement("button");
       button.type = "button";
       button.className = "conversation-item";
       button.dataset.id = conversation.id;
       button.textContent = conversation.title;
+      button.title = conversation.title;
+      button.setAttribute("aria-current", conversation.id === activeConversationId ? "true" : "false");
       if (conversation.id === activeConversationId) button.classList.add("is-active");
-      button.addEventListener("click", () => selectConversation(conversation));
-      conversationList.append(button);
+      button.addEventListener("click", () => {
+        selectConversation(conversation).catch((error) => showError(error.message));
+      });
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "conversation-delete";
+      deleteButton.title = "Xóa hội thoại";
+      deleteButton.setAttribute("aria-label", `Xóa hội thoại ${conversation.title}`);
+      deleteButton.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>';
+      deleteButton.addEventListener("click", () => deleteConversation(conversation));
+      row.append(button, deleteButton);
+      conversationList.append(row);
+    }
+    conversationList.scrollTop = scrollTop;
+    updateConversationControls();
+  }
+
+  async function deleteConversation(conversation) {
+    if (sendButton.disabled || conversationMutationPending) return;
+    if (!window.confirm(`Xóa hội thoại “${conversation.title}” và lịch sử của nó?`)) return;
+    clearError();
+    conversationMutationPending = true;
+    updateConversationControls();
+    try {
+      await requestJson(`/api/conversations/${conversation.id}`, { method: "DELETE" });
+      if (activeConversationId === conversation.id) {
+        activeConversationId = null;
+        await loadConversations();
+      } else {
+        await refreshConversationList();
+      }
+      status.textContent = "Đã xóa hội thoại.";
+    } catch (error) {
+      showError(error.message || "Không thể xóa hội thoại.");
+    } finally {
+      conversationMutationPending = false;
+      updateConversationControls();
+      textarea.focus();
     }
   }
 
@@ -341,6 +399,7 @@ if (chatApp) {
       conversations[0];
     activeConversationId = selected.id;
     renderConversationItems(conversations);
+    conversationList.querySelector(".conversation-row.is-active")?.scrollIntoView({ block: "nearest" });
     await selectConversation(selected, false);
   }
 
@@ -349,16 +408,19 @@ if (chatApp) {
   }
 
   async function selectConversation(conversation, refreshList = true) {
-    if (sendButton.disabled) return;
+    if (streamInProgress) return;
     activeConversationId = conversation.id;
     title.textContent = conversation.title;
     document.querySelectorAll(".conversation-item").forEach((item) => {
       item.classList.toggle("is-active", item.dataset.id === conversation.id);
+      item.setAttribute("aria-current", item.dataset.id === conversation.id ? "true" : "false");
+      item.parentElement.classList.toggle("is-active", item.dataset.id === conversation.id);
     });
     const [messages, runs] = await Promise.all([
       requestJson(`/api/conversations/${conversation.id}/messages`),
       requestJson(`/api/conversations/${conversation.id}/runs`),
     ]);
+    if (activeConversationId !== conversation.id) return;
     const runsByAssistantMessage = new Map(
       runs.filter((run) => run.assistant_message_id).map((run) => [run.assistant_message_id, run]),
     );
@@ -500,18 +562,25 @@ if (chatApp) {
   }
 
   chatApp.querySelector("[data-new-chat]").addEventListener("click", async () => {
+    if (sendButton.disabled || conversationMutationPending) return;
     clearError();
+    conversationMutationPending = true;
+    updateConversationControls();
     try {
       const conversation = await createConversation();
       await loadConversations(conversation.id);
-      textarea.focus();
     } catch (error) {
       showError(error.message);
+    } finally {
+      conversationMutationPending = false;
+      updateConversationControls();
+      textarea.focus();
     }
   });
 
   messageForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (sendButton.disabled) return;
     const content = textarea.value.trim();
     if (!content || !activeConversationId) return;
     clearError();

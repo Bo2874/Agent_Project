@@ -53,7 +53,10 @@ một daemon, cũng không phải job chạy mỗi request.
 
 Image dùng hai stage chung cho dependency/source và hai target app/worker. Compose build migration
 bằng target app nhưng xuất tag riêng để các exporter chạy song song không ghi cùng tag.
-Dependency stage đọc requirements từ `pyproject.toml`; Day 79 sẽ bổ sung lockfile tái lập.
+Dependency stage dùng uv 0.13.1 và `uv sync --locked --no-dev --no-install-project --no-build`
+từ `pyproject.toml`/`uv.lock`; không resolve lại version khi build. Python/uv/PostgreSQL được pin
+theo digest. Target `test` riêng thêm extra dev và fixture, không đưa pytest/ruff vào runtime.
+Quy trình cập nhật lock và CI: [Dependency/CI](../../../docs/DEPENDENCIES_AND_CI.md).
 Package source nằm tại `/app` để đường dẫn templates/static/skills/migrations hiện tại hoạt động.
 
 ## Volume và môi trường thực thi
@@ -97,6 +100,48 @@ Lưu image ID, package version, log migration và bằng chứng restart/persist
 Thử này mô phỏng checkout mới trên máy chỉ có Docker; không thay thế kiểm thử trên mọi OS/CPU.
 
 ## Restart, migration và dừng
+
+Ngày 81: migration head `20261018_0023` thêm plugin/grant/connection/reference và lịch sử catalog.
+API mới mặc định tắt. Có thể bật `DEV_V2_ENABLED=true` và `DEV_V2_PLUGINS_ENABLED=true` trong
+shell dev hoặc `.env.docker`, rồi recreate app/worker. Xem [luồng API](../../../docs/plugins/API.md).
+`runtime_connected=false`: cấu hình control API chưa mở thêm MCP transport.
+
+Ngày 82: image đóng gói `plugins/stdio/servers.json`. `DEV_MCP_STDIO_CONFIG_PATH` chọn profile file
+trong container; file ngoài image cần mount read-only. Manager giữ demo alias V1, cô lập lỗi từng
+stdio server; admin kiểm tra `/api/admin/mcp-runtime`. Gate Compose chạy probe nhiều process thật
+dưới UID 10001/root read-only. Xem [runtime guide](../../../docs/plugins/STDIO_RUNTIME.md).
+
+Ngày 83: image có `plugins/http/servers.json`, mặc định không có endpoint. Compose nhận
+`DEV_MCP_HTTP_CONFIG_PATH` và key ring private `DEV_MCP_CREDENTIAL_ENCRYPTION_KEYS`.
+Migration head 0024 thêm encrypted secret/OAuth state; cần backup key riêng với database.
+Gate kiểm thử TLS/SSRF và credential/OAuth PostgreSQL bằng fixture, không cần key/account thật.
+Xem [HTTP/OAuth guide](../../../docs/plugins/HTTP_AND_OAUTH.md).
+
+Ngày 84: Compose gate chạy thêm `scripts.check_capability_catalog` trong app image: 200 metadata
+tool synthetic, token budget và real stdio discovery đổi/xóa/reject schema. Không thêm service,
+volume, biến env hay migration. Catalog API/refresh cần master/plugins; flags mặc định vẫn false.
+Xem [catalog guide](../../../docs/plugins/CAPABILITY_CATALOG.md).
+
+Ngày 85: image copy `plugins/packages.json` và `plugins/packages/`; binding mặc định rỗng.
+Compose truyền `DEV_PLUGIN_PACKAGES_CONFIG_PATH`; không mount package/secret từ chat hay DB.
+Gate thêm PostgreSQL/stdio/chat-SSE Skill probe và private HTTP run bridge; runtime chính giữ V2 tắt.
+[Skill runtime guide](../../../docs/plugins/PLUGIN_SKILLS.md).
+
+Ngày 86 thêm `/plugins` và `/admin/plugins`; flags giữ nguyên mặc định tắt. Bật
+`DEV_V2_ENABLED=true`, `DEV_V2_PLUGINS_ENABLED=true` trong file cấu hình private rồi recreate app
+khi muốn dùng UI quản lý. Không tự đăng ký connector hoặc thêm secret; xem
+[UI guide](../../../docs/plugins/PLUGINS_UI.md) cho grant/credential và redirect URI OAuth của UI.
+
+Ngày 90: Compose nhận `DEV_V2_ROUTING_ENABLED=false`; bật cùng `DEV_V2_ENABLED` và recreate app
+để thử rules router trước graph, không cần Jev. Gate thêm `scripts.check_query_routing` trong
+process riêng: auth cookie, SSE, message/run, PostgreSQL checkpoint và resume; model fixture,
+không gọi provider. Tắt flag áp dụng cho run mới; checkpoint đang có giữ route đã pin.
+[Query router guide](../../../docs/routing/QUERY_ROUTER.md).
+
+Ngày 91: gate thêm `scripts.check_capability_shortlist` để kiểm tra provider injection, đổi tool/
+schema sau observation, Skill lazy loading, none và checkpoint PostgreSQL. Fixture ở boundary
+DecisionProvider của project, không mock SDK/cấu hình Jev. Dependency runtime mặc định None;
+không thêm env/provider key hoặc bật flag trong Compose. [Guide](../../../docs/routing/CAPABILITY_SHORTLIST.md).
 
 ```powershell
 docker compose --env-file .env.docker logs --tail 100 migrate app worker

@@ -22,6 +22,18 @@ class ToolContext:
     conversation_id: UUID
     user_role: str
     run_id: UUID | None = None
+    authorization_guard: Callable[[str], Awaitable[None]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    capability_version: str | None = None
+
+
+class ToolAuthorizationError(RuntimeError):
+    """Sanitized failure from an application-owned dispatch authorization check."""
+
+    def __init__(self, code: str = "plugin_authorization_changed") -> None:
+        self.code = code
+        super().__init__("Capabilities changed; start a new run")
 
 
 @dataclass(frozen=True, slots=True)

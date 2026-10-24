@@ -21,9 +21,6 @@ async def test_mcp_stdio_server_discovers_registers_and_calls_tool() -> None:
             cwd=str(PROJECT_ROOT),
             admin_only_tools=frozenset({"get_admin_runtime_info"}),
             approval_required_tools=frozenset({"simulate_sensitive_action"}),
-            routing_keywords_by_tool={
-                "calculate": frozenset({"tính toán"}),
-            },
         )
     )
 
@@ -40,7 +37,7 @@ async def test_mcp_stdio_server_discovers_registers_and_calls_tool() -> None:
         ]
         assert registry.get("demo__get_server_time").policy.idempotent is False
         assert registry.get("demo__calculate").policy.idempotent is True
-        assert registry.get("demo__calculate").routing.keywords == frozenset({"tính toán"})
+        assert registry.get("demo__calculate").routing.keywords == frozenset()
         assert registry.get("demo__simulate_sensitive_action").policy.requires_approval is True
         assert registry.get("demo__get_admin_runtime_info").policy.allowed_roles == frozenset(
             {"admin"}

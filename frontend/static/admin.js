@@ -606,6 +606,48 @@ if (adminRoot) {
     renderAlerts(data.alerts);
   }
 
+  async function loadRouting() {
+    const summary = adminRoot.querySelector("[data-routing-summary]");
+    const metrics = adminRoot.querySelector("[data-routing-metrics]");
+    const body = adminRoot.querySelector("[data-routing-traces]");
+    if (!summary || !metrics || !body) return;
+    try {
+      const response = await fetch(`/api/admin/routing?days=${selectedDays}`, {
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error("Không thể tải routing; kiểm tra migration và quyền admin.");
+      const data = await response.json();
+      summary.textContent = `${data.mode} · circuit ${data.circuit.state}`;
+      metrics.textContent = `${data.decisions} quyết định · ${data.fallback_decisions} fallback · ` +
+        `${data.shadow_decisions} shadow · ${data.safe_stops} dừng an toàn · ` +
+        `input ${data.input_tokens ?? "chưa rõ"} / output ${data.output_tokens ?? "chưa rõ"} token · ` +
+        `${data.unknown_usage_decisions} lần thiếu usage · P95 ${formatDuration(data.p95_latency_ms)}`;
+      body.replaceChildren();
+      for (const trace of data.recent) {
+        const row = document.createElement("tr");
+        const values = [
+          `${trace.run_id.slice(0, 8)} / ${trace.phase}`,
+          trace.mode,
+          `${trace.provider} / ${trace.model_version ?? "—"}`,
+          `${trace.status}: ${trace.selected_id ?? "—"}`,
+          `${trace.input_tokens ?? "?"} / ${trace.output_tokens ?? "?"}`,
+          formatDuration(trace.latency_ms),
+          trace.fallback_reason ?? "—",
+        ];
+        for (const value of values) {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          row.appendChild(cell);
+        }
+        body.appendChild(row);
+      }
+    } catch (error) {
+      summary.textContent = error.message;
+      metrics.textContent = "";
+      body.replaceChildren();
+    }
+  }
+
   async function loadOverview() {
     statusBox.classList.remove("is-error");
     statusBox.textContent = "Đang cập nhật dữ liệu vận hành…";
@@ -620,6 +662,7 @@ if (adminRoot) {
       }
       const data = await response.json();
       render(data);
+      await loadRouting();
       statusBox.textContent = `Dữ liệu từ ${formatTime(data.from_time)} đến ${formatTime(data.to_time)}.`;
     } catch (error) {
       statusBox.classList.add("is-error");

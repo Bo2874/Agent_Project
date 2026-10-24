@@ -1,112 +1,5 @@
 # Project Notes
 
-## Chuẩn bị đưa source lên GitHub — 2026-10-18
-
-- Đã mở rộng `.gitignore` cho `.env.*` (giữ hai file example), credential/private key,
-  môi trường Python/tool local, cache/build output, dữ liệu runtime/upload/backup/database,
-  log tạm, file editor/OS và PDF tham khảo tại root.
-- Giữ `uv.lock`, `.python-version`, source/test/fixture/dataset, tài liệu và báo cáo regression
-  đã redact để repo đủ dữ liệu tái lập/đối chiếu. Không ignore toàn bộ PDF hoặc JSON vì cần
-  hỗ trợ fixture kiểm thử về sau.
-- Đây là bước chuẩn bị Git; Ngày 79 vẫn đang dở, chưa có kết quả CI và chưa được tick hoàn thành.
-- Kiểm tra bằng repository Git tạm: 36 đường dẫn private/generated bị loại đúng, 19 đường dẫn
-  cần version vẫn được giữ. Rà 389 file ứng viên không thấy giá trị secret hiện có trong `.env`;
-  đây là đối chiếu secret đã biết, không thay thế việc review nội dung trước khi push.
-
-## Ngày 78 — Docker dev app/worker, pgvector và startup sạch — 2026-10-18
-
-- Đã thêm `infra/docker/app/Dockerfile`: dependency stage và runtime chung, hai target app/worker,
-  Python 3.11, UID/GID 10001; source/assets giữ dưới `/app` để đường dẫn hiện tại hoạt động.
-- `compose.yaml` gồm postgres/migrate/app/worker; PostgreSQL 17 có pgvector 0.8.7, không publish DB port.
-  App chỉ bind localhost. Hai named volume riêng: `postgres_data` và `document_data` (app/worker chia sẻ).
-  Root filesystem read-only, `/tmp` tmpfs 64 MiB, drop capabilities, không mount Docker socket.
-- `.dockerignore` allow-list không gửi `.env`, `.venv`, backup, PDF hay báo cáo vào build context.
-  `.env.docker.example` dùng biến `DEV_*` riêng, không tự dùng credentials/API key PostgreSQL host.
-  Khởi động offline không cần API key; memory extraction, tracing, sandbox và V2 đều tắt.
-- One-shot `scripts.migrate_database` tạo vector extension, upgrade Alembic head và setup schema
-  LangGraph; app/worker chỉ khởi động sau migration exit 0. Runtime Docker tắt checkpoint auto-setup,
-  luồng host giữ mặc định true. Chạy lại migration không tạo schema drift.
-- App health gọi readiness có kiểm tra DB; worker dùng heartbeat atomically từ execution loop,
-  cập nhật cả khi đang xử lý job. Probe chỉ dùng stdlib để tránh timeout do import dependency nặng.
-  Worker nhận SIGTERM/SIGINT để dừng nhận job, drain job hiện tại và đóng pool trong stop grace.
-- Đã cold build `--pull --no-cache`, sau đó kiểm tra image cuối bằng project/volume mới hoàn toàn:
-  Python 3.11.17, PostgreSQL 17.11, đủ 22 Alembic revision và checkpoint schema; app/worker healthy.
-  Đây là mô phỏng môi trường máy sạch bằng Docker trên Windows hiện tại, chưa thử mọi OS/CPU.
-- HTTP E2E/auth/conversation/isolation, memory list/update/pin/delete/isolation, worker job thật,
-  vector SQL, graph → MCP calculate → final và PostgreSQL checkpoint/resume đều đạt.
-  Graph dùng model fixture, không gọi provider; không có live LLM quality eval trong lượt này.
-- Kiểm tra persistence: cùng job UUID/payload và file tài liệu qua `down`/`up`; worker đọc được
-  volume chung. Cố ý migration exit 17 trên project riêng khiến app/worker không khởi động.
-- Ruff lint/format đạt; 13 test mới về heartbeat/checkpoint ownership/config; regression offline
-  420/420 (19,71 giây), MCP ngoài Windows sandbox 1/1 (7,48 giây), tổng 421/421.
-  `pip check` và `alembic check` trong image đạt. 68 artifact baseline Ngày 76 giữ nguyên SHA-256.
-- Đã dọn user/job/file thử, dừng các stack nghiệm thu, giữ image/volume; cổng 8000 được giải phóng.
-  Không thay `.env` hoặc dữ liệu PostgreSQL host. Lockfile/CI thuộc Ngày 79; production runner thuộc M6.
-- Hướng dẫn: [Docker dev](infra/docker/app/README.md). Bằng chứng, image ID và package Linux:
-  [nghiệm thu Ngày 78](reports/checks/2026-10-18-day78/STARTUP.md).
-  Đã tick Ngày 78 trong kế hoạch và chuyển task tiếp theo sang Ngày 79.
-
-## Ngày 77 — Contract V2, feature flags và ADR — 2026-10-18
-
-- Đã tạo `agent_core/contracts/`: `CapabilityDescriptor`, `RoutingDecision`, `RetrievalResult`,
-  `EvidenceReference`, `TaskSpec`, task budget/input reference và V2 event envelope.
-- Contract dùng Pydantic, `schema_version="1.0"`, forbid extra field, reject NaN/Infinity,
-  strict counter, frozen attributes, revalidate nested model; hỗ trợ JSON round-trip và JSON Schema.
-- Routing kiểm tra tool thuộc shortlist, ID không trùng và probability distribution hợp lệ.
-  Contract không tự tra catalog/quyền; backend và ToolExecutor vẫn là nơi kiểm tra thực thi.
-- Evidence giữ nguyên quote, ID document/version/chunk, page/section/offset và `trust=untrusted`.
-  Task validate dependency cục bộ, output JSON Schema, acceptance criteria và budget; full-DAG
-  validation/scheduler/quota reservation thuộc M4, chưa triển khai ở lượt này.
-- Năm V2 event kind: routing_decided, retrieval_completed, plan_created, task_status, run_status;
-  discriminated union, root/task/plan/attempt correlation, sequence dương, timestamp UTC.
-  Event contract chưa thay thế AgentLoopEvent/AgentGraphStreamEvent hoặc SSE hiện tại.
-- `Settings.v2_features` cung cấp snapshot FeatureFlags: master `V2_ENABLED` và 7 feature đều
-  mặc định false, khai báo trong `.env.example`; không sửa `.env` chứa secret của người triển khai.
-  Consumer dùng `is_enabled`; planning cần routing, parallel cần planning; cấu hình sai fail fast.
-- Đã chốt [ADR 0001](docs/adr/0001-v2-contracts-and-layer-ownership.md) về ownership giữa
-  API/auth/catalog/router/LangGraph/RAG/planner/executor/PostgreSQL/Redis/recorder/UI;
-  có [tài liệu field, ví dụ và cách tích hợp](docs/contracts/README.md).
-- Kiểm tra: Ruff toàn project đạt, format 11 file mới/sửa đạt; 65 test contract/config mới đạt;
-  regression offline 407/407 đạt (10,83 giây), MCP ngoài sandbox 1/1 đạt (4,92 giây), tổng 408/408.
-  Các test kiểm tra JSON/schema, invalid selection/provenance/budget/event và default/dependency/kill switch.
-- Không cần DB migration hoặc live API eval cho thay đổi contract/config; baseline Ngày 76 giữ nguyên.
-  Đã tick Ngày 77 và chuyển task tiếp theo sang Ngày 78. Cảnh báo run cũ của baseline vẫn cần xử lý trước release.
-
-## Ngày 76 — Baseline trước V2 — 2026-10-18
-
-- Đã chạy regression theo `OPERATIONS.md`; lưu báo cáo tại
-  [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md), kèm JSON, JUnit và log đã redact.
-- Pytest: 342 test offline + 1 test MCP = 343/343 pass, không skip. MCP ban đầu bị Windows sandbox
-  chặn named pipe (`WinError 5`); chạy lại ngoài sandbox đạt, giữ cả bằng chứng lỗi và lần pass.
-- Skill eval: selection 13/13, adherence 2/2. Dataset schema: 20 case, 38 critical criteria hợp lệ.
-- E2E HTTP/DeepSeek: health, đăng ký/đăng nhập, conversation, cô lập user, SSE và cleanup đều đạt.
-- Eval smoke: 2/2 pass, mỗi case 100/100; model `deepseek-flash`, prompt `personal-agent-system-v2`.
-- Latency hai case: P50 1.442,50 ms, P95 1.613,05 ms; agent 1.941 token, judge 1.032 token,
-  tổng 2.973 token. Đây là số đo hai case chat/safety, chưa phải benchmark toàn dataset/tải production;
-  chưa gồm token HTTP E2E. Run ID và fingerprint dataset/prompt nằm trong báo cáo.
-- PostgreSQL 17.5, Alembic `20261004_0022` head; upgrade/check không schema drift.
-  Backup/restore trên DB tạm và PostgreSQL checkpoint/resume đều đạt, dữ liệu thử được dọn.
-- Docker Desktop đã được khởi động; Engine 28.3.0/Linux. Isolation, approval/tool result,
-  resource quota, artifact và attack probes đều đạt khi chạy Docker ngoài sandbox Windows.
-- Dependency: 26/26 dependency trực tiếp đúng `pyproject.toml`; `pip check` không có xung đột.
-  Chưa có lockfile; đã lưu version từng distribution và SHA-256 mã nguồn để đối chiếu ở Ngày 79.
-- Git CLI đã cài nhưng `C:\Agent_Project` chưa phải repository; chưa có commit SHA cho baseline.
-- Admin còn cảnh báo critical `stuck_agent_runs`: một run tạo ngày 01/10, vẫn `running`, step 0.
-  Chỉ đọc metadata và ghi nhận; chưa sửa/hủy run. Regression tự động đạt, release checklist chưa sạch.
-- Server HTTP test đã dừng, cổng 8000 đã đóng; Docker Desktop vẫn chạy.
-  Mã nguồn runtime ứng dụng được giữ nguyên; đã tick Ngày 76 và chuyển task tiếp theo sang Ngày 77.
-
-## Lượt lập kế hoạch V2 — 2026-10-18 (trước Ngày 76)
-
-- Đã rà soát `PROJECT_PLAN.md`, notes, kiến trúc, vận hành và các module MCP/tool/Skill/graph/queue.
-- Đã đối chiếu các phần liên quan trong `Hiểu sâu về AI Agent.pdf` và tài liệu chính thức trên web.
-- Đã bổ sung lộ trình V2, ngày 76–133, trong [PROJECT_PLAN.md](PROJECT_PLAN.md): phụ thuộc, contract,
-  thiết kế kỹ thuật, bài đo, tiêu chí nghiệm thu và mapping phần RAG ngày 69–73 đang thiếu.
-- Đây là cập nhật kế hoạch; plugin platform, Jev, RAG tài liệu, multi-agent, Redis cache và CI/CD V2
-  chưa được triển khai trong lượt này. Chưa chạy lại release gate hoặc benchmark hiệu năng.
-- Khi hoàn thành task tiếp theo, bổ sung kỹ thuật đã dùng cùng kiểm tra/kết quả và giới hạn còn lại;
-  đồng thời cập nhật checkbox và mục Task tiếp theo trong kế hoạch.
-
 ## Công nghệ và kỹ thuật đã triển khai
 
 - Kiểm thử release: Ruff, E2E HTTP/DeepSeek, safety regression và eval versioned
@@ -280,12 +173,104 @@
 - Chi phí LLM: ước tính USD theo cache hit, cache miss và output; giá cấu hình qua env
 - Cache dashboard: hit token, miss token và cache hit rate
 - Latency dashboard: average, P50 và P95 cho model/tool
-- Agent run drill-down: step, model call, tool call; không trả arguments, output hoặc nội dung chat
-- Log redaction: che dữ liệu nhạy cảm trong database log, console message và traceback
 - Audit log: bảng `audit_logs`; ghi xem run, so sánh eval và chạy retention
 - Retention: xóa payload/error/run/job/audit cũ; hỗ trợ `--dry-run`
 - Admin alert: failure rate, model P95, cache hit thấp và agent run bị kẹt
 - E2E smoke: health, auth, conversation, cô lập user, cleanup và tùy chọn DeepSeek streaming
-- Database backup: PostgreSQL custom dump kèm manifest SHA-256
-- Restore verification: database tạm, đối chiếu record/Alembic revision và tự cleanup
-- Tài liệu vận hành: `OPERATIONS.md`
+- V2 event: routing, retrieval, plan, task status và run status; correlation ID và timestamp UTC
+- Feature flag V2: master switch và từng chức năng, mặc định tắt; kiểm tra dependency giữa flag
+- Docker app/worker: multi-stage image, UID 10001, root read-only và healthcheck
+- Docker volume: dữ liệu PostgreSQL và tài liệu lưu riêng, giữ qua recreate container
+- GitHub Actions: lint/unit Windows và Linux, manifest/dataset validation, migration và integration
+- Plugin manifest: schema 1.0, exact SemVer, server/tool/Skill và credential slot logical
+- Plugin namespace: canonical capability ID, alias riêng và giữ nguyên remote tool name
+- Plugin policy: role, approval, side effect, timeout/concurrency và retry có điều kiện
+- Plugin Skill validation: required tools tồn tại, policy không nới quyền của dependency
+- Plugin admin API: đăng ký/bật/tắt plugin, cấp/thu hồi grant và gắn credential reference
+- Plugin user API: tạo/xem/bật/tắt connection và thu hồi reference của chính mình
+- Plugin grant: scope capability cụ thể, kiểm tra role hiện tại và required tools của Skill
+- Connection ownership: owner từ auth session, composite foreign key chặn gắn sai user
+- Credential reference: provider + UUID opaque; không nhận key/token thô hoặc trả secret ID
+- PluginManager: quản lý nhiều stdio server, owner task riêng và startup song song
+- Stdio timeout: startup/discovery, request, health và shutdown theo từng server
+- Stdio concurrency: khóa call riêng từng server, semaphore chung theo plugin
+- Discovery guard: giới hạn page/tool, chặn cursor lặp, trùng tên và thiếu tool khai báo
+- Stdio isolation: server startup treo, timeout hoặc crash không làm hỏng server khác
+- Stdio cleanup: đóng SDK đúng task sở hữu, thu hồi child process và owner task
+- MCP HTTP adapter: Streamable HTTP qua SDK, tái sử dụng lifecycle và registry policy
+- HTTP host profile: `plugins/http/servers.json`; mặc định rỗng, không chứa token/secret
+- SSRF guard: exact URL, chặn redirect/proxy, kiểm tra mọi DNS answer và dial IP đã duyệt
+- TLS: giữ Host/SNI gốc và certificate verification khi ghim IP
+- OAuth public client: preregistered profile, authorization code, state TTL 10 phút và PKCE S256
+- OAuth validation: issuer/resource/scope/expiry, state single-use và pin consent generation
+- OAuth refresh: row lock chống refresh trùng, rotate refresh token; invalid grant yêu cầu reconnect
+- Private HTTP cache: tắt memoization/retry của executor V1 để revoke không bị vượt qua bởi cached result
+- Capability catalog: snapshot metadata không chứa schema/handler, revision và SHA-256 theo registry
+- Metadata index: từ/phrase, kind/plugin/tag và chuẩn hóa dấu tiếng Việt, gồm đ/Đ
+- Schema lazy loading: convert ứng viên được chọn, cache JSON theo registration và copy khi trả
+- MCP schema: giữ nguyên type/required/enum/$defs/constraint khi tạo definitions cho model
+- Schema token budget: fit cả danh sách definitions theo budget context; không cắt nội dung schema
+- Skill schema budget: required tools phải vừa trọn nhóm, vượt budget fail trước model call
+- Package validation: metadata/dependency khớp manifest, bounded UTF-8; chặn traversal và symlink escape
+- Checkpoint pin: digest authority/schema/Skill; regrant không hồi sinh pending call của run cũn
+- Plugins UI: `/plugins` theo owner, `/admin/plugins` theo admin; link từ dashboard/chat/bộ nhớ/quản trị
+- User UI: tìm plugin được cấp, tạo/bật/tắt connection và trạng thái quyền/credential/version rõ ràng
+- Admin UI: đăng ký/cập nhật manifest, bật/tắt toàn hệ thống và cấp/thu hồi grant theo capability
+- Grant UI: chọn Skill kèm tool bắt buộc; API vẫn validate role/dependency và version snapshot
+- UI states: loading/empty/feature-off/error; configured không xác nhận dịch vụ bên ngoài online
+- Jev adapter: inject client async, chuyển Choice question và await `system_one`; caller quản lý lifecycle
+- Decision validation: exact option IDs, distribution hữu hạn/tổng 1, selected có xác suất cực đại
+- Query router rules Việt/Anh: sau runtime catalog theo quyền, trước chọn Skill/tool và chạy graph
+- Route execution: chat không nạp tool/Skill; tool_task giữ executor/approval; clarify hoàn tất run không gọi model
+- Jev OpenRouter live: SDK 0.7.5 và dependency backend trong `.venv` đều PASS; model `typesafe/jev-1.14-20261014` chọn calculator
+- Jev runtime: lưu usage/token và model version thực; fallback LLM JSON, deadline tổng và circuit breaker dùng chung theo process
+- Jev query preview (2026-10-22): một Choice bốn phương án từ taxonomy 2.0.0, query mới nhất và tối đa 20 message
+  gần nhất gồm cả query (`CHAT_HISTORY_LIMIT`); giữ role/thứ tự, không gửi query hai lần.
+- Query policy 2.0.0: argmax không ngưỡng; đồng hạng cao nhất chính xác chuyển chat bằng policy,
+  giữ phân phối gốc và tied_routes; các xác suất gần nhau vẫn chọn phương án cao hơn.
+- Preview web: `ROUTING_PREVIEW_ONLY=true` rẽ trước compression/plugin runtime/memory/graph;
+  không khởi tạo DeepSeek, không LLM fallback hoặc tool call; lỗi Jev được trả riêng, không giả route.
+- Preview giữ đủ bốn ý định kể cả RAG/planner chưa có lõi; tắt cờ phục hồi luồng thực thi cũ,
+  chưa tự nối query router mới với agent. Chặn resume agent trong lúc bật preview.
+- Query privacy: allowlist query/history user-assistant riêng; redact như capability, có giới hạn
+  state/payload riêng, không cắt âm thầm input; trace không lưu query/history hoặc secret.
+- Query trace: phase=query ghi model/usage/latency đo được, raw choice/phân phối và tie policy;
+  token query được tính vào quota/admin, usage thiếu giữ null. Không thêm migration.
+- Kiểm tra preview: 216 regression routing hiện có đạt; probe inline không tạo file xác minh
+  SDK HTTP fixture, năm nhánh, argmax/tie, privacy, trace/usage và API chat/SSE không chạy agent.
+  Consumer SSE thực trong `frontend/static/chat.js` nhận response preview đến hết `done` và render
+  route/xác suất không lỗi JavaScript; giữ contract usage model-turn của UI hiện có.
+  Chưa đo chất lượng/live mới; bộ 30 case để người dùng kiểm tra ở `docs/routing/MANUAL_JEV_CASES.md`.
+- Điều chỉnh theo phản hồi: bỏ clarify khỏi Choice hiện tại, chat nhận yêu cầu thiếu dữ kiện/tham chiếu
+  mơ hồ sau khi xét history; giữ mô tả tool_task/planned_task. Contract giữ đọc quyết định cũ năm route.
+  Manual đổi sáu case hỏi rõ sang chat và thêm hai kịch bản nhiều lượt cùng hội thoại; không tạo file mới.
+  Kiểm tra lại: lint/format và 216 regression đạt; probe inline xác minh bốn phương án,
+  argmax thấp, đồng hạng về chat, gần đồng hạng, history, trace và SSE/usage. Chưa gọi Jev live.
+- Người dùng xác nhận đã kiểm tra Jev routing ổn (2026-10-22); đây là nghiệm thu thủ công preview,
+  chưa phải số liệu benchmark hoặc việc bật query router mới cho thực thi thật.
+- Chat sidebar: grid/flex giới hạn chiều cao, hàng không co, danh sách có scrollbar riêng;
+  tiêu đề dài rút gọn, giữ vị trí cuộn khi refresh và giữ phần tài khoản ngoài vùng cuộn.
+- Xóa hội thoại: nút riêng có tên truy cập/xác nhận; DELETE `/api/conversations/{id}` theo owner.
+  Khóa conversation/run/job khi kiểm tra, trả 409 nếu còn queued/running/waiting approval;
+  dọn LangGraph checkpoint và job liên quan, PostgreSQL cascade lịch sử/trace/memory có nguồn.
+- Sau xóa hội thoại đang mở, chọn hội thoại còn lại; xóa cuối cùng tạo hội thoại trống.
+  Khóa thao tác hội thoại trong lúc stream/xóa/tạo để tránh thay nhầm phiên đang xử lý.
+- Kiểm tra UI/xóa: lint/format, JavaScript syntax và 77 regression đạt. Chrome headless chạy
+  template/CSS/JavaScript thật với 70 hội thoại, kiểm tra cuộn/hàng không chèn, tiêu đề dài,
+  hủy xác nhận, API lỗi, xóa phiên khác/đang mở/cuối cùng và mở lại composer qua API fixture.
+  Probe PostgreSQL/API kiểm tra 401/404/409/204, owner, cascade và checkpoint; fixture DB đã rollback.
+  Không thêm file test/tài liệu hoặc migration; không xóa hội thoại thật của người dùng.
+- Dòng nhắc dưới composer giữ cố định “AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng.”;
+  tách data-chat-status sang header (aria-live) để trạng thái xóa/stream/lỗi không ghi đè dòng nhắc.
+- Sau nghiệm thu: gỡ stream/bảng route-xác suất và cờ preview khỏi code/config/.env;
+  Jev phân query trước graph bằng query mới + tối đa CHAT_HISTORY_LIMIT message gần nhất.
+  Chat dùng model/graph có sẵn, tool_task giữ selector/Skill/tool hiện có; hai nhánh chưa có lõi
+  trả thông báo tương ứng. Chưa thay đổi Choice/policy chọn tool trong đợt này.
+- Query production: budget/privacy/timeout riêng theo phase, giữ argmax/tie-to-chat và không LLM
+  fallback cho phân query. Capability giữ budget/privacy/threshold/fallback hiện có.
+- Pin route Jev cùng catalog và provider policy cho chat/tool checkpoint; resume dùng pin,
+  chặn policy đổi trước model/tool. Query trace có usage thật, không ghi thêm bản summary trùng.
+- Kiểm tra gỡ preview: lint/format và 216 regression đạt; probe inline kiểm tra bốn nhánh,
+  chat không nạp tool, tool_task thực thi qua selector hiện có, RAG/planner chờ lõi,
+  checkpoint/resume/policy pin và SSE trả câu trả lời không kèm bảng debug. Không gọi Jev/LLM live.
+  Cập nhật manual hiện có, không tạo thêm file nguồn/test/tài liệu.

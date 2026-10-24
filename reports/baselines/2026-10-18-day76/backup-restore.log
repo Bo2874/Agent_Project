@@ -1,1 +1,0 @@
-{"status": "ok", "temporary_database": "personal_agent_restore_verify_ed2d4242", "sha256": "6d652f23a1e976971a97a01df6ba98ee8bed2d193c0b4798182c8cb5e9d96ea2", "counts": {"users": 3, "conversations": 18, "messages": 152, "agent_runs": 49, "tool_calls": 42, "audit_logs": 3, "alembic_version": "20261004_0022"}}

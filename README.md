@@ -7,6 +7,18 @@ Tài liệu chính:
 - Kiến trúc và ranh giới hệ thống: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - Runbook khởi động, E2E, backup/restore và xử lý sự cố: [`OPERATIONS.md`](OPERATIONS.md).
 - Kịch bản demo và trình bày phỏng vấn: [`INTERVIEW_GUIDE.md`](INTERVIEW_GUIDE.md).
+- Cài dependency từ lockfile và chạy CI: [`docs/DEPENDENCIES_AND_CI.md`](docs/DEPENDENCIES_AND_CI.md).
+- Manifest, namespace/policy và catalog plugin: [`docs/plugins/README.md`](docs/plugins/README.md).
+- Plugin API, grant/connection và credential reference theo user: [`docs/plugins/API.md`](docs/plugins/API.md).
+- PluginManager, stdio profile, timeout và health: [`docs/plugins/STDIO_RUNTIME.md`](docs/plugins/STDIO_RUNTIME.md).
+- HTTP MCP, SSRF và credential/OAuth theo owner: [`docs/plugins/HTTP_AND_OAUTH.md`](docs/plugins/HTTP_AND_OAUTH.md).
+- Capability catalog, metadata search, discovery và schema budget: [`docs/plugins/CAPABILITY_CATALOG.md`](docs/plugins/CAPABILITY_CATALOG.md).
+- Skill plugin, package pin và thu hồi quyền trong run: [`docs/plugins/PLUGIN_SKILLS.md`](docs/plugins/PLUGIN_SKILLS.md).
+- UI Plugins/Connections theo user/admin: [`docs/plugins/PLUGINS_UI.md`](docs/plugins/PLUGINS_UI.md).
+- DecisionProvider và Jev adapter chưa cấu hình: [`docs/routing/README.md`](docs/routing/README.md).
+- Taxonomy 5 route và corpus Việt/Anh: [`docs/routing/TAXONOMY.md`](docs/routing/TAXONOMY.md).
+- Query router rules trước graph (mặc định tắt): [`docs/routing/QUERY_ROUTER.md`](docs/routing/QUERY_ROUTER.md).
+- Shortlist Skill/tool qua provider inject: [`docs/routing/CAPABILITY_SHORTLIST.md`](docs/routing/CAPABILITY_SHORTLIST.md).
 
 ## Chạy bằng Docker dev
 
@@ -23,20 +35,27 @@ Hướng dẫn healthcheck, smoke test, restart và volume: [Docker dev](infra/d
 
 ## Chạy lần đầu trên Windows
 
-1. Mở `.env` và điền `DB_PASSWORD` cùng `DEEPSEEK_API_KEY`.
-2. Chạy migration:
+1. Cài uv 0.13.1, Python và dependency theo lock:
+
+   ```powershell
+   uv python install
+   uv sync --locked --extra dev --no-install-project --no-build
+   ```
+
+2. Copy `.env.example` thành `.env` nếu chưa có, điền `DB_PASSWORD` và key nếu cần chat DeepSeek.
+3. Chạy migration:
 
    ```powershell
    .\.venv\Scripts\alembic.exe upgrade head
    ```
 
-3. Khởi động ứng dụng:
+4. Khởi động ứng dụng:
 
    ```powershell
    .\.venv\Scripts\uvicorn.exe backend.main:app --reload
    ```
 
-4. Mở `http://127.0.0.1:8000/register` để đăng ký, sau đó chọn **Mở cuộc trò chuyện**.
+5. Mở `http://127.0.0.1:8000/register` để đăng ký, sau đó chọn **Mở cuộc trò chuyện**.
 
 Nếu chưa điền `DEEPSEEK_API_KEY`, các trang và API nội bộ vẫn chạy nhưng khi gửi tin nhắn, giao diện sẽ báo chưa cấu hình API key.
 

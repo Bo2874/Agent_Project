@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import replace
 from time import perf_counter
 from typing import Any, NoReturn
 from uuid import uuid4
@@ -21,6 +24,7 @@ from agent_core.context_budget import (
     ContextTokenBudget,
 )
 from agent_core.context_middleware import ContextAssemblyMiddleware
+from agent_core.contracts import FeatureFlags, RoutingDecision
 from agent_core.graph.checkpointing import agent_checkpoint_config, agent_thread_id
 from agent_core.graph.limits import AgentGraphLimitError
 from agent_core.graph.nodes import AgentGraphContext
@@ -49,7 +53,6 @@ from agent_core.graph.runtime import (
     _raise_for_model_stop,
     _tool_result_message,
     _ToolCallBuffer,
-    build_model_tool_definitions,
 )
 from agent_core.graph.state import (
     AgentBudget,
@@ -66,11 +69,27 @@ from agent_core.llm.deepseek import (
     to_model_messages,
 )
 from agent_core.llm.types import ChatModel, LLMChunk, ModelMessage, TokenUsage
+from agent_core.routing.query_router import QUERY_POLICY_VERSION
+from agent_core.routing.rules import (
+    ROUTING_POLICY_VERSION,
+    RULES_VERSION,
+    clarification_message,
+    route_query,
+)
+from agent_core.routing.shortlist import (
+    SHORTLIST_POLICY_VERSION,
+    CapabilityChoice,
+    SelectionPolicyError,
+    ShortlistConfig,
+    ShortlistRouter,
+)
+from agent_core.routing.types import DecisionProvider
 from agent_core.skills import (
     SkillRegistry,
     SkillSelectionConfig,
     SkillToolMiddleware,
 )
+from agent_core.skills.middleware import SkillToolResolution
 from agent_core.tools import (
     ToolContext,
     ToolExecutor,
@@ -78,6 +97,8 @@ from agent_core.tools import (
     ToolResult,
     ToolSelectionConfig,
 )
+from agent_core.tools.selector import ToolSelector
+from agent_core.tools.types import ToolAuthorizationError
 from agent_core.tracing import AgentTraceConfig
 
 logger = logging.getLogger(__name__)
@@ -224,7 +245,12 @@ async def run_agent_graph_stream(
     graph_checkpointer: BaseCheckpointSaver[Any] | None = None,
     memory_store: BaseStore | None = None,
     trace_config: AgentTraceConfig | None = None,
-) -> AsyncIterator[AgentStreamItem]:
+    routing_flags: FeatureFlags | None = None,
+    decision_provider: DecisionProvider | None = None,
+    query_routing_decision: RoutingDecision | None = None,
+    routing_messages: Sequence[ModelMessage] | None = None,
+    shortlist_config: ShortlistConfig | None = None,
+) -> AsyncIterator[AgentStreamItem | RoutingDecision]:
     """Execute model/tool turns with LangGraph as the only orchestrator."""
 
     limits = limits or AgentLimits()
@@ -283,20 +309,265 @@ async def run_agent_graph_stream(
         observation_counts = dict(restored.get("observation_counts", {}))
 
     latest_query = _latest_user_query(working_messages)
+    if persisted_checkpoint is not None:
+        history_source = restored.get("tool_routing_history", [])
+    else:
+        conversation = list(routing_messages if routing_messages is not None else working_messages)
+        last_user = next(
+            (
+                i
+                for i in range(len(conversation) - 1, -1, -1)
+                if conversation[i].get("role") == "user"
+            ),
+            -1,
+        )
+        history_source = conversation[:last_user] if last_user >= 0 else []
+    tool_routing_history = [
+        {"role": item["role"], "content": item["content"]}
+        for item in history_source
+        if isinstance(item, Mapping)
+        and item.get("role") in {"user", "assistant"}
+        and isinstance(item.get("content"), str)
+    ]
+    routing_decision: RoutingDecision | None = None
+    if persisted_checkpoint is not None:
+        # Resume the pinned execution policy, including when flags were turned off.
+        # Legacy checkpoints remain V1 even if routing was enabled meanwhile.
+        saved_route = restored.get("routing_decision")
+        if saved_route is not None:
+            try:
+                routing_decision = RoutingDecision.model_validate(saved_route)
+            except ValueError as exc:
+                raise AgentNodeExecutionError(
+                    "Invalid routing checkpoint; start a new run", code="routing_checkpoint_invalid"
+                ) from exc
+            valid_policy = (
+                routing_decision.provider == "rules"
+                and routing_decision.model_version == RULES_VERSION
+                and routing_decision.policy_version == ROUTING_POLICY_VERSION
+            ) or (
+                routing_decision.provider == "jev"
+                and routing_decision.policy_version == QUERY_POLICY_VERSION
+                and decision_provider is not None
+            )
+            if (
+                not valid_policy
+                or routing_decision.catalog_version
+                != registry.capability_catalog(context.user_role).version
+                or routing_decision.route not in {"chat", "tool_task"}
+            ):
+                raise AgentNodeExecutionError(
+                    "Routing capabilities or policy changed; start a new run",
+                    code="routing_checkpoint_changed",
+                )
+    elif query_routing_decision is not None:
+        routing_decision = RoutingDecision.model_validate(query_routing_decision)
+        if (
+            routing_decision.provider != "jev"
+            or routing_decision.policy_version != QUERY_POLICY_VERSION
+            or routing_decision.route not in {"chat", "tool_task", "document_qa", "planned_task"}
+            or decision_provider is None
+            or routing_flags is None
+            or not routing_flags.is_enabled("routing")
+        ):
+            raise AgentNodeExecutionError(
+                "Invalid JEV route decision", code="routing_decision_invalid"
+            )
+        routing_decision = routing_decision.model_copy(
+            update={"catalog_version": registry.capability_catalog(context.user_role).version}
+        )
+    elif routing_flags is not None and routing_flags.is_enabled("routing"):
+        routing_decision = route_query(
+            working_messages, registry.capability_catalog(context.user_role)
+        )
+        if (
+            decision_provider is not None
+            and not getattr(decision_provider, "shadow", False)
+            and skill_registry is not None
+            and routing_decision.reason_code == "general_conversation"
+            and any(
+                match.score >= (skill_selection_config or SkillSelectionConfig()).minimum_score
+                for match in skill_registry.search(
+                    latest_query,
+                    available_tools={
+                        r.binding_name
+                        for r in registry.capability_catalog(context.user_role).records
+                    },
+                )
+            )
+        ):
+            routing_decision = routing_decision.model_copy(
+                update={"route": "tool_task", "reason_code": "accessible_skill_request"}
+            )
+    if routing_decision is not None:
+        if (
+            routing_decision.provider == "rules"
+            and decision_provider is not None
+            and hasattr(decision_provider, "record_route")
+        ):
+            try:
+                await decision_provider.record_route(
+                    routing_decision, resumed=persisted_checkpoint is not None
+                )
+            except Exception:
+                if not getattr(decision_provider, "shadow", False):
+                    raise
+                logger.warning("Shadow route trace unavailable; baseline execution continues")
+        yield routing_decision
+        if routing_decision.route in {"document_qa", "planned_task"}:
+            message = (
+                "Chức năng hỏi đáp theo tài liệu chưa sẵn sàng. "
+                "Bạn có thể dán nội dung cần hỏi vào chat."
+                if routing_decision.route == "document_qa"
+                else "Chức năng điều phối tác vụ nhiều bước chưa sẵn sàng. "
+                "Bạn có thể yêu cầu một tác vụ đơn lẻ để tiếp tục."
+            )
+            yield LLMChunk(content=message, usage=TokenUsage())
+            return
+        if routing_decision.route == "clarify":
+            # A terminal clarification does not call a model, a Skill, or the graph.
+            yield LLMChunk(
+                content=clarification_message(routing_decision, working_messages),
+                usage=TokenUsage(),
+            )
+            return
+    selection_policy = None
+    shadow_policy = None
+    active_choice = None
+    saved_policy = restored.get("capability_routing") if persisted_checkpoint else None
+    if saved_policy is not None and saved_policy != SHORTLIST_POLICY_VERSION:
+        raise SelectionPolicyError("selection_checkpoint_changed")
+    saved_provider_policy = (
+        restored.get("decision_policy_version") if persisted_checkpoint else None
+    )
+    if saved_provider_policy is not None and saved_provider_policy != getattr(
+        decision_provider, "execution_signature", None
+    ):
+        raise SelectionPolicyError("selection_provider_policy_changed")
+    if saved_policy is not None or (
+        persisted_checkpoint is None
+        and decision_provider is not None
+        and routing_decision is not None
+        and routing_decision.route == "tool_task"
+    ):
+        if decision_provider is None:
+            raise SelectionPolicyError("selection_provider_unavailable")
+        if routing_decision is None or routing_decision.route != "tool_task":
+            raise SelectionPolicyError("selection_checkpoint_invalid")
+        candidate_policy = ShortlistRouter(
+            decision_provider,
+            registry,
+            context,
+            skill_registry,
+            config=shortlist_config,
+            history=tool_routing_history,
+            tool_config=replace(
+                tool_selection_config or ToolSelectionConfig(),
+                schema_token_budget=min(
+                    (tool_selection_config or ToolSelectionConfig()).schema_token_budget,
+                    context_budget.tool_tokens,
+                ),
+            ),
+        )
+        if getattr(decision_provider, "shadow", False) and saved_policy is None:
+            shadow_policy = candidate_policy
+        else:
+            selection_policy = candidate_policy
+        if persisted_checkpoint and restored.get("capability_choice") is not None:
+            try:
+                active_choice = CapabilityChoice.model_validate(restored["capability_choice"])
+            except ValueError:
+                raise SelectionPolicyError("selection_checkpoint_invalid") from None
     skill_tool_middleware = SkillToolMiddleware(
         tool_registry=registry,
         user_role=context.user_role,
         skill_registry=skill_registry,
-        tool_selection_config=tool_selection_config,
+        tool_selection_config=replace(
+            tool_selection_config or ToolSelectionConfig(),
+            schema_token_budget=min(
+                (tool_selection_config or ToolSelectionConfig()).schema_token_budget,
+                context_budget.tool_tokens,
+            ),
+        ),
         skill_selection_config=skill_selection_config,
     )
-    skill_tool_resolution = skill_tool_middleware.resolve(latest_query)
+    try:
+        if selection_policy is not None and active_choice is not None:
+            skill_tool_resolution = await selection_policy.resolve(active_choice)
+        elif selection_policy is not None or (
+            routing_decision is not None and routing_decision.route == "chat"
+        ):
+            # Enforce this in the executor's loaded-name set, not just the prompt.
+            skill_tool_resolution = SkillToolResolution(
+                tool_selection=ToolSelector().fit(
+                    registry, context.user_role, (), mode="all", max_tools=0
+                ),
+                skill_selection=None,
+                selected_skill=None,
+            )
+        else:
+            skill_tool_resolution = skill_tool_middleware.resolve(latest_query)
+    except ContextBudgetError as exc:
+        raise AgentContextLimitError(str(exc)) from exc
+    except ToolAuthorizationError as exc:
+        raise AgentNodeExecutionError(str(exc), code=exc.code) from exc
     selection = skill_tool_resolution.tool_selection
     selected_skill = skill_tool_resolution.selected_skill
+    if selection_policy is not None and persisted_checkpoint is not None:
+        if (
+            restored.get("loaded_tool_names") != sorted(selection.loaded_names)
+            or restored.get("selected_skill") != (selected_skill.name if selected_skill else None)
+            or (
+                active_choice is not None
+                and active_choice.step_number not in {start_step, max(1, start_step - 1)}
+            )
+        ):
+            raise SelectionPolicyError("selection_checkpoint_invalid")
+    original_authorization = context.authorization_guard
+    if skill_registry is not None and (selected_skill is not None or selection_policy is not None):
 
-    tool_definitions = build_model_tool_definitions(selection.tools)
+        async def authorize_skill_tool(name: str) -> None:
+            if selected_skill is not None:
+                await skill_registry.validate(selected_skill.name)
+            if original_authorization:
+                await original_authorization(name)
+
+        context = replace(context, authorization_guard=authorize_skill_tool)
+
+    tool_definitions = list(selection.definitions)
+
+    def runtime_version():
+        if context.capability_version is None and selection_policy is None:
+            return None
+        return hashlib.sha256(
+            json.dumps(
+                {
+                    "authority": context.capability_version,
+                    "tools": tool_definitions,
+                    "skill": (
+                        selected_skill.name,
+                        selected_skill.instructions,
+                        selected_skill.requires_approval,
+                    )
+                    if selected_skill
+                    else None,
+                },
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+
+    plugin_runtime_version = runtime_version()
+    if persisted_checkpoint is not None and (
+        restored.get("plugin_runtime_version") != plugin_runtime_version
+    ):
+        raise AgentNodeExecutionError(
+            "Plugin runtime changed; start a new run", code="plugin_runtime_changed"
+        )
     deadline = started_at + limits.max_duration_seconds
-    tool_executor = ToolExecutor()
+    tool_executor = ToolExecutor(
+        expected_tools={tool.name: registry.get(tool.name) for tool in selection.tools},
+        force_approval=bool(selected_skill and selected_skill.requires_approval),
+    )
     context_middleware = ContextAssemblyMiddleware(
         context_budget,
         tool_definitions=tool_definitions,
@@ -323,8 +594,12 @@ async def run_agent_graph_stream(
         max_repeated_observations=limits.max_repeated_observations,
     )
 
+    model_started_steps: set[int] = set()
+
     async def publish(item: AgentStreamItem) -> None:
         if isinstance(item, AgentLoopEvent):
+            if item.kind == "model_started":
+                model_started_steps.add(item.step_number)
             await _emit(event_handler, item)
         write_agent_stream_item(item)
 
@@ -355,12 +630,106 @@ async def run_agent_graph_stream(
             )
         )
 
+    async def validate_capabilities() -> None:
+        try:
+            if selection_policy is not None:
+                selection_policy.validate_catalog()
+            if selected_skill is not None and skill_registry is not None:
+                await skill_registry.validate(selected_skill.name)
+            if original_authorization:
+                for tool in selection.tools:
+                    await original_authorization(tool.name)
+        except ToolAuthorizationError as exc:
+            raise AgentNodeExecutionError(str(exc), code=exc.code) from exc
+
+    def install_resolution(resolution: SkillToolResolution) -> None:
+        nonlocal selection, selected_skill, tool_definitions, tool_executor
+        nonlocal context_middleware, plugin_runtime_version
+        old_version = plugin_runtime_version
+        selection, selected_skill = resolution.tool_selection, resolution.selected_skill
+        tool_definitions = list(selection.definitions)
+        plugin_runtime_version = runtime_version()
+        if old_version != plugin_runtime_version:
+            tool_executor = ToolExecutor(
+                expected_tools={tool.name: registry.get(tool.name) for tool in selection.tools},
+                force_approval=bool(selected_skill and selected_skill.requires_approval),
+            )
+        context_middleware = ContextAssemblyMiddleware(
+            context_budget,
+            tool_definitions=tool_definitions,
+            memory=memory_context,
+            rag=rag_context,
+            history_summaries=history_summary_context,
+            skill=selected_skill,
+            available_tool_count=selection.total_accessible,
+            tool_selection_mode=selection.mode,
+        )
+
+    async def restore_node_selection(state: AgentState) -> None:
+        nonlocal active_choice
+        if selection_policy is None:
+            return
+        # LangGraph can apply durable context task writes after a failed checkpoint
+        # commit. Runtime closures must follow that effective state, not the older
+        # checkpoint channel_values inspected at stream startup.
+        try:
+            choice = CapabilityChoice.model_validate(state.get("capability_choice"))
+        except ValueError:
+            raise SelectionPolicyError("selection_checkpoint_invalid") from None
+        if choice != active_choice:
+            install_resolution(await selection_policy.resolve(choice))
+            active_choice = choice
+        if (
+            state["loaded_tool_names"] != sorted(selection.loaded_names)
+            or state["selected_skill"] != (selected_skill.name if selected_skill else None)
+            or state["plugin_runtime_version"] != plugin_runtime_version
+        ):
+            raise SelectionPolicyError("selection_checkpoint_invalid")
+
     async def prepare_context_node(
         state: AgentState,
         store: BaseStore | None,
     ) -> Mapping[str, Any]:
+        nonlocal active_choice
         if execution_guard is not None:
             await execution_guard("model")
+        await validate_capabilities()
+        if shadow_policy is not None:
+            # The baseline resolution above remains authoritative. Never resolve a
+            # shadow choice: no schema/Skill loading or tool execution from it.
+            try:
+                shadow_choice = await shadow_policy.choose(
+                    latest_query,
+                    step_number=state["step_number"],
+                    observations=state["tool_observations"],
+                )
+                if hasattr(decision_provider, "record_choice"):
+                    await decision_provider.record_choice(
+                        shadow_choice,
+                        baseline_tools=selection.loaded_names,
+                        baseline_skill=selected_skill.name if selected_skill else None,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Shadow routing unavailable; baseline execution continues")
+        if selection_policy is not None:
+            # A committed choice is reused on resume/retry. A completed tool batch
+            # advances the step and triggers a fresh choice over observation status.
+            if active_choice is None or active_choice.step_number != state["step_number"]:
+                active_choice = await selection_policy.choose(
+                    latest_query,
+                    step_number=state["step_number"],
+                    observations=state["tool_observations"],
+                )
+                if hasattr(decision_provider, "record_choice"):
+                    await decision_provider.record_choice(active_choice)
+                try:
+                    resolution = await selection_policy.resolve(active_choice)
+                except ContextBudgetError as exc:
+                    raise AgentContextLimitError(str(exc)) from exc
+                install_resolution(resolution)
+            await validate_capabilities()
         usage = _usage_from_state(state["usage"])
         current_budget = _budget_with_elapsed(state, deadline)
         status_block = _build_status_block(
@@ -398,7 +767,9 @@ async def run_agent_graph_stream(
             prepared = context_middleware.prepare(
                 state["messages"],
                 status=status_block,
-                tool_definitions=state["tool_definitions"],
+                tool_definitions=tool_definitions
+                if selection_policy
+                else state["tool_definitions"],
                 memory=active_memory,
             )
         except ContextBudgetError as exc:
@@ -411,7 +782,16 @@ async def run_agent_graph_stream(
                 status_block=status_block,
             )
         )
+        routing_update = {}
+        if selection_policy is not None:
+            routing_update = {
+                "capability_choice": active_choice.model_dump(mode="json"),
+                "loaded_tool_names": sorted(selection.loaded_names),
+                "selected_skill": selected_skill.name if selected_skill else None,
+                "plugin_runtime_version": plugin_runtime_version,
+            }
         return {
+            **routing_update,
             "prepared_messages": prepared.messages,
             "tool_definitions": prepared.tools,
             "budget": _budget_with_elapsed(state, deadline),
@@ -420,7 +800,11 @@ async def run_agent_graph_stream(
         }
 
     async def call_model_node(state: AgentState) -> Mapping[str, Any]:
+        await restore_node_selection(state)
+        await validate_capabilities()
         step_number = state["step_number"]
+        if step_number not in model_started_steps:
+            await publish(AgentLoopEvent(kind="model_started", step_number=step_number))
         model_started_at = perf_counter()
         node_started_at["model"] = model_started_at
         content_parts: list[str] = []
@@ -539,6 +923,9 @@ async def run_agent_graph_stream(
         }
 
     async def request_approvals_node(state: AgentState) -> Mapping[str, Any]:
+        await restore_node_selection(state)
+        if selection_policy is not None:
+            await validate_capabilities()
         decisions: dict[str, bool] = {}
         for call in state["pending_tool_calls"]:
             request = _tool_call_request(call)
@@ -567,6 +954,9 @@ async def run_agent_graph_stream(
         return {"tool_approvals": decisions}
 
     async def execute_tools_node(state: AgentState) -> Mapping[str, Any]:
+        await restore_node_selection(state)
+        if selection_policy is not None:
+            await validate_capabilities()
         step_number = state["step_number"]
         result_counts = dict(state["observation_counts"])
         tool_messages: list[BaseMessage] = []
@@ -675,6 +1065,7 @@ async def run_agent_graph_stream(
         memory_loaded=bool(memory_context) or memory_store is None,
         rag_context=_memory_blocks_to_state(rag_context),
         history_summary_context=_memory_blocks_to_state(history_summary_context),
+        tool_routing_history=tool_routing_history,
     )
     graph_context = AgentGraphContext(
         prepare_context=prepare_context_node,
@@ -683,6 +1074,21 @@ async def run_agent_graph_stream(
         build_final=build_final_node,
         request_approvals=request_approvals_node,
         observe_node_error=observe_node_error,
+    )
+    initial_state["plugin_runtime_version"] = plugin_runtime_version
+    initial_state["routing_decision"] = (
+        routing_decision.model_dump(mode="json") if routing_decision is not None else None
+    )
+    initial_state["capability_routing"] = (
+        SHORTLIST_POLICY_VERSION if selection_policy is not None else None
+    )
+    initial_state["decision_policy_version"] = (
+        getattr(decision_provider, "execution_signature", None)
+        if selection_policy or (routing_decision and routing_decision.provider == "jev")
+        else None
+    )
+    initial_state["capability_choice"] = (
+        active_choice.model_dump(mode="json") if active_choice else None
     )
     graph = build_agent_graph(
         checkpointer=checkpointer,
@@ -724,6 +1130,7 @@ async def run_agent_graph_stream(
             resumed_state = snapshot.values
             resumed_step = int(resumed_state.get("step_number", start_step))
             if "model" in pending_nodes:
+                model_started_steps.add(resumed_step)
                 resumed_model_started = AgentLoopEvent(
                     kind="model_started",
                     step_number=resumed_step,
@@ -731,6 +1138,7 @@ async def run_agent_graph_stream(
                 await _emit(event_handler, resumed_model_started)
                 yield resumed_model_started
             elif pending_nodes.intersection({"approval", "tool"}):
+                model_started_steps.add(resumed_step)
                 resumed_model_started = AgentLoopEvent(
                     kind="model_started",
                     step_number=resumed_step,

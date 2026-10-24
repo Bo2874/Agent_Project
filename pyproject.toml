@@ -10,9 +10,12 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     "alembic>=1.16,<2",
     "asyncpg>=0.30,<1",
+    "cryptography>=50.0.2,<51",
     "email-validator>=2.2,<3",
     "fastapi>=0.116,<1",
     "httpx>=0.28,<1",
+    "httpx2==2.13.1",
+    "httpcore2==2.13.1",
     "jinja2>=3.1,<4",
     "jsonschema>=4.25,<5",
     "langchain>=1.4.3,<1.5",
@@ -24,6 +27,7 @@ dependencies = [
     "llama-index-retrievers-bm25>=0.8.0,<0.9",
     "llama-index-vector-stores-postgres>=0.9.0,<0.10",
     "mcp>=2.2,<3",
+    "pgvector>=0.5.1,<0.6",
     "psycopg[binary,pool]>=3.2,<4",
     "pydantic-settings>=2.10,<3",
     "pwdlib[argon2]>=0.2,<1",
@@ -31,6 +35,7 @@ dependencies = [
     "python-multipart>=0.0.20,<1",
     "sqlalchemy>=2.0,<3",
     "uvicorn[standard]>=0.35,<1",
+    "typesafe-sdk==0.7.5",
 ]
 
 [project.optional-dependencies]

@@ -18,6 +18,7 @@ from backend.core.config import get_settings
 from backend.database import SessionFactory, engine
 from backend.dependencies_tools import (
     close_tool_connections,
+    get_plugin_manager,
     get_tool_registry,
     start_tool_connections,
 )
@@ -105,6 +106,8 @@ async def run() -> dict:
     saver = get_langgraph_checkpointer()
     try:
         await start_tool_connections()
+        health = get_plugin_manager().health()
+        assert len(health) == 1 and health[0].name == "demo" and health[0].status == "healthy"
         assert "run_python_code" not in get_tool_registry()
         model = ProbeModel()
         chunks = [

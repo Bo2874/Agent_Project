@@ -149,9 +149,12 @@ class SkillToolMiddleware(AgentMiddleware):
             self._tool_selector.config.max_loaded_tools,
             len(required_tools),
         )
-        skill_tool_selection = ToolSelection(
-            tools=tuple(ordered_tools[:limit]),
-            total_accessible=tool_selection.total_accessible,
+        skill_tool_selection = self._tool_selector.fit(
+            self._tool_registry,
+            self._user_role,
+            tuple(tool.name for tool in ordered_tools[:limit]),
+            required=tuple(tool.name for tool in required_tools),
+            max_tools=limit,
             mode="skill",
         )
         return SkillToolResolution(

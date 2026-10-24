@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.0",
+  "id": "builtin.demo",
+  "namespace": "demo",
+  "version": "1.0.0",
+  "policy_version": "1.0.0",
+  "name": "Demo MCP",
+  "description": "Metadata for the existing local demo. Registration does not start a server.",
+  "tags": [
+    "demo",
+    "offline"
+  ],
+  "max_concurrency": 1,
+  "servers": [
+    {
+      "server_id": "main",
+      "transport": "stdio",
+      "release": "0.1.0",
+      "connection_profile_ref": "builtin.demo.stdio",
+      "tools": [
+        {
+          "name": "server_time",
+          "remote_name": "get_server_time",
+          "description": "Read the demo UTC server time.",
+          "input_schema_ref": "demo.server_time.input",
+          "policy": {
+            "allowed_roles": [
+              "user",
+              "admin"
+            ],
+            "side_effect": "read_only",
+            "requires_approval": false
+          }
+        },
+        {
+          "name": "calculate",
+          "remote_name": "calculate",
+          "description": "Perform a numerical calculation.",
+          "input_schema_ref": "demo.calculate.input",
+          "policy": {
+            "allowed_roles": [
+              "user",
+              "admin"
+            ],
+            "side_effect": "read_only",
+            "requires_approval": false
+          }
+        },
+        {
+          "name": "count_text",
+          "remote_name": "count_text",
+          "description": "Count text words and characters.",
+          "input_schema_ref": "demo.count_text.input",
+          "policy": {
+            "allowed_roles": [
+              "user",
+              "admin"
+            ],
+            "side_effect": "read_only",
+            "requires_approval": false
+          }
+        },
+        {
+          "name": "temperature",
+          "remote_name": "convert_temperature",
+          "description": "Convert a temperature.",
+          "input_schema_ref": "demo.temperature.input",
+          "policy": {
+            "allowed_roles": [
+              "user",
+              "admin"
+            ],
+            "side_effect": "read_only",
+            "requires_approval": false
+          }
+        },
+        {
+          "name": "sensitive_action",
+          "remote_name": "simulate_sensitive_action",
+          "description": "Simulate a sensitive operation.",
+          "input_schema_ref": "demo.sensitive_action.input",
+          "policy": {
+            "allowed_roles": [
+              "user",
+              "admin"
+            ],
+            "side_effect": "write",
+            "requires_approval": true
+          }
+        },
+        {
+          "name": "admin_runtime",
+          "remote_name": "get_admin_runtime_info",
+          "description": "Read admin-only runtime metadata.",
+          "input_schema_ref": "demo.admin_runtime.input",
+          "policy": {
+            "allowed_roles": [
+              "admin"
+            ],
+            "side_effect": "read_only",
+            "requires_approval": true
+          }
+        }
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "name": "multi_step_calculation",
+      "version": "1.0.0",
+      "description": "Use calculator calls for a multi-step calculation.",
+      "relative_directory": "skills/multi_step_calculation",
+      "required_tools": [
+        {
+          "server_id": "main",
+          "tool_name": "calculate"
+        }
+      ],
+      "policy": {
+        "allowed_roles": [
+          "user",
+          "admin"
+        ],
+        "side_effect": "read_only",
+        "requires_approval": false
+      }
+    }
+  ]
+}

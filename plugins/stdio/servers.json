@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "profiles": [
+    {
+      "id": "builtin.demo.stdio",
+      "release": "0.1.0",
+      "command": "@python",
+      "args": ["-m", "agent_core.mcp.demo_server"],
+      "cwd": "@project"
+    }
+  ],
+  "servers": [
+    {
+      "manifest": "plugins/manifests/demo.json",
+      "server_id": "main",
+      "enabled": true,
+      "legacy_aliases": true
+    }
+  ]
+}

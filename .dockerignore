@@ -1,6 +1,8 @@
 # Allow-list: local secrets, virtualenv, backups, PDFs and reports never enter the build context.
 **
 !pyproject.toml
+!uv.lock
+!.python-version
 !alembic.ini
 !agent_core/
 !agent_core/**
@@ -10,6 +12,16 @@
 !frontend/**
 !skills/
 !skills/**
+!plugins/
+!plugins/manifests/
+!plugins/manifests/**
+!plugins/stdio/
+!plugins/stdio/**
+!plugins/http/
+!plugins/http/**
+!plugins/packages.json
+!plugins/packages/
+!plugins/packages/**
 !scripts/
 !scripts/**
 !migrations/
@@ -18,6 +30,21 @@
 !infra/docker/
 !infra/docker/app/
 !infra/docker/app/**
+!infra/docker/python-sandbox/
+!infra/docker/python-sandbox/**
+!infra/ci/
+!infra/ci/**
+!tests/
+!tests/**
+!evals/
+!evals/**
+!docs/
+!docs/plugins/
+!docs/plugins/schemas/
+!docs/plugins/schemas/**
+!.github/
+!.github/workflows/
+!.github/workflows/**
 **/__pycache__
 **/*.pyc
 **/*.pyo

@@ -2,16 +2,18 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
+from contextlib import AsyncExitStack
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from agent_core.context_budget import ContextBlock, ContextTokenBudget
+from agent_core.contracts import RoutingDecision
 from agent_core.graph import (
     AgentLimits,
     AgentLoopError,
@@ -24,10 +26,15 @@ from agent_core.history_compression import HistoryCompressionPolicy
 from agent_core.llm.deepseek import LLMConfigurationError, LLMProviderError
 from agent_core.llm.types import ChatModel, TokenUsage
 from agent_core.prompts import build_chat_messages
+from agent_core.routing.query_router import route_query_with_jev
+from agent_core.routing.shortlist import SelectionPolicyError
+from agent_core.routing.types import DecisionProvider, DecisionProviderError
 from agent_core.skills import SkillRegistry, SkillSelectionConfig
 from agent_core.tools import ToolContext, ToolRegistry, ToolSelectionConfig
+from agent_core.tools.types import ToolAuthorizationError
 from backend.core.config import get_settings
 from backend.dependencies import CurrentUser, DbSession
+from backend.dependencies_decisions import DecisionProviderDependency
 from backend.dependencies_llm import ChatModelDependency
 from backend.dependencies_skills import SkillRegistryDependency
 from backend.dependencies_tools import ToolRegistryDependency
@@ -51,8 +58,10 @@ from backend.services.agent_runs import (
     prepare_agent_run_resume,
 )
 from backend.services.chat import (
+    ConversationBusyError,
     add_user_message,
     create_conversation,
+    delete_conversation,
     get_owned_conversation,
     list_conversations,
     list_messages,
@@ -67,6 +76,7 @@ from backend.services.langsmith_tracing import get_langsmith_tracing
 from backend.services.memory import (
     extract_and_store_user_message_memories,
 )
+from backend.services.plugin_runtime import plugin_runtime
 from backend.services.tool_approvals import (
     ToolApprovalForbiddenError,
     ToolApprovalNotFoundError,
@@ -203,6 +213,8 @@ async def stream_assistant_response(
     history_summary_context: Sequence[ContextBlock],
     graph_checkpointer: BaseCheckpointSaver[Any],
     resume: bool = False,
+    decision_provider: DecisionProvider | None = None,
+    query_messages: Sequence[dict[str, str]] | None = None,
 ) -> AsyncIterator[str]:
     recorder = AgentRunRecorder(
         agent_run_id=agent_run_id,
@@ -225,7 +237,7 @@ async def stream_assistant_response(
         await recorder(event)
         await quota_guard.record_event(event)
 
-    try:
+    async def extract_memories() -> None:
         if not resume and settings.memory_extraction_enabled:
             try:
                 await quota_guard.before_execution("model")
@@ -244,6 +256,39 @@ async def stream_assistant_response(
                 raise
             except Exception:
                 logger.exception("Không thể trích xuất memory từ user message")
+
+    routing_flags = settings.v2_features
+    plugin_stack = AsyncExitStack()
+    try:
+        if decision_provider is not None and hasattr(decision_provider, "bind_run"):
+            try:
+                await decision_provider.bind_run(
+                    user_id=user_id,
+                    run_id=agent_run_id,
+                    token_recorder=quota_guard.record_tokens,
+                )
+            except Exception:
+                if not getattr(decision_provider, "shadow", False):
+                    raise
+                logger.warning("Shadow routing unavailable; baseline execution continues")
+                decision_provider = None
+        query_decision = None
+        if (
+            not resume
+            and routing_flags.is_enabled("routing")
+            and decision_provider is not None
+            and not getattr(decision_provider, "shadow", False)
+        ):
+            await quota_guard.before_execution("model")
+            query_decision = await route_query_with_jev(
+                query_messages if query_messages is not None else model_messages,
+                decision_provider,
+            )
+        runtime = await plugin_stack.enter_async_context(
+            plugin_runtime(registry, skill_registry, tool_context)
+        )
+        if not routing_flags.is_enabled("routing"):
+            await extract_memories()
         memory_store = ScopedUserMemoryStore(
             user_id=user_id,
             policy=UserMemorySearchPolicy(
@@ -263,14 +308,14 @@ async def stream_assistant_response(
         async for item in stream_agent_graph(
             model=model,
             messages=model_messages,
-            registry=registry,
-            context=tool_context,
+            registry=runtime.registry,
+            context=runtime.context,
             event_handler=record_event,
             approval_handler=tool_approval_manager.wait_for_decision,
             limits=limits,
             context_budget=context_budget,
             tool_selection_config=tool_selection_config,
-            skill_registry=skill_registry,
+            skill_registry=runtime.skills,
             skill_selection_config=skill_selection_config,
             history_summary_context=history_summary_context,
             resume=resume,
@@ -278,7 +323,16 @@ async def stream_assistant_response(
             graph_checkpointer=graph_checkpointer,
             memory_store=memory_store,
             trace_config=trace_config,
+            routing_flags=routing_flags,
+            decision_provider=decision_provider,
+            query_routing_decision=query_decision,
+            routing_messages=query_messages,
         ):
+            if isinstance(item, RoutingDecision):
+                yield sse_event("routing", {**item.model_dump(mode="json"), "resumed": resume})
+                if item.route in {"chat", "tool_task"}:
+                    await extract_memories()
+                continue
             encoded_event = agent_stream_sse(item)
             if isinstance(item, AgentLoopEvent):
                 if encoded_event is not None:
@@ -342,6 +396,9 @@ async def stream_assistant_response(
             "error",
             {"message": str(exc), "code": "llm_provider_error"},
         )
+    except ToolAuthorizationError as exc:
+        await fail_agent_run(agent_run_id, "failed", str(exc), stop_reason=exc.code)
+        yield sse_event("error", {"message": str(exc), "code": exc.code})
     except AgentLoopError as exc:
         await fail_agent_run(
             agent_run_id,
@@ -350,6 +407,13 @@ async def stream_assistant_response(
             stop_reason=exc.code,
         )
         yield sse_event("error", {"message": str(exc), "code": exc.code})
+    except SelectionPolicyError as exc:
+        await fail_agent_run(agent_run_id, "failed", str(exc), stop_reason=exc.code)
+        yield sse_event("error", {"message": str(exc), "code": exc.code})
+    except DecisionProviderError as exc:
+        content = "Không thể phân loại yêu cầu bằng JEV. Vui lòng thử lại."
+        await fail_agent_run(agent_run_id, "failed", content, stop_reason=exc.code)
+        yield sse_event("error", {"message": content, "code": exc.code})
     except Exception as exc:
         await fail_agent_run(
             agent_run_id,
@@ -365,7 +429,10 @@ async def stream_assistant_response(
             },
         )
     finally:
-        await model.aclose()
+        try:
+            await plugin_stack.aclose()
+        finally:
+            await model.aclose()
 
 
 @router.get("", response_model=list[ConversationResponse])
@@ -380,6 +447,24 @@ async def post_conversation(
 ) -> ConversationResponse:
     conversation = await create_conversation(session, user.id, data.title)
     return ConversationResponse.model_validate(conversation)
+
+
+@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_conversation(
+    conversation_id: UUID, session: DbSession, user: CurrentUser
+) -> Response:
+    try:
+        deleted = await delete_conversation(
+            session,
+            conversation_id=conversation_id,
+            user_id=user.id,
+            checkpointer=get_langgraph_checkpointer(),
+        )
+    except ConversationBusyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
@@ -458,6 +543,7 @@ async def resume_agent_run(
     model: ChatModelDependency,
     registry: ToolRegistryDependency,
     skill_registry: SkillRegistryDependency,
+    decision_provider: DecisionProviderDependency,
 ) -> StreamingResponse:
     conversation = await get_owned_conversation(session, conversation_id, user.id)
     if conversation is None:
@@ -571,6 +657,7 @@ async def resume_agent_run(
             history_summary_context=(),
             graph_checkpointer=graph_checkpointer,
             resume=True,
+            decision_provider=decision_provider,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -586,6 +673,7 @@ async def post_message(
     model: ChatModelDependency,
     registry: ToolRegistryDependency,
     skill_registry: SkillRegistryDependency,
+    decision_provider: DecisionProviderDependency,
 ) -> StreamingResponse:
     conversation = await get_owned_conversation(session, conversation_id, user.id)
     if conversation is None:
@@ -691,7 +779,12 @@ async def post_message(
             tool_selection_config=tool_selection_config,
             skill_selection_config=skill_selection_config,
             history_summary_context=history_context.summaries,
+            query_messages=[
+                {"role": item.role, "content": item.content}
+                for item in history_context.messages[-settings.chat_history_limit :]
+            ],
             graph_checkpointer=get_langgraph_checkpointer(),
+            decision_provider=decision_provider,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

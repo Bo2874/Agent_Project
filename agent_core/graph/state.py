@@ -69,6 +69,12 @@ class AgentState(TypedDict):
     step_number: int
     loaded_tool_names: list[str]
     selected_skill: str | None
+    plugin_runtime_version: str | None
+    routing_decision: dict[str, Any] | None
+    capability_routing: str | None
+    decision_policy_version: str | None
+    capability_choice: dict[str, Any] | None
+    tool_routing_history: list[dict[str, str]]
     tool_definitions: list[dict[str, Any]]
     pending_tool_calls: list[AgentToolCall]
     tool_approvals: dict[str, bool]
@@ -152,6 +158,12 @@ def create_initial_agent_state(
         prepared_messages=[],
         goal=clean_goal,
         phase="created",
+        plugin_runtime_version=None,
+        routing_decision=None,
+        capability_routing=None,
+        decision_policy_version=None,
+        capability_choice=None,
+        tool_routing_history=[],
         step_number=1,
         loaded_tool_names=[],
         selected_skill=None,

@@ -1,6 +1,0 @@
-wall_time: PASSED (status=timed_out, duration_ms=5002)
-cpu_time: PASSED (status=resource_exhausted, duration_ms=1999)
-memory: PASSED (status=completed, duration_ms=26)
-process: PASSED (status=completed, duration_ms=215)
-output: PASSED (status=resource_exhausted, duration_ms=24)
-SANDBOX_LIMITS_PASSED

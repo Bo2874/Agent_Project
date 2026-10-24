@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Plugins & Connections · Personal Agent{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', path='/plugins.css') }}">
+{% endblock %}
+{% block body %}
+<main class="shell plugins-page" data-plugins-app data-enabled="{{ 'true' if plugins_enabled else 'false' }}" data-admin="{{ 'true' if user.role == 'admin' else 'false' }}" data-view="{{ 'admin' if plugins_admin_view else 'mine' }}">
+    <nav aria-label="Điều hướng chính">
+        <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
+        <div class="nav-actions">
+            <a class="text-link" href="/chat">Chat</a>
+            {% if user.role == "admin" %}<a class="text-link" href="/admin">Quản trị</a>{% endif %}
+            <button class="ghost-button" data-logout>Đăng xuất</button>
+        </div>
+    </nav>
+    <header class="plugins-hero">
+        <div>
+            <p class="eyebrow">Không gian làm việc</p>
+            <h1>Plugins & Connections</h1>
+            <p class="lead">Chọn những khả năng Agent được dùng và quản lý kết nối trong tài khoản của bạn.</p>
+        </div>
+        <span class="plugins-identity">{{ user.email }}</span>
+    </header>
+    <p class="plugins-status" data-plugin-status role="status" aria-live="polite">{{ 'Đang tải plugins…' if plugins_enabled else 'Tính năng Plugins đang tắt.' }}</p>
+    {% if plugins_enabled %}
+    <noscript><p class="plugins-notice">Bật JavaScript để quản lý plugins và connections.</p></noscript>
+    <fieldset class="plugins-controls" data-plugin-controls disabled>
+        <legend class="visually-hidden">Quản lý plugins</legend>
+        <div class="plugins-toolbar">
+            <div class="plugins-tabs" aria-label="Chọn không gian">
+                <button type="button" data-plugin-view="mine" aria-pressed="{{ 'false' if plugins_admin_view else 'true' }}">Của tôi</button>
+                {% if user.role == "admin" %}<button type="button" data-plugin-view="admin" aria-pressed="{{ 'true' if plugins_admin_view else 'false' }}">Quản trị plugin</button>{% endif %}
+            </div>
+            <button type="button" class="ghost-button" data-plugin-refresh>Tải lại</button>
+        </div>
+        <section data-plugin-panel="mine" {% if plugins_admin_view %}hidden{% endif %} aria-label="Plugins của tôi">
+            <div class="plugins-section-heading">
+                <div><h2>Plugins của tôi</h2><p data-plugin-count>Danh sách được quản trị viên cấp quyền.</p></div>
+                <label class="plugins-search">Tìm plugin<input type="search" data-plugin-search placeholder="Tên hoặc mô tả…" maxlength="200"></label>
+            </div>
+            <p class="plugins-note">Bật kết nối để Agent có thể dùng trong cuộc trò chuyện mới. Trạng thái cấu hình không xác nhận dịch vụ bên ngoài đang online.</p>
+            <div class="plugins-grid" data-plugin-list></div>
+        </section>
+        {% if user.role == "admin" %}
+        <section data-plugin-panel="admin" {% if not plugins_admin_view %}hidden{% endif %} aria-label="Quản trị plugin">
+            <div class="plugins-section-heading">
+                <div><h2>Catalog plugin</h2><p>Đăng ký release đã duyệt và cấp quyền theo từng tài khoản.</p></div>
+                <button type="button" class="plugin-primary" data-plugin-register>Đăng ký manifest</button>
+            </div>
+            <p class="plugins-note">Đăng ký manifest tạo mục trong catalog. Cấu hình máy chủ và package do host quản lý riêng.</p>
+            <div class="plugins-grid" data-plugin-admin-list></div>
+        </section>
+        {% endif %}
+    </fieldset>
+    {% else %}
+    <section class="plugins-empty">
+        <span class="plugins-empty-mark" aria-hidden="true">⊞</span>
+        <h2>Plugins chưa được bật</h2>
+        <p>Quản trị viên cần bật tính năng Plugins trước khi bạn có thể tạo hoặc thay đổi kết nối.</p>
+        <a class="text-link" href="/chat">Trở lại chat →</a>
+    </section>
+    {% endif %}
+    <button type="button" class="ghost-button plugins-retry" data-plugin-retry hidden>Thử tải lại</button>
+    <dialog class="plugin-dialog" data-plugin-dialog aria-labelledby="plugin-dialog-title">
+        <form data-plugin-dialog-form>
+            <header><h2 id="plugin-dialog-title"></h2><button type="button" class="ghost-button" data-plugin-dialog-close aria-label="Đóng">×</button></header>
+            <div data-plugin-dialog-content></div>
+            <p class="plugins-status" data-plugin-dialog-status role="status" aria-live="polite"></p>
+            <footer><button type="button" class="ghost-button" data-plugin-dialog-cancel>Hủy</button><button type="submit" class="plugin-primary" data-plugin-dialog-submit>Lưu</button></footer>
+        </form>
+    </dialog>
+</main>
+<script src="{{ url_for('static', path='/plugins.js') }}" defer></script>
+{% endblock %}

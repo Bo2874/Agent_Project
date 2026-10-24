@@ -1,9 +1,10 @@
 import re
 import unicodedata
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_core.contracts import CapabilityDescriptor
 from agent_core.skills.spec import (
     SKILL_INSTRUCTIONS_FILE,
     SKILL_MANIFEST_FILE,
@@ -59,7 +60,11 @@ class SkillChangedError(SkillRegistryError):
 @dataclass(frozen=True, slots=True)
 class RegisteredSkill:
     metadata: SkillMetadata
-    directory: Path
+    directory: Path | None = None
+    loader: Callable[[], SkillSpec] | None = None
+    validator: Callable[[], Awaitable[None]] | None = None
+    capability: CapabilityDescriptor | None = None
+    metadata_validator: Callable[[], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +110,63 @@ class SkillRegistry:
     def __init__(self) -> None:
         self._skills: dict[str, RegisteredSkill] = {}
         self._loaded: dict[str, SkillSpec] = {}
+
+    def fork(self) -> "SkillRegistry":
+        result = SkillRegistry()
+        result._skills = dict(self._skills)
+        result._loaded = dict(self._loaded)
+        return result
+
+    def register_loader(
+        self,
+        metadata: SkillMetadata,
+        loader: Callable[[], SkillSpec],
+        *,
+        validator: Callable[[], Awaitable[None]],
+        capability: CapabilityDescriptor,
+        metadata_validator: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        if capability.kind != "skill":
+            raise ValueError("A Skill loader requires a Skill capability descriptor")
+        if metadata.name in self._skills:
+            raise DuplicateSkillError("Skill alias already registered")
+        self._skills[metadata.name] = RegisteredSkill(
+            metadata=metadata,
+            loader=loader,
+            validator=validator,
+            capability=capability,
+            metadata_validator=metadata_validator,
+        )
+
+    async def validate_metadata(self, name: str) -> None:
+        registered = self._skills.get(name)
+        if registered is None:
+            raise SkillNotFoundError("Skill no longer registered")
+        guard = registered.metadata_validator or registered.validator
+        if guard:
+            await guard()
+
+    async def validate(self, name: str) -> None:
+        registered = self._skills.get(name)
+        if registered is None:
+            raise SkillNotFoundError("Skill no longer registered")
+        if registered.validator:
+            await registered.validator()
+
+    def capabilities(self) -> tuple[CapabilityDescriptor, ...]:
+        return tuple(s.capability for s in self._skills.values() if s.capability is not None)
+
+    def capability(self, name: str) -> CapabilityDescriptor:
+        """Metadata-only identity for both builtin and plugin Skills."""
+        metadata = self.get_metadata(name)
+        return self._skills[name].capability or CapabilityDescriptor(
+            capability_id=f"skill.{metadata.name}",
+            kind="skill",
+            name=metadata.name,
+            description=metadata.description,
+            version=metadata.version,
+            tags=metadata.tags,
+        )
 
     def _read_registration(self, skill_directory: str | Path) -> RegisteredSkill:
         directory = Path(skill_directory).resolve()
@@ -207,10 +269,10 @@ class SkillRegistry:
         missing_tools = registered.metadata.missing_tools(available_tools)
         if missing_tools:
             raise SkillDependencyError(f"Skill '{name}' thiếu tool: {', '.join(missing_tools)}")
-        if name in self._loaded:
+        if name in self._loaded and registered.loader is None:
             return self._loaded[name]
 
-        skill = load_skill(registered.directory)
+        skill = registered.loader() if registered.loader else load_skill(registered.directory)
         if skill.metadata != registered.metadata:
             raise SkillChangedError(
                 f"Metadata của Skill '{name}' đã thay đổi; cần đăng ký lại Registry"

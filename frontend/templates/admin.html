@@ -5,6 +5,7 @@
     <nav>
         <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
         <div class="nav-actions">
+            <a class="text-link" href="/admin/plugins">Plugins</a>
             <a class="text-link" href="/chat">Chat</a>
             <a class="text-link" href="/dashboard">Trang cá nhân</a>
             <button class="ghost-button" data-logout>Đăng xuất</button>
@@ -81,6 +82,20 @@
             <strong data-admin-metric="cache_hit_rate">—</strong>
             <small>trên token có thông tin cache</small>
         </article>
+    </section>
+
+    <section class="admin-panel admin-table-panel" aria-label="Routing Jev">
+        <div class="admin-panel-heading">
+            <div><p class="eyebrow">Routing</p><h2>Jev và LLM fallback</h2></div>
+            <span class="admin-panel-note" data-routing-summary>Đang tải…</span>
+        </div>
+        <p class="admin-panel-note" data-routing-metrics></p>
+        <div class="admin-table-wrap">
+            <table>
+                <thead><tr><th>Run / giai đoạn</th><th>Chế độ</th><th>Provider / model</th><th>Kết quả</th><th>Token in / out</th><th>Độ trễ</th><th>Fallback</th></tr></thead>
+                <tbody data-routing-traces></tbody>
+            </table>
+        </div>
     </section>
 
     <section class="admin-detail-grid">

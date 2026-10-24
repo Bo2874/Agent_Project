@@ -1,0 +1,105 @@
+name: Foundation CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: foundation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workflow-lint:
+    name: workflow-lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check workflow syntax, expressions and action inputs
+        run: docker run --rm -i rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -shellcheck= -pyflakes= - < .github/workflows/ci.yml
+
+  lint-unit:
+    name: lint-unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    env:
+      PYTHONUTF8: "1"
+      DB_HOST: "127.0.0.1"
+      DB_PORT: "1"
+      DB_NAME: agent_ci_unused
+      DB_USER: agent_ci
+      DB_PASSWORD: ci-only-unused-database-password
+      AUTH_SECRET_KEY: ci-only-auth-secret-with-at-least-32-characters
+      DEEPSEEK_API_KEY: ""
+      LANGSMITH_TRACING_ENABLED: "false"
+      MEMORY_EXTRACTION_ENABLED: "false"
+      PYTHON_SANDBOX_ENABLED: "true"
+      V2_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.1"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev --no-install-project --no-build
+      - name: Check lock freshness
+        run: uv lock --check --offline
+      - name: Check dependency consistency
+        run: uv pip check
+      - name: Lint
+        run: uv run --no-sync python -m ruff check .
+      - name: Validate plugin manifests and catalog
+        run: uv run --no-sync python -m scripts.validate_plugin_manifests
+      - name: Validate Skill fixtures
+        run: uv run --no-sync python -m scripts.evaluate_skills
+      - name: Unit tests including MCP stdio
+        run: uv run --no-sync python -m pytest -q --junitxml=reports/ci/unit.xml
+      - name: Upload unit evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unit-${{ matrix.os }}
+          path: reports/ci/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  migration-integration:
+    name: migration-integration (Compose)
+    needs: [workflow-lint, lint-unit]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Fresh PostgreSQL migration and app/worker integration
+        run: python -m scripts.ci_compose_gate --project-name ci-${{ github.run_id }}-${{ github.run_attempt }} --output-dir reports/ci/compose
+      - name: Upload integration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: compose-integration
+          path: reports/ci/compose/
+          if-no-files-found: warn
+          retention-days: 14

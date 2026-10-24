@@ -79,3 +79,31 @@ async def admin_page(request: Request, user: OptionalUser) -> Response:
             status_code=403,
         )
     return templates.TemplateResponse(request=request, name="admin.html", context={"user": user})
+
+
+@router.get("/plugins", response_class=HTMLResponse)
+@router.get("/admin/plugins", response_class=HTMLResponse)
+@router.get("/plugins/oauth/callback", response_class=HTMLResponse)
+async def plugins_page(request: Request, user: OptionalUser) -> Response:
+    headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+    if user is None:
+        return RedirectResponse("/login", status_code=303, headers=headers)
+    admin_view = request.url.path == "/admin/plugins"
+    if admin_view and user.role != "admin":
+        return templates.TemplateResponse(
+            request=request,
+            name="forbidden.html",
+            context={"user": user},
+            status_code=403,
+            headers=headers,
+        )
+    return templates.TemplateResponse(
+        request=request,
+        name="plugins.html",
+        context={
+            "user": user,
+            "plugins_enabled": get_settings().v2_features.is_enabled("plugins"),
+            "plugins_admin_view": admin_view,
+        },
+        headers=headers,
+    )

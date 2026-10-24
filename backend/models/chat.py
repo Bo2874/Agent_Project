@@ -18,6 +18,7 @@ from backend.models.base import Base
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = (UniqueConstraint("id", "user_id", name="uq_conversation_owner"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -32,7 +33,10 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    __table_args__ = (CheckConstraint("role IN ('user', 'assistant')", name="ck_messages_role"),)
+    __table_args__ = (
+        CheckConstraint("role IN ('user', 'assistant')", name="ck_messages_role"),
+        UniqueConstraint("id", "conversation_id", name="uq_message_conversation"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(

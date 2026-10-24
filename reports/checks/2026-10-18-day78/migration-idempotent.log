@@ -1,3 +1,0 @@
-migrate-1  | INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
-migrate-1  | INFO  [alembic.runtime.migration] Will assume transactional DDL.
-migrate-1  | CONTAINER_MIGRATIONS_COMPLETED

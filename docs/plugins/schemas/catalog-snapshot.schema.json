@@ -1,0 +1,572 @@
+{
+  "$defs": {
+    "AccessPolicy": {
+      "additionalProperties": false,
+      "description": "Policy declared by the trusted host; remote MCP annotations are not policy.",
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "allowed_roles": {
+          "default": [
+            "admin"
+          ],
+          "items": {
+            "enum": [
+              "user",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Allowed Roles",
+          "type": "array"
+        },
+        "side_effect": {
+          "default": "unknown",
+          "enum": [
+            "read_only",
+            "write",
+            "destructive",
+            "unknown"
+          ],
+          "title": "Side Effect",
+          "type": "string"
+        },
+        "requires_approval": {
+          "default": true,
+          "title": "Requires Approval",
+          "type": "boolean"
+        }
+      },
+      "title": "AccessPolicy",
+      "type": "object"
+    },
+    "CatalogEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "manifest": {
+          "$ref": "#/$defs/PluginManifest"
+        },
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "manifest"
+      ],
+      "title": "CatalogEntry",
+      "type": "object"
+    },
+    "CredentialRequirement": {
+      "additionalProperties": false,
+      "description": "A logical connection-scoped slot, never a credential or per-user secret identifier.",
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "slot": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+          "title": "Slot",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "api_key",
+            "bearer_token",
+            "oauth2"
+          ],
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot",
+        "kind"
+      ],
+      "title": "CredentialRequirement",
+      "type": "object"
+    },
+    "PluginManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "namespace": {
+          "pattern": "^[a-z][a-z0-9_]{0,19}$",
+          "title": "Namespace",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 80,
+          "minLength": 5,
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "title": "Version",
+          "type": "string"
+        },
+        "policy_version": {
+          "maxLength": 80,
+          "minLength": 5,
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Tags",
+          "type": "array"
+        },
+        "max_concurrency": {
+          "default": 1,
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Max Concurrency",
+          "type": "integer"
+        },
+        "servers": {
+          "items": {
+            "$ref": "#/$defs/ServerManifest"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Servers",
+          "type": "array"
+        },
+        "skills": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PluginSkill"
+          },
+          "maxItems": 64,
+          "title": "Skills",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "namespace",
+        "version",
+        "policy_version",
+        "name",
+        "description",
+        "servers"
+      ],
+      "title": "PluginManifest",
+      "type": "object"
+    },
+    "PluginSkill": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,23}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 80,
+          "minLength": 5,
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "title": "Version",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "relative_directory": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Relative Directory",
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Tags",
+          "type": "array"
+        },
+        "required_tools": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ToolReference"
+          },
+          "maxItems": 50,
+          "title": "Required Tools",
+          "type": "array"
+        },
+        "policy": {
+          "$ref": "#/$defs/AccessPolicy"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "description",
+        "relative_directory"
+      ],
+      "title": "PluginSkill",
+      "type": "object"
+    },
+    "PluginTool": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_]{0,23}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "remote_name": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "title": "Remote Name",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Tags",
+          "type": "array"
+        },
+        "input_schema_ref": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Schema Ref"
+        },
+        "output_schema_ref": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output Schema Ref"
+        },
+        "policy": {
+          "$ref": "#/$defs/ToolPolicy"
+        }
+      },
+      "required": [
+        "name",
+        "remote_name",
+        "description"
+      ],
+      "title": "PluginTool",
+      "type": "object"
+    },
+    "ServerManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "server_id": {
+          "pattern": "^[a-z][a-z0-9_]{0,15}$",
+          "title": "Server Id",
+          "type": "string"
+        },
+        "transport": {
+          "enum": [
+            "stdio",
+            "streamable_http"
+          ],
+          "title": "Transport",
+          "type": "string"
+        },
+        "release": {
+          "maxLength": 80,
+          "minLength": 5,
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:(?:0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$",
+          "title": "Release",
+          "type": "string"
+        },
+        "connection_profile_ref": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*$",
+          "title": "Connection Profile Ref",
+          "type": "string"
+        },
+        "credentials": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CredentialRequirement"
+          },
+          "maxItems": 8,
+          "title": "Credentials",
+          "type": "array"
+        },
+        "max_concurrency": {
+          "default": 1,
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Max Concurrency",
+          "type": "integer"
+        },
+        "request_timeout_seconds": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "title": "Request Timeout Seconds",
+          "type": "number"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/PluginTool"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "server_id",
+        "transport",
+        "release",
+        "connection_profile_ref",
+        "tools"
+      ],
+      "title": "ServerManifest",
+      "type": "object"
+    },
+    "ToolPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "allowed_roles": {
+          "default": [
+            "admin"
+          ],
+          "items": {
+            "enum": [
+              "user",
+              "admin"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Allowed Roles",
+          "type": "array"
+        },
+        "side_effect": {
+          "default": "unknown",
+          "enum": [
+            "read_only",
+            "write",
+            "destructive",
+            "unknown"
+          ],
+          "title": "Side Effect",
+          "type": "string"
+        },
+        "requires_approval": {
+          "default": true,
+          "title": "Requires Approval",
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "title": "Timeout Seconds",
+          "type": "number"
+        },
+        "max_retries": {
+          "default": 0,
+          "maximum": 3,
+          "minimum": 0,
+          "title": "Max Retries",
+          "type": "integer"
+        },
+        "retry_backoff_seconds": {
+          "default": 0.2,
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Retry Backoff Seconds",
+          "type": "number"
+        },
+        "idempotent": {
+          "default": false,
+          "title": "Idempotent",
+          "type": "boolean"
+        },
+        "max_concurrency": {
+          "default": 1,
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Max Concurrency",
+          "type": "integer"
+        }
+      },
+      "title": "ToolPolicy",
+      "type": "object"
+    },
+    "ToolReference": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "server_id": {
+          "pattern": "^[a-z][a-z0-9_]{0,15}$",
+          "title": "Server Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "pattern": "^[a-z][a-z0-9_]{0,23}$",
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_id",
+        "tool_name"
+      ],
+      "title": "ToolReference",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "catalog_version": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Catalog Version",
+      "type": "string"
+    },
+    "entries": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CatalogEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    }
+  },
+  "required": [
+    "revision",
+    "catalog_version"
+  ],
+  "title": "CatalogSnapshot",
+  "type": "object"
+}
