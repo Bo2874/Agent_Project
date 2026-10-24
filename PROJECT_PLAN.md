@@ -655,7 +655,8 @@ thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế n
   Code migration `20261024_0026`; chưa áp dụng database, chưa có API/UI hoặc kiểm thử runtime.
   Thêm khóa ghép ở `conversations`/`messages` để liên kết không thể trỏ sang hội thoại user khác.
   Chưa có dịch vụ upload/quota, query filter quyền, kiểm tra ready khi publish và handler ingestion.
-- [ ] M3.2: Storage và API upload/list/status/download/delete, ownership/quota và chống file không hợp lệ.
+- [x] M3.2: Storage và API upload/list/status/download/delete, ownership/quota và kiểm tra container file.
+  Code hoàn thành ngày 2026-10-24; đã kiểm tra cú pháp/import/OpenAPI/lint/lock, chưa test chức năng.
 - [ ] M3.3: Thư viện trên web, upload/chọn file trong hội thoại, giữ scope khi mở lại.
 - [ ] M3.4: Worker ingestion, parse/chuẩn hóa/chunk có nguồn; trạng thái, retry và cancel.
 - [ ] M3.5: Embedding F2LLM, lexical index và retrieval lọc owner/document/active version.
@@ -668,6 +669,23 @@ liên kết `background_jobs`; không tạo scheduler/queue thứ hai. Cột emb
 lúc ingestion; worker về sau phải kiểm tra đủ chunk/vector trước khi publish `active_version`.
 Ràng buộc owner ở khóa ngoại ngăn liên kết sai chủ, không thay thế filter quyền khi SELECT/API.
 Exact search là baseline; chưa tạo HNSW ở phần này. Downgrade chỉ gỡ schema M3, giữ extension dùng chung.
+
+M3.2: tạo `backend/services/document_storage.py`, `backend/services/documents.py`,
+`backend/schemas/document.py`, `backend/routes/documents.py`; API có auth ở `/api/documents`.
+Upload multipart nhận `file`, tùy chọn `conversation_id` cùng owner; trả 201 khi mới, 200 nếu trùng
+checksum/type với bản mới nhất của tài liệu còn tồn tại trong cùng thư viện. Quota mặc định 20 MiB/file,
+200 MiB/user, tối đa 1.000 tài liệu; khóa user khi thay đổi quota, tính cả dữ liệu chờ dọn.
+Private storage dùng UUID owner/document/version, không đưa đường dẫn vào API; kiểm tra tên, MIME,
+signature PDF, container Word/DOCX, encoding TXT, XML an toàn và giới hạn ZIP. Giới hạn multipart có
+cả trường hợp không gửi Content-Length. Không giải nén file lên disk và không thực thi macro.
+List phân trang/lọc tên/type/status, detail/status và download luôn scope owner; không cho admin
+đọc file user khác qua API này. Delete trả 202, đánh dấu deleting/thu hồi truy cập ngay và enqueue
+`documents.cleanup` cùng transaction; worker hiện có dọn file/chunk/vector/citation và metadata,
+có retry I/O, chờ ingestion đang chạy dừng và cho phép yêu cầu delete lại nếu cleanup trước thất bại.
+Không tạo queue ingestion khi chưa có handler: upload còn `uploaded`, `ready_for_qa=false`.
+Full PDF parse/page limit/encryption/scan coverage và OCR chưa có; chuyển sang M3.4 (OCR vẫn để sau).
+Dependency nhỏ thêm trực tiếp: `olefile`, `defusedxml`; không tải model/Docling/LibreOffice ở bước này.
+Chưa áp dụng migration hoặc chạy API/test với database thật. Chưa có UI thư viện; tiếp theo M3.3.
 
 **Upload và ingestion**
 

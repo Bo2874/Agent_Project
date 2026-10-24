@@ -274,3 +274,40 @@
   chat không nạp tool, tool_task thực thi qua selector hiện có, RAG/planner chờ lõi,
   checkpoint/resume/policy pin và SSE trả câu trả lời không kèm bảng debug. Không gọi Jev/LLM live.
   Cập nhật manual hiện có, không tạo thêm file nguồn/test/tài liệu.
+
+## M3 — Các phần triển khai sau khi chốt thiết kế (2026-10-24)
+
+- M3.1 (đợt trước): thêm model/migration `20261024_0026` cho documents, document_versions,
+  document_chunks, document_ingestion_jobs, conversation_documents và document_citations.
+  Cột vector 1.024 chiều, GIN lexical, metadata nguồn/version và khóa ngoại ghép theo owner;
+  thêm khóa ghép conversation/message. `pgvector` được khai báo trực tiếp và cập nhật lock.
+  Chỉ kiểm tra tĩnh/SQL offline, chưa áp dụng migration hoặc nghiệm thu runtime trong đợt đó.
+- M3.2: thêm private storage tại `data/documents/{owner}/{document}/{version}/original.ext`;
+  UUID do server sinh, chặn đường dẫn ngoài root, quyền file riêng, không public static storage.
+  Dọn file lỗi/hủy trước commit; file đã có khả năng commit được giữ khi lỗi kết nối làm kết quả
+  transaction chưa rõ, tránh xóa nhầm file được tham chiếu. Đối soát orphan sau lỗi commit để sau.
+- API có đăng nhập ở `/api/documents`: upload, list có phân trang/lọc tên/type/status, usage,
+  detail/status, download theo version và delete. Mọi truy vấn dùng user đăng nhập, không nhận owner
+  từ client và không có quyền đọc chéo user cho admin. API không trả storage key/đường dẫn nội bộ.
+- Upload nhận PDF, DOC, DOCX, TXT; kiểm tra tên, MIME và nội dung container, từ chối file rỗng/quá lớn.
+  DOC dùng olefile xác minh WordDocument; DOCX kiểm tra ZIP/OOXML, số entry, kích thước sau giải nén,
+  tỉ lệ nén, XML và đường dẫn thành viên; defusedxml chặn DTD/entity/external reference. Không giải nén
+  lên disk hoặc thực thi macro. TXT nhận UTF-8/UTF-16 có BOM. PDF mới kiểm tra header/EOF; kiểm tra
+  page/encryption/scan và parse đầy đủ sẽ làm trong ingestion, chưa tích hợp OCR.
+- Quota cấu hình: 20 MiB/file, 200 MiB/user, 1.000 tài liệu, DOCX tối đa 100 MiB sau giải nén và
+  2.000 entry. Giới hạn request multipart áp dụng trước khi spool, kể cả không có Content-Length.
+  Khóa user ở database khi tạo/xóa/cleanup để các upload đồng thời không vượt quota; dữ liệu đang
+  chờ dọn vẫn tính dung lượng. SHA-256/type chỉ dedup trong thư viện của chính owner, trả 200 khi
+  dùng lại bản mới nhất đã có; file mới trả 201. Có thể gắn vào hội thoại cùng owner khi upload.
+- Delete trả 202 và đánh dấu deleting, bỏ active version/liên kết chat để ngừng truy cập ngay;
+  ghi job `documents.cleanup` cùng transaction. Worker hiện có xử lý hủy ingestion, chờ job đang
+  chạy dừng, dọn file và metadata cascade; retry I/O, xóa lại không tạo nhiều job đang hoạt động.
+  Chạy worker để hoàn tất dọn và giải phóng quota; khi worker chưa chạy, tài liệu vẫn bị chặn truy cập.
+- Upload còn trạng thái uploaded, ready_for_qa=false, chưa enqueue ingestion chưa có handler.
+  Chưa thêm UI, parser RAG, embedding, rerank hoặc gọi model. Các bước tiếp theo giữ kế hoạch đã chốt:
+  Docling/LibreOffice, LlamaIndex, F2LLM-v2-0.6B, Qwen3-Reranker-0.6B và PostgreSQL/pgvector.
+- Thêm 4 file nguồn: services/document_storage.py, services/documents.py, schemas/document.py,
+  routes/documents.py trong backend; cập nhật main/config, handler worker, env mẫu/Compose và lock.
+  Cài olefile 0.47 theo uv.lock, khai báo trực tiếp defusedxml 0.7.1; không tải model ở bước này.
+  Kiểm tra cú pháp/import/OpenAPI/lint/lock; chưa chạy test chức năng, gọi API/DB, áp dụng migration
+  hoặc tạo test/fixture/báo cáo. User sẽ kiểm tra tay sau; tiếp theo làm M3.3 UI thư viện/upload/chọn file.

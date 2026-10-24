@@ -1,0 +1,461 @@
+"""Owner-scoped library operations; uploads remain uploaded until ingestion is connected."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
+
+from backend.core.config import Settings, get_settings
+from backend.database import SessionFactory
+from backend.models import (
+    BackgroundJob,
+    Conversation,
+    ConversationDocument,
+    Document,
+    DocumentIngestionJob,
+    DocumentVersion,
+    User,
+)
+from backend.schemas.document import (
+    DocumentDeleteResponse,
+    DocumentDetailResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    DocumentUsageResponse,
+    IngestionProgressResponse,
+)
+from backend.services.document_storage import (
+    MIME_TYPES,
+    LocalDocumentStorage,
+    original_key,
+    validate_filename,
+)
+
+if TYPE_CHECKING:
+    from backend.background.worker import JobExecutionContext
+
+
+class DocumentServiceError(RuntimeError):
+    def __init__(self, detail: str, *, status_code=404, code="document_not_found"):
+        self.detail, self.status_code, self.code = detail, status_code, code
+        super().__init__(detail)
+
+
+def document_storage(settings: Settings | None = None) -> LocalDocumentStorage:
+    config = settings or get_settings()
+    root = config.document_storage_path
+    if not root.is_absolute():
+        from backend.core.config import PROJECT_ROOT
+
+        root = PROJECT_ROOT / root
+    return LocalDocumentStorage(
+        root,
+        max_unpacked_bytes=config.document_max_unpacked_bytes,
+        max_entries=config.document_max_archive_entries,
+    )
+
+
+def _view(document: Document, version: DocumentVersion, *, deduplicated=False) -> DocumentResponse:
+    return DocumentResponse(
+        id=document.id,
+        title=document.title,
+        status=document.status,
+        revision=document.revision,
+        active_version_id=document.active_version_id,
+        version_id=version.id,
+        version_number=version.version_number,
+        original_filename=version.original_filename,
+        file_type=version.file_type,
+        mime_type=version.mime_type,
+        file_size_bytes=version.file_size_bytes,
+        file_sha256=version.file_sha256,
+        page_count=version.page_count,
+        chunk_count=version.chunk_count,
+        warnings=version.warnings,
+        error_code=version.error_code,
+        error_message=version.error_message,
+        ready_for_qa=document.status == "ready" and document.active_version_id is not None,
+        deduplicated=deduplicated,
+        created_at=document.created_at,
+        updated_at=document.updated_at,
+    )
+
+
+def _library_query(owner: UUID):
+    latest_id = (
+        select(DocumentVersion.id)
+        .where(DocumentVersion.document_id == Document.id, DocumentVersion.owner_user_id == owner)
+        .order_by(DocumentVersion.version_number.desc())
+        .limit(1)
+        .correlate(Document)
+        .scalar_subquery()
+    )
+    return (
+        select(Document, DocumentVersion)
+        .join(DocumentVersion, DocumentVersion.id == latest_id)
+        .where(Document.owner_user_id == owner, DocumentVersion.owner_user_id == owner)
+    )
+
+
+async def _lock_owner(session: AsyncSession, owner: UUID) -> None:
+    # All storage-quota mutations share this lock, including cleanup, across app processes.
+    found = await session.scalar(select(User.id).where(User.id == owner).with_for_update())
+    if found is None:
+        raise DocumentServiceError("Không tìm thấy tài khoản.")
+
+
+async def document_usage(session: AsyncSession, owner: UUID) -> DocumentUsageResponse:
+    settings = get_settings()
+    used = await session.scalar(
+        select(func.coalesce(func.sum(DocumentVersion.file_size_bytes), 0)).where(
+            DocumentVersion.owner_user_id == owner
+        )
+    )
+    count = await session.scalar(
+        select(func.count()).select_from(Document).where(Document.owner_user_id == owner)
+    )
+    # Deleting data still consumes quota until the worker has removed the stored files.
+    return DocumentUsageResponse(
+        used_bytes=used,
+        document_count=count,
+        max_file_bytes=settings.document_max_file_bytes,
+        max_user_bytes=settings.document_max_user_bytes,
+        max_documents=settings.document_max_documents,
+    )
+
+
+async def list_documents(
+    session: AsyncSession,
+    owner: UUID,
+    *,
+    query: str | None,
+    file_type: str | None,
+    status: str | None,
+    include_deleting: bool,
+    limit: int,
+    offset: int,
+) -> DocumentListResponse:
+    filters = [Document.owner_user_id == owner]
+    if not include_deleting and status != "deleting":
+        filters.append(Document.deleted_at.is_(None))
+    if query:
+        filters.append(Document.title.icontains(query.strip(), autoescape=True))
+    if status:
+        filters.append(Document.status == status)
+    statement = _library_query(owner).where(*filters)
+    if file_type:
+        statement = statement.where(DocumentVersion.file_type == file_type)
+    total = await session.scalar(select(func.count()).select_from(statement.subquery()))
+    rows = (
+        await session.execute(
+            statement.order_by(Document.updated_at.desc(), Document.id).offset(offset).limit(limit)
+        )
+    ).all()
+    return DocumentListResponse(
+        items=[_view(document, version) for document, version in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+async def get_document(
+    session: AsyncSession, owner: UUID, document_id: UUID
+) -> DocumentDetailResponse:
+    row = (
+        await session.execute(
+            _library_query(owner).where(
+                Document.id == document_id,
+                Document.deleted_at.is_(None),
+                Document.status != "deleting",
+            )
+        )
+    ).first()
+    if row is None:
+        raise DocumentServiceError("Không tìm thấy tài liệu.")
+    document, version = row
+    ingestion = await session.scalar(
+        select(DocumentIngestionJob).where(
+            DocumentIngestionJob.owner_user_id == owner,
+            DocumentIngestionJob.version_id == version.id,
+        )
+    )
+    progress = (
+        None
+        if ingestion is None
+        else IngestionProgressResponse(
+            status=ingestion.status,
+            stage=ingestion.stage,
+            completed_chunks=ingestion.completed_chunks,
+            total_chunks=ingestion.total_chunks,
+            error_code=ingestion.error_code,
+            error_message=ingestion.error_message,
+        )
+    )
+    return DocumentDetailResponse(**_view(document, version).model_dump(), ingestion=progress)
+
+
+async def _attach(
+    session: AsyncSession, owner: UUID, conversation_id: UUID | None, document_id: UUID
+) -> None:
+    if conversation_id is None:
+        return
+    # Same lock order as conversation deletion; the FK enforces ownership as well.
+    conversation = await session.scalar(
+        select(Conversation.id)
+        .where(Conversation.id == conversation_id, Conversation.user_id == owner)
+        .with_for_update()
+    )
+    if conversation is None:
+        raise DocumentServiceError("Không tìm thấy hội thoại.", code="conversation_not_found")
+    existing = await session.get(ConversationDocument, (conversation_id, document_id))
+    if existing is None:
+        session.add(
+            ConversationDocument(
+                conversation_id=conversation_id, document_id=document_id, owner_user_id=owner
+            )
+        )
+
+
+async def upload_document(
+    session: AsyncSession, owner: UUID, upload: UploadFile, *, conversation_id: UUID | None
+) -> DocumentResponse:
+    settings, storage = get_settings(), document_storage()
+    name, file_type = validate_filename(upload.filename, upload.content_type)
+    if upload.size is not None and upload.size > settings.document_max_file_bytes:
+        raise DocumentServiceError(
+            "File vượt giới hạn dung lượng.", status_code=413, code="document_too_large"
+        )
+    document_id, version_id = uuid4(), uuid4()
+    key = original_key(owner, document_id, version_id, file_type)
+    try:
+        stored = await storage.save(upload.file, key, settings.document_max_file_bytes)
+    except OSError as exc:
+        raise DocumentServiceError(
+            "Không thể lưu tài liệu.", status_code=503, code="document_storage_unavailable"
+        ) from exc
+    keep_file = False
+    commit_started = False
+    try:
+        await _lock_owner(session, owner)
+        duplicate = (
+            await session.execute(
+                _library_query(owner)
+                .where(
+                    Document.deleted_at.is_(None),
+                    Document.status != "deleting",
+                    DocumentVersion.file_sha256 == stored.sha256,
+                    DocumentVersion.file_type == file_type,
+                )
+                .order_by(Document.created_at, Document.id)
+                .limit(1)
+            )
+        ).first()
+        if duplicate:
+            document, version = duplicate
+            await _attach(session, owner, conversation_id, document.id)
+            await session.commit()
+            return _view(document, version, deduplicated=True)
+        usage = await document_usage(session, owner)
+        if usage.used_bytes + stored.size > usage.max_user_bytes:
+            raise DocumentServiceError(
+                "Thư viện đã vượt giới hạn dung lượng.",
+                status_code=413,
+                code="document_quota_exceeded",
+            )
+        if usage.document_count >= usage.max_documents:
+            raise DocumentServiceError(
+                "Thư viện đã đạt giới hạn số tài liệu.",
+                status_code=409,
+                code="document_count_exceeded",
+            )
+        document = Document(id=document_id, owner_user_id=owner, title=name, status="uploaded")
+        session.add(document)
+        await session.flush()
+        version = DocumentVersion(
+            id=version_id,
+            document_id=document_id,
+            owner_user_id=owner,
+            version_number=1,
+            original_filename=name,
+            file_type=file_type,
+            mime_type=MIME_TYPES[file_type],
+            file_size_bytes=stored.size,
+            file_sha256=stored.sha256,
+            storage_key=stored.key,
+            status="uploaded",
+            warnings=stored.warnings,
+        )
+        session.add(version)
+        await session.flush()
+        await _attach(session, owner, conversation_id, document_id)
+        commit_started = True
+        try:
+            await session.commit()
+        except IntegrityError:
+            # PostgreSQL rejected the transaction, so the file is definitely unreferenced.
+            commit_started = False
+            raise
+        keep_file = True
+        return _view(document, version)
+    except BaseException:
+        await session.rollback()
+        raise
+    finally:
+        # On an ambiguous connection failure during COMMIT, preserve the file rather than
+        # risk deleting a committed document. Reconciliation can clean orphaned files later.
+        if not keep_file and not commit_started:
+            await storage.delete(key)
+
+
+async def download_document(
+    session: AsyncSession, owner: UUID, document_id: UUID, version_id: UUID | None
+) -> tuple[Path, str, str]:
+    statement = (
+        select(DocumentVersion)
+        .join(Document, Document.id == DocumentVersion.document_id)
+        .where(
+            Document.id == document_id,
+            Document.owner_user_id == owner,
+            Document.deleted_at.is_(None),
+            Document.status != "deleting",
+            DocumentVersion.owner_user_id == owner,
+        )
+    )
+    if version_id is not None:
+        statement = statement.where(DocumentVersion.id == version_id)
+    version = await session.scalar(
+        statement.order_by(DocumentVersion.version_number.desc()).limit(1)
+    )
+    if version is None:
+        raise DocumentServiceError("Không tìm thấy phiên bản tài liệu.")
+    path = await asyncio.to_thread(document_storage().download_path, version.storage_key)
+    return path, version.original_filename, version.mime_type
+
+
+async def delete_document(
+    session: AsyncSession, owner: UUID, document_id: UUID
+) -> DocumentDeleteResponse:
+    await _lock_owner(session, owner)
+    document = await session.scalar(
+        select(Document)
+        .where(Document.id == document_id, Document.owner_user_id == owner)
+        .with_for_update()
+    )
+    if document is None:
+        raise DocumentServiceError("Không tìm thấy tài liệu.")
+    now = datetime.now(UTC)
+    if document.deleted_at is None:
+        document.status, document.deleted_at, document.active_version_id = "deleting", now, None
+        document.revision += 1
+    jobs = (
+        await session.scalars(
+            select(BackgroundJob)
+            .join(DocumentIngestionJob, DocumentIngestionJob.background_job_id == BackgroundJob.id)
+            .where(
+                DocumentIngestionJob.document_id == document_id,
+                DocumentIngestionJob.owner_user_id == owner,
+                BackgroundJob.user_id == owner,
+                BackgroundJob.status.in_(("queued", "running")),
+            )
+            .with_for_update(of=BackgroundJob)
+        )
+    ).all()
+    for job in jobs:
+        job.cancel_requested_at = now
+        if job.status == "queued":
+            job.status, job.cancelled_at, job.finished_at = "cancelled", now, now
+    existing = await session.scalar(
+        select(BackgroundJob.id)
+        .where(
+            BackgroundJob.user_id == owner,
+            BackgroundJob.job_type == "documents.cleanup",
+            BackgroundJob.payload["document_id"].astext == str(document_id),
+            BackgroundJob.status.in_(("queued", "running")),
+        )
+        .limit(1)
+    )
+    if existing is None:
+        session.add(
+            BackgroundJob(
+                job_type="documents.cleanup",
+                queue_name=get_settings().background_queue_name,
+                user_id=owner,
+                payload={"document_id": str(document_id)},
+                max_attempts=5,
+            )
+        )
+    await session.execute(
+        delete(ConversationDocument).where(
+            ConversationDocument.document_id == document_id,
+            ConversationDocument.owner_user_id == owner,
+        )
+    )
+    await session.commit()
+    return DocumentDeleteResponse(id=document_id)
+
+
+async def cleanup_deleted_document(context: JobExecutionContext, document_id: UUID) -> dict:
+    from backend.background.worker import RetryableJobError
+
+    await context.raise_if_cancelled()
+    async with SessionFactory() as session:
+        job = await session.get(BackgroundJob, context.job.id)
+        if job is None or job.user_id is None:
+            raise ValueError("Document cleanup requires a job owner")
+        owner = job.user_id
+        await _lock_owner(session, owner)
+        document = await session.scalar(
+            select(Document)
+            .where(Document.id == document_id, Document.owner_user_id == owner)
+            .with_for_update()
+        )
+        if document is None:
+            return {"deleted": True}
+        if document.status != "deleting" or document.deleted_at is None:
+            raise ValueError("Only deleted documents can be cleaned up")
+        running = await session.scalar(
+            select(BackgroundJob.id)
+            .join(DocumentIngestionJob, DocumentIngestionJob.background_job_id == BackgroundJob.id)
+            .where(
+                DocumentIngestionJob.document_id == document_id,
+                DocumentIngestionJob.owner_user_id == owner,
+                BackgroundJob.status == "running",
+            )
+            .limit(1)
+        )
+        if running is not None:
+            raise RetryableJobError(
+                "Đang chờ dừng xử lý tài liệu.", error_code="document_ingestion_busy"
+            )
+        versions = (
+            await session.scalars(
+                select(DocumentVersion).where(
+                    DocumentVersion.document_id == document_id,
+                    DocumentVersion.owner_user_id == owner,
+                )
+            )
+        ).all()
+        storage = document_storage()
+        try:
+            for version in versions:
+                await context.raise_if_cancelled()
+                await storage.delete(version.storage_key)
+                if version.parsed_storage_key:
+                    await storage.delete(version.parsed_storage_key)
+        except OSError as exc:
+            raise RetryableJobError(
+                "Chưa thể dọn file tài liệu.", error_code="document_cleanup_io"
+            ) from exc
+        await context.raise_if_cancelled()
+        await session.delete(document)
+        await session.commit()
+    return {"deleted": True}

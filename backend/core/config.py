@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     v2_parallel_enabled: bool = False
     v2_redis_cache_enabled: bool = False
     v2_events_enabled: bool = False
+    document_storage_path: Path = PROJECT_ROOT / "data/documents"
+    document_max_file_bytes: int = Field(default=20 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
+    document_max_user_bytes: int = Field(default=200 * 1024 * 1024, ge=1024)
+    document_max_documents: int = Field(default=1000, ge=1, le=100000)
+    document_max_unpacked_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
+    document_max_archive_entries: int = Field(default=2000, ge=2, le=10000)
     db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "personal_agent_db"
@@ -160,6 +166,8 @@ class Settings(BaseSettings):
     def validate_context_budgets(self) -> "Settings":
         _ = self.v2_features  # Validate feature dependencies at configuration load time.
         _ = self.email_config
+        if self.document_max_user_bytes < self.document_max_file_bytes:
+            raise ValueError("DOCUMENT_MAX_USER_BYTES không được nhỏ hơn DOCUMENT_MAX_FILE_BYTES")
         if self.langgraph_checkpoint_pool_min_size > self.langgraph_checkpoint_pool_max_size:
             raise ValueError(
                 "LANGGRAPH_CHECKPOINT_POOL_MIN_SIZE không được vượt "

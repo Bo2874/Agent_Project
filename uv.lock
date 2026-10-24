@@ -1037,6 +1037,15 @@ wheels = [
 ]
 
 [[package]]
+name = "olefile"
+version = "0.47"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/1b/077b508e3e500e1629d366249c3ccb32f95e50258b231705c09e3c7a4366/olefile-0.47.zip", hash = "sha256:599383381a0bf3dfbd932ca0ca6515acd174ed48870cbf7fee123d698c192c1c", size = 112240, upload-time = "2023-12-01T16:22:53.025Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/d3/b64c356a907242d719fc668b71befd73324e47ab46c8ebbbede252c154b2/olefile-0.47-py2.py3-none-any.whl", hash = "sha256:543c7da2a7adadf21214938bb79c83ea12b473a4b6ee4ad4bf854e7715e13d1f", size = 114565, upload-time = "2023-12-01T16:22:51.518Z" },
+]
+
+[[package]]
 name = "openai"
 version = "3.35.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1104,6 +1113,7 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "cryptography" },
+    { name = "defusedxml" },
     { name = "email-validator" },
     { name = "fastapi" },
     { name = "httpcore2" },
@@ -1120,6 +1130,7 @@ dependencies = [
     { name = "llama-index-retrievers-bm25" },
     { name = "llama-index-vector-stores-postgres" },
     { name = "mcp" },
+    { name = "olefile" },
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pwdlib", extra = ["argon2"] },
@@ -1144,6 +1155,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.16,<2" },
     { name = "asyncpg", specifier = ">=0.30,<1" },
     { name = "cryptography", specifier = ">=50.0.2,<51" },
+    { name = "defusedxml", specifier = ">=0.7.1,<0.8" },
     { name = "email-validator", specifier = ">=2.2,<3" },
     { name = "fastapi", specifier = ">=0.116,<1" },
     { name = "httpcore2", specifier = "==2.13.1" },
@@ -1160,6 +1172,7 @@ requires-dist = [
     { name = "llama-index-retrievers-bm25", specifier = ">=0.8.0,<0.9" },
     { name = "llama-index-vector-stores-postgres", specifier = ">=0.9.0,<0.10" },
     { name = "mcp", specifier = ">=2.2,<3" },
+    { name = "olefile", specifier = ">=0.47,<0.48" },
     { name = "pgvector", specifier = ">=0.5.1,<0.6" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2,<4" },
     { name = "pwdlib", extras = ["argon2"], specifier = ">=0.2,<1" },

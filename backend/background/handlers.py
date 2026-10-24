@@ -1,9 +1,11 @@
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 from backend.background.worker import BackgroundJobRegistry, JobExecutionContext
 from backend.database import SessionFactory
 from backend.services.audit_logs import record_audit_event
+from backend.services.documents import cleanup_deleted_document
 from backend.services.memory import purge_expired_memories
 from backend.services.operational_retention import purge_expired_operational_data
 
@@ -43,4 +45,13 @@ def build_background_job_registry() -> BackgroundJobRegistry:
     registry = BackgroundJobRegistry()
     registry.register("maintenance.purge_expired_memories", purge_expired_memories_handler)
     registry.register("maintenance.purge_operational_data", purge_operational_data_handler)
+    registry.register("documents.cleanup", cleanup_document_handler)
     return registry
+
+
+async def cleanup_document_handler(
+    context: JobExecutionContext, payload: Mapping[str, Any]
+) -> dict[str, Any]:
+    if set(payload) != {"document_id"} or not isinstance(payload["document_id"], str):
+        raise ValueError("Invalid document cleanup payload")
+    return await cleanup_deleted_document(context, UUID(payload["document_id"]))

@@ -8,11 +8,14 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from backend.core.config import get_settings
 from backend.core.logging import install_log_redaction
 from backend.core.validation import translate_validation_error
 from backend.database import SessionFactory, engine
 from backend.dependencies_tools import close_tool_connections, start_tool_connections
-from backend.routes import admin, auth, chat, memory, pages, plugins
+from backend.routes import admin, auth, chat, documents, memory, pages, plugins
+from backend.services.document_storage import DocumentStorageError
+from backend.services.documents import DocumentServiceError
 from backend.services.langgraph_checkpoints import (
     close_langgraph_checkpoints,
     start_langgraph_checkpoints,
@@ -44,13 +47,28 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Personal AI Agent", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    documents.DocumentUploadLimitMiddleware,
+    max_body_bytes=get_settings().document_max_file_bytes + 128 * 1024,
+)
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "frontend" / "static"), name="static")
 app.include_router(auth.router)
 app.include_router(chat.router)
+app.include_router(documents.router)
 app.include_router(memory.router)
 app.include_router(plugins.router)
 app.include_router(admin.router)
 app.include_router(pages.router)
+
+
+@app.exception_handler(DocumentStorageError)
+@app.exception_handler(DocumentServiceError)
+async def document_error_handler(
+    _: Request, exc: DocumentStorageError | DocumentServiceError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail, "code": exc.code}
+    )
 
 
 @app.exception_handler(PluginServiceError)
