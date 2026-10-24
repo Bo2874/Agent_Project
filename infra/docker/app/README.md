@@ -93,6 +93,16 @@ Package source nằm tại `/app` để đường dẫn templates/static/skills/
   host trước đợt test; chưa có số đo runtime để chọn giá trị tối ưu. QA lỗi cần gửi lại câu hỏi,
   chưa resume từ checkpoint. Câu trả lời phát sau khi kiểm JSON/nhãn nguồn, không phát JSON thô.
   Hướng dẫn scoring: [Qwen model card](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B).
+  M3.8 có nút Xử lý lại trong thư viện và POST `/api/documents/{id}/reindex`
+  với `expected_version_id`. Re-index tạo generation mới từ file gốc đã lưu, dùng cấu hình pipeline
+  hiện tại; bản đang active vẫn dùng được đến khi bản mới publish. Thử lại tiếp tục generation
+  chưa publish, Dừng xử lý không hủy bản active cũ. Không cần migration mới ngoài head0027.
+  File gốc được dùng chung giữa generation cùng document, quota tính một lần theo storage key.
+  Parsed artifact/chunk/vector cũ còn giữ để citation lịch sử trỏ đúng phiên bản; xóa file thư viện
+  thu hồi truy cập ngay và cleanup toàn bộ generation sau khi ingestion dừng. Library cho yêu cầu
+  xóa lại nếu cleanup lỗi; quota chỉ giải phóng sau khi worker dọn xong metadata.
+  Cross-tab mutation gửi UUID/type qua BroadcastChannel; scope có polling/visibility refresh và
+  API nguồn kiểm quyền mỗi lần mở. Không xóa model weights cache khi xóa tài liệu.
 - Root filesystem app/worker read-only; `/tmp` là tmpfs riêng, có quota 64 MiB.
   Không bind mount source, host `.env`, `.venv` hoặc Docker socket vào runtime.
 - `.dockerignore` dùng allow-list; build context chỉ nhận code/assets cần thiết, không nhận

@@ -70,7 +70,7 @@ def _view(document: Document, version: DocumentVersion, *, deduplicated=False) -
     return DocumentResponse(
         id=document.id,
         title=document.title,
-        status=document.status,
+        status="deleting" if document.deleted_at is not None else version.status,
         revision=document.revision,
         active_version_id=document.active_version_id,
         version_id=version.id,
@@ -85,11 +85,9 @@ def _view(document: Document, version: DocumentVersion, *, deduplicated=False) -
         warnings=version.warnings,
         error_code=version.error_code,
         error_message=version.error_message,
-        ready_for_qa=(
-            document.status == "ready"
-            and version.status == "ready"
-            and document.active_version_id == version.id
-        ),
+        ready_for_qa=(document.status == "ready" and document.active_version_id is not None),
+        reindexing=document.active_version_id is not None
+        and document.active_version_id != version.id,
         awaiting_embedding=(
             document.status == "embedding"
             and version.status == "embedding"
@@ -126,11 +124,13 @@ async def _lock_owner(session: AsyncSession, owner: UUID) -> None:
 
 async def document_usage(session: AsyncSession, owner: UUID) -> DocumentUsageResponse:
     settings = get_settings()
-    used = await session.scalar(
-        select(func.coalesce(func.sum(DocumentVersion.file_size_bytes), 0)).where(
-            DocumentVersion.owner_user_id == owner
-        )
+    stored_files = (
+        select(func.max(DocumentVersion.file_size_bytes).label("size"))
+        .where(DocumentVersion.owner_user_id == owner)
+        .group_by(DocumentVersion.storage_key)
+        .subquery()
     )
+    used = await session.scalar(select(func.coalesce(func.sum(stored_files.c.size), 0)))
     count = await session.scalar(
         select(func.count()).select_from(Document).where(Document.owner_user_id == owner)
     )
@@ -163,9 +163,11 @@ async def list_documents(
         filters.append(Document.deleted_at.is_(None))
     if query:
         filters.append(Document.title.icontains(query.strip(), autoescape=True))
-    if status:
-        filters.append(Document.status == status)
     statement = _library_query(owner).where(*filters)
+    if status == "deleting":
+        statement = statement.where(Document.status == "deleting")
+    elif status:
+        statement = statement.where(DocumentVersion.status == status, Document.deleted_at.is_(None))
     if file_type:
         statement = statement.where(DocumentVersion.file_type == file_type)
     total = await session.scalar(select(func.count()).select_from(statement.subquery()))
@@ -174,8 +176,32 @@ async def list_documents(
             statement.order_by(Document.updated_at.desc(), Document.id).offset(offset).limit(limit)
         )
     ).all()
+    deleting_ids = [str(document.id) for document, _ in rows if document.deleted_at is not None]
+    cleanup_statuses = {}
+    if deleting_ids:
+        target = BackgroundJob.payload["document_id"].astext
+        cleanup_rows = (
+            await session.execute(
+                select(target.label("document_id"), BackgroundJob.status)
+                .where(
+                    BackgroundJob.user_id == owner,
+                    BackgroundJob.job_type == "documents.cleanup",
+                    target.in_(deleting_ids),
+                )
+                .distinct(target)
+                .order_by(target, BackgroundJob.created_at.desc(), BackgroundJob.id.desc())
+            )
+        ).all()
+        cleanup_statuses = {row.document_id: row.status for row in cleanup_rows}
     return DocumentListResponse(
-        items=[_view(document, version) for document, version in rows],
+        items=[
+            _view(document, version).model_copy(
+                update={
+                    "cleanup_status": cleanup_statuses.get(str(document.id)),
+                }
+            )
+            for document, version in rows
+        ],
         total=total,
         limit=limit,
         offset=offset,
@@ -526,6 +552,39 @@ async def cleanup_deleted_document(context: JobExecutionContext, document_id: UU
         if job is None or job.user_id is None:
             raise ValueError("Document cleanup requires a job owner")
         owner = job.user_id
+        await _verify_cleanup_claim(session, context, owner, document_id)
+    # Wait without owner/document locks so cancellation handlers can finish. Recover expired
+    # leases during the wait instead of exhausting five quick retries behind a dead worker.
+    deadline = asyncio.get_running_loop().time() + min(
+        get_settings().background_job_lease_seconds + 5, 60
+    )
+    while True:
+        await context.raise_if_cancelled()
+        await context.queue.recover_expired_leases(queue_name=context.job.queue_name)
+        async with SessionFactory() as session:
+            await _verify_cleanup_claim(session, context, owner, document_id)
+            running = await session.scalar(
+                select(BackgroundJob.id)
+                .join(
+                    DocumentIngestionJob,
+                    DocumentIngestionJob.background_job_id == BackgroundJob.id,
+                )
+                .where(
+                    DocumentIngestionJob.document_id == document_id,
+                    DocumentIngestionJob.owner_user_id == owner,
+                    BackgroundJob.user_id == owner,
+                    BackgroundJob.status == "running",
+                )
+                .limit(1)
+            )
+        if running is None:
+            break
+        if asyncio.get_running_loop().time() >= deadline:
+            raise RetryableJobError(
+                "Đang chờ dừng xử lý tài liệu.", error_code="document_ingestion_busy"
+            )
+        await asyncio.sleep(1)
+    async with SessionFactory() as session:
         await _lock_owner(session, owner)
         document = await session.scalar(
             select(Document)
@@ -536,12 +595,14 @@ async def cleanup_deleted_document(context: JobExecutionContext, document_id: UU
             return {"deleted": True}
         if document.status != "deleting" or document.deleted_at is None:
             raise ValueError("Only deleted documents can be cleaned up")
+        await _verify_cleanup_claim(session, context, owner, document_id)
         running = await session.scalar(
             select(BackgroundJob.id)
             .join(DocumentIngestionJob, DocumentIngestionJob.background_job_id == BackgroundJob.id)
             .where(
                 DocumentIngestionJob.document_id == document_id,
                 DocumentIngestionJob.owner_user_id == owner,
+                BackgroundJob.user_id == owner,
                 BackgroundJob.status == "running",
             )
             .limit(1)
@@ -561,9 +622,12 @@ async def cleanup_deleted_document(context: JobExecutionContext, document_id: UU
         storage = document_storage()
         try:
             await storage.cleanup_staging(owner, document_id)
+            removed = set()
             for version in versions:
-                await context.raise_if_cancelled()
-                await storage.delete(version.storage_key)
+                await _verify_cleanup_claim(session, context, owner, document_id)
+                if version.storage_key not in removed:
+                    await storage.delete(version.storage_key)
+                    removed.add(version.storage_key)
                 # A file publish may precede an ambiguous/rolled-back metadata COMMIT.
                 await storage.delete(
                     version.parsed_storage_key or parsed_key(owner, document_id, version.id)
@@ -572,7 +636,32 @@ async def cleanup_deleted_document(context: JobExecutionContext, document_id: UU
             raise RetryableJobError(
                 "Chưa thể dọn file tài liệu.", error_code="document_cleanup_io"
             ) from exc
-        await context.raise_if_cancelled()
+        await _verify_cleanup_claim(session, context, owner, document_id, lock=True)
         await session.delete(document)
         await session.commit()
     return {"deleted": True}
+
+
+async def _verify_cleanup_claim(session, context, owner, document_id, *, lock=False):
+    from backend.background.queue import BackgroundJobOwnershipError
+    from backend.background.worker import JobCancellationRequested
+
+    statement = select(BackgroundJob).where(BackgroundJob.id == context.job.id)
+    if lock:
+        statement = statement.with_for_update()
+    job = await session.scalar(statement.execution_options(populate_existing=True))
+    if (
+        job is None
+        or job.user_id != owner
+        or job.job_type != "documents.cleanup"
+        or job.payload.get("document_id") != str(document_id)
+        or job.status != "running"
+        or job.worker_id != context.job.worker_id
+        or job.started_at != context.job.started_at
+        or job.attempt_count != context.job.attempt_count
+        or job.lease_expires_at is None
+        or job.lease_expires_at <= datetime.now(UTC)
+    ):
+        raise BackgroundJobOwnershipError("Document cleanup lease is no longer owned")
+    if job.cancel_requested_at is not None:
+        raise JobCancellationRequested("Đã yêu cầu dừng dọn tài liệu.")

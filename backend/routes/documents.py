@@ -13,6 +13,7 @@ from backend.schemas.document import (
     DocumentDeleteResponse,
     DocumentDetailResponse,
     DocumentListResponse,
+    DocumentReindexRequest,
     DocumentResponse,
     DocumentSearchRequest,
     DocumentSearchResponse,
@@ -20,7 +21,11 @@ from backend.schemas.document import (
     DocumentType,
     DocumentUsageResponse,
 )
-from backend.services.document_ingestion import cancel_preparation, retry_preparation
+from backend.services.document_ingestion import (
+    cancel_preparation,
+    reindex_document,
+    retry_preparation,
+)
 from backend.services.documents import (
     delete_document,
     document_usage,
@@ -222,3 +227,10 @@ async def cancel_document(
     user: CurrentUser,
 ) -> DocumentCancelResponse:
     return DocumentCancelResponse(**await cancel_preparation(session, user.id, document_id))
+
+
+@router.post("/{document_id}/reindex", response_model=DocumentDetailResponse, status_code=202)
+async def rebuild_document_index(
+    document_id: UUID, data: DocumentReindexRequest, session: DbSession, user: CurrentUser
+) -> DocumentDetailResponse:
+    return await reindex_document(session, user.id, document_id, data.expected_version_id)

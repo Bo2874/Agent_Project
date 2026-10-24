@@ -64,15 +64,15 @@ def has_prepared_content(version) -> bool:
 
 
 async def index_if_prepared(context, version_id: UUID) -> dict | None:
-    from backend.services.document_ingestion import _locked
+    from backend.services.document_ingestion import _locked, set_processing_status
 
     try:
         async with SessionFactory() as session:
             document, version, ingestion, _job = await _locked(session, context, version_id)
+            if version.status == "ready":
+                return {"indexed": True, "chunk_count": version.chunk_count}
             if not has_prepared_content(version):
                 return None
-            if version.status == "ready" and document.active_version_id == version_id:
-                return {"indexed": True, "chunk_count": version.chunk_count}
             if version.embedding_model != MODEL:
                 raise PreparationError(
                     "embedding_model_mismatch", "Model của tài liệu không được hỗ trợ."
@@ -98,7 +98,7 @@ async def index_if_prepared(context, version_id: UUID) -> dict | None:
             ingestion.total_chunks, ingestion.finished_at = count, None
             ingestion.started_at = ingestion.started_at or datetime.now(UTC)
             ingestion.error_code = ingestion.error_message = None
-            version.status, document.status = "embedding", "embedding"
+            set_processing_status(document, version, "embedding")
             version.error_code = version.error_message = None
             version.pipeline_config = {
                 **version.pipeline_config,
@@ -186,7 +186,8 @@ async def index_if_prepared(context, version_id: UUID) -> dict | None:
                 await session.commit()
         async with SessionFactory() as session:
             document, version, ingestion, _job = await _locked(session, context, version_id)
-            document.status, version.status, ingestion.stage = "indexing", "indexing", "indexing"
+            set_processing_status(document, version, "indexing")
+            ingestion.stage = "indexing"
             await session.commit()
         async with SessionFactory() as session:
             document, version, ingestion, _job = await _locked(session, context, version_id)

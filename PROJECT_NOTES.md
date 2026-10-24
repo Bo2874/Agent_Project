@@ -568,3 +568,54 @@
   migration; chưa chạy LLM/JEV/embedding/Qwen/DB/API/UI, build Docker hoặc xử lý tài liệu thật.
   Kiểm tra tĩnh: Ruff/Python AST/JS syntax/Compose YAML/import app/OpenAPI, migration chain head0027,
   biên dịch SQL citation ownership/run trace offline. Người dùng tự test trực quan sau; tiếp theo M3.8.
+
+## 2026-10-24 — M3.8 (code): re-index theo version, delete cleanup và invalidation
+
+- Tiếp tục phần code theo yêu cầu; không tạo file/migration/test mới, không sửa .env private.
+  Sửa các file hiện có: backend/services/document_ingestion.py, document_indexing.py, documents.py,
+  backend/schemas/document.py, backend/routes/documents.py, frontend/static/documents.js,
+  frontend/static/chat.js, README Docker, PROJECT_PLAN.md và ghi cuối PROJECT_NOTES.md.
+- Thêm POST /api/documents/{document_id}/reindex, body expected_version_id, dùng auth/ownership
+  và queue documents.prepare hiện có. Khóa owner → document; version cũ không khớp thì 409,
+  gửi lại cùng request sau khi mất response trả generation đã tạo, không tạo trùng job/version.
+  Chặn tạo generation khác khi tài liệu còn job queued/running hoặc chưa có bản active ready.
+- Re-index là parse/chunk/embed/FTS mới theo snapshot cấu hình hiện tại, tạo version_number kế tiếp;
+  retry tiếp tục version chưa publish (có thể resume embedding đã có), không mutate bản đã publish.
+  Có nút Xử lý lại, Thử lại, Dừng xử lý trong library. Không thêm LLM/tool/plugin choice cho thao tác này.
+- Active document giữ ready khi generation thay thế queued/parsing/chunking/embedding/indexing;
+  retry/cancel/failure mới không làm mất active version cũ. Chỉ đổi active_version sau khi đủ vector/
+  lexical index trong transaction publish. Library status/filter phản ánh generation mới nhất;
+  ready_for_qa phản ánh active version, reindexing cho UI biết bản cũ vẫn sẵn sàng.
+- Bảo vệ version published trong enqueue/index/cancel/interruption; retry worker đọc lại ready
+  là idempotent kể cả version đã cũ. Worker kiểm generation mới nhất trước khi ghi bản chưa ready.
+  Content pipeline hash thêm version_id, chunk UUID vẫn cố định trong mỗi version/retry; rebuild
+  cùng nội dung/cùng model không va unique(document_id,pipeline_hash) hoặc sửa citation cũ.
+- Generation cùng document dùng chung storage_key của file gốc immutable, không sao chép bytes
+  upload hoặc chia sẻ giữa owner/document. document_usage group theo storage_key để chỉ tính file
+  gốc một lần. Parsed artifact/chunk/vector các version cũ giữ đến khi xóa file thư viện, nhằm mở
+  nguồn lịch sử đúng version; quota file gốc không phải giới hạn toàn bộ dung lượng DB/model cache.
+- Delete vẫn soft-revoke active version và xóa conversation_documents trước khi commit; mọi
+  retrieval/download/citation kiểm owner/nondeleted. Câu trả lời đã lưu trong hội thoại được giữ;
+  citation không tự chuyển sang version mới hoặc tiếp tục đọc file đã xóa.
+- Cleanup đợi ingestion dừng ngoài khóa owner/document, recover lease hết hạn trong lúc đợi;
+  tránh hết năm retry quá nhanh khi worker cũ mất lease. Sau đó khóa owner/document, kiểm job type/
+  payload/owner/worker/attempt/started_at/lease/cancel trước thao tác và khóa job trước commit metadata.
+  Không giữ job row lock trong lúc I/O để heartbeat có thể gia hạn lease. I/O dọn tombstone idempotent;
+  sau khi mất lease không commit xóa metadata. Nhiều generation dùng chung original key chỉ unlink
+  một lần; parsed keys và staging cũng được dọn, path vẫn qua kiểm tra thư mục riêng hiện có.
+- Library đọc cleanup_status của job mới nhất theo owner/document, hiển thị rõ cleanup lỗi/hủy
+  và Yêu cầu xóa lại; không polling liên tục job terminal lỗi. Quota chỉ giải phóng sau khi file/
+  metadata được dọn xong. Request xóa lại không sinh thêm job nếu đã có cleanup queued/running.
+- Retrieval không có cache kết quả riêng để xóa: snapshot active version/hash/profile và kiểm lại
+  sau inference/ở transaction lưu answer đã có từ M3.6–M3.7. Khi publish version mới, query đang
+  dùng version cũ phải gửi lại nếu scope thay đổi; khi re-index còn chạy, query dùng bản active cũ.
+  Citation binding giữ version/chunk ban đầu; model weights cache không bị xóa theo file của user.
+- Frontend dùng no-store, thông báo mutation giữa tab bằng BroadcastChannel chỉ chứa UUID/type;
+  có fallback scope polling/visibility refresh. Chat refresh scope cả khi file ready, đóng dialog/
+  bỏ nút citation khi nhận delete event, chặn response nguồn đang chờ và metadata SSE cũ của file
+  đã xóa. API nguồn vẫn kiểm owner/nondeleted mỗi lần mở, không dựa vào sự tin cậy của event client.
+- Chỉ kiểm tra tĩnh Ruff/Python AST/JS syntax/import app/OpenAPI/worker registry và compile SQL
+  quota shared-original/latest cleanup/library owner filters offline. Không chạy model, migration,
+  database/API/browser, test chức năng hoặc race/failure injection. Không cài/tải thêm dependency/model.
+  Đánh dấu M3.8 phần code hoàn thành; nghiệm thu tay vẫn để mở. Tiếp theo chuẩn bị runtime,
+  áp dụng migration/model cache khi đến bước chạy để người dùng test trực quan và báo lỗi.

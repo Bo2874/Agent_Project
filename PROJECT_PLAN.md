@@ -667,7 +667,9 @@ thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế n
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy model/database hoặc test chức năng.
 - [x] M3.7: Nhánh document_qa, hỏi nối tiếp/nhiều ý/tóm tắt có độ phủ, citation bền vững và UI mở nguồn.
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy migration/model hoặc nghiệm thu web.
-- [ ] M3.8: Hoàn thiện delete/re-index/invalidation, user test tay trên web và sửa theo kết quả.
+- [x] M3.8 (code): Hoàn thiện delete/re-index/invalidation và thao tác xử lý lại trên web.
+  Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy model/database hoặc test chức năng.
+- [ ] M3.8 (nghiệm thu): User tự test tay trên web, kiểm tra isolation/citation và sửa theo kết quả.
 
 M3.1 chỉ chuẩn bị schema, không bật RAG hoặc tự tải model. `document_ingestion_jobs` ghi tiến độ,
 liên kết `background_jobs`; không tạo scheduler/queue thứ hai. Cột embedding cho phép NULL trong
@@ -823,6 +825,37 @@ private/no-store, trả text gốc/trang/mục/offset; bỏ chọn file vẫn m�
 Web có inline [S1], danh sách nguồn, dialog đoạn trích và tải file gốc đúng version; text qua DOM
 textContent. Chưa có OCR, trích ảnh hoặc highlight trực tiếp trong PDF viewer.
 Kiểm tra tĩnh/SQL offline, chưa áp dụng migration, gọi model/DB/API hoặc test browser. Tiếp theo M3.8.
+
+M3.8 (code): không tạo file/migration mới. Thêm POST /api/documents/{document_id}/reindex,
+body expected_version_id; API xác thực owner, khóa owner/document, chống request cũ và trả lại
+generation đã tạo nếu client gửi lại cùng request sau khi mất response. Không tạo thêm queue/handler.
+UI thư viện có Xử lý lại, Thử lại và Dừng xử lý; xử lý lại tạo version mới, retry tiếp tục version
+chưa publish. Active version cũ giữ ready trong lúc tạo bản thay thế; lỗi/hủy không làm mất bản cũ.
+Chỉ publish active_version mới sau khi vector/FTS đầy đủ; version/chunk đã publish là bất biến,
+kể cả worker quay lại sau khi mất response COMMIT. Pipeline hash chứa version ID để không va
+unique constraint khi rebuild cùng file/cùng cấu hình; worker generation cũ không được ghi đè generation mới.
+
+Các generation dùng chung storage_key của file gốc bất biến, không nhân bản upload. Quota file
+gốc tính một lần theo storage_key; parsed artifact/chunk/vector cũ giữ lại đến khi xóa file thư viện
+để citation lịch sử vẫn mở đúng version. Không thêm cơ chế chia sẻ file giữa owner hoặc giữa document.
+API library trả status của generation mới nhất, ready_for_qa của active version và reindexing;
+bộ lọc status theo generation mới nhất. Citation cũ không đổi nguồn khi active version chuyển.
+
+Delete thu hồi active version và mọi conversation selection ngay trong transaction; retrieval/
+citation/download đều kiểm nondeleted/owner. Worker cleanup chờ ingestion dừng ngoài owner lock,
+recover lease đã hết để không đốt retry quá nhanh; kiểm worker/attempt/started_at/lease/payload trước
+các bước dọn và khóa job trước commit xóa metadata. File gốc shared giữa generation chỉ xóa một lần,
+cleanup idempotent, giữ quota đến lúc xóa metadata. Library hiện cleanup_status mới nhất và cho
+Yêu cầu xóa lại khi job dọn lỗi/hủy. Câu trả lời đã lưu trong history không bị xóa cùng file.
+
+Không có cache kết quả retrieval để flush; query snapshot active version/hash/profile và revalidate
+sau inference/completion ngăn trả/lưu evidence trộn version. Model weights/cache dùng chung không
+chứa index riêng user, không xóa theo file. Frontend fetch no-store, BroadcastChannel thông báo
+mutation giữa tab (chỉ UUID/type), polling/visibility refresh scope cả khi file đang ready.
+Khi nhận delete event, tab chat đóng dialog nguồn đang mở, hủy response nguồn đang chờ và bỏ các
+nút citation của file đó; API nguồn luôn kiểm lại quyền kể cả browser không hỗ trợ BroadcastChannel.
+Chưa benchmark, test race/failure hoặc nghiệm thu web. Phần code M3 đã có đủ đường đi; bước kế
+tiếp là chuẩn bị runtime/migration/model cache để user tự test, rồi sửa theo kết quả trước khi chốt M3.
 
 **Upload và ingestion**
 

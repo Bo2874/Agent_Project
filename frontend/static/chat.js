@@ -43,6 +43,7 @@ if (chatApp) {
   async function requestJson(url, options = {}) {
     const response = await fetch(url, {
       credentials: "same-origin",
+      cache: "no-store",
       headers: { "Content-Type": "application/json", ...(options.headers || {}) },
       ...options,
     });
@@ -137,6 +138,7 @@ if (chatApp) {
   }
 
   const sourceDialog = document.createElement("dialog");
+  const deletedDocumentIds = new Set();
   sourceDialog.className = "citation-dialog";
   sourceDialog.setAttribute("aria-label", "Nguồn tài liệu");
   document.body.append(sourceDialog);
@@ -144,10 +146,13 @@ if (chatApp) {
   sourceDialog.addEventListener("close", () => {
     sourceRequest += 1;
     sourceDialog.replaceChildren();
+    delete sourceDialog.dataset.documentId;
   });
 
-  async function openSource(conversationId, messageId, citationId) {
+  async function openSource(conversationId, messageId, citationId, documentId) {
+    if (deletedDocumentIds.has(documentId)) return;
     const requestId = ++sourceRequest;
+    sourceDialog.dataset.documentId = documentId;
     sourceDialog.replaceChildren();
     const close = document.createElement("button");
     close.type = "button";
@@ -172,6 +177,7 @@ if (chatApp) {
         source.section || "",
       ].filter(Boolean).join(" · ");
       excerpt.textContent = source.text;
+      sourceDialog.dataset.documentId = source.document_id;
       const download = document.createElement("a");
       download.className = "ghost-button";
       download.textContent = "Tải file gốc";
@@ -186,7 +192,8 @@ if (chatApp) {
   }
 
   function renderCitations(bubble, citations, messageId, conversationId) {
-    const valid = (citations || []).filter((source) => /^S\d+$/.test(source.citation_id));
+    const valid = (citations || []).filter((source) =>
+      /^S\d+$/.test(source.citation_id) && !deletedDocumentIds.has(source.document_id));
     bubble.parentElement.querySelector(".message-citations")?.remove();
     if (!valid.length || !messageId) return;
     const byLabel = new Map(valid.map((source) => [source.citation_id, source]));
@@ -199,7 +206,8 @@ if (chatApp) {
         ? `[${label}] ${source.title}${source.page_start ? ` · tr. ${source.page_start}` : ""}`
         : `[${label}]`;
       button.title = `Mở nguồn: ${source.title}`;
-      button.addEventListener("click", () => openSource(conversationId, messageId, label));
+      button.dataset.citationDocumentId = source.document_id;
+      button.addEventListener("click", () => openSource(conversationId, messageId, label, source.document_id));
       return button;
     }
     const nodes = [];
@@ -228,6 +236,25 @@ if (chatApp) {
     for (const source of valid) panel.append(citationButton(source.citation_id, true));
     bubble.after(panel);
   }
+
+  window.addEventListener("document-library-changed", (event) => {
+    if (event.detail?.type !== "delete") return;
+    const documentId = event.detail.documentId;
+    deletedDocumentIds.add(documentId);
+    if (sourceDialog.open && sourceDialog.dataset.documentId === documentId) {
+      sourceDialog.close();
+    }
+    messageList.querySelectorAll("[data-citation-document-id]").forEach((button) => {
+      if (button.dataset.citationDocumentId !== documentId) return;
+      if (button.classList.contains("citation-inline")) {
+        button.replaceWith(document.createTextNode(`${button.textContent} (nguồn đã xóa)`));
+      } else {
+        const panel = button.parentElement;
+        button.remove();
+        if (!panel.querySelector("button")) panel.remove();
+      }
+    });
+  });
 
   function createAgentTimeline(assistantBubble, expanded = true) {
     const root = document.createElement("details");

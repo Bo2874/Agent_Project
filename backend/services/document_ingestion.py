@@ -53,6 +53,13 @@ def preparation_options() -> dict:
     }
 
 
+def set_processing_status(document: Document, version: DocumentVersion, status: str) -> None:
+    """A replacement version must not take a published document offline."""
+    version.status = status
+    if document.active_version_id is None:
+        document.status = status
+
+
 async def enqueue_preparation(
     session: AsyncSession,
     document: Document,
@@ -62,6 +69,8 @@ async def enqueue_preparation(
     """Caller holds the owner/document locks; enqueue and upload/retry commit together."""
     from backend.services.document_indexing import has_prepared_content
 
+    if version.ready_at is not None or version.status == "ready":
+        raise ValueError("Published versions are immutable; create a new generation")
     resume = has_prepared_content(version)
     job = BackgroundJob(
         id=uuid4(),
@@ -85,10 +94,18 @@ async def enqueue_preparation(
     ingestion.started_at = ingestion.finished_at = None
     ingestion.error_code = ingestion.error_message = None
     ingestion.completed_chunks, ingestion.total_chunks = 0, version.chunk_count if resume else None
-    document.status, version.status = "queued", "queued"
+    set_processing_status(document, version, "queued")
     version.error_code = version.error_message = None
     version.pipeline_config = {
-        **(version.pipeline_config if resume else {}),
+        **(
+            version.pipeline_config
+            if resume
+            else {
+                key: value
+                for key, value in (version.pipeline_config or {}).items()
+                if key == "reindex_from_version_id"
+            }
+        ),
         "preparation_options": preparation_options(),
         "awaiting_embedding": False,
     }
@@ -189,13 +206,104 @@ async def retry_preparation(session: AsyncSession, owner: UUID, document_id: UUI
     )
     if (
         version.status not in {"uploaded", "failed", "cancelled"} and not pending_embedding
-    ) or document.active_version_id:
+    ) or document.active_version_id == version.id:
         raise DocumentServiceError(
             "Tài liệu đã xử lý hoặc đang chờ bước tiếp theo; không cần gửi xử lý lại.",
             status_code=409,
             code="document_retry_unavailable",
         )
     await enqueue_preparation(session, document, version, ingestion)
+    await session.commit()
+    return await get_document(session, owner, document_id)
+
+
+async def reindex_document(
+    session: AsyncSession, owner: UUID, document_id: UUID, expected_version_id: UUID
+):
+    """Build a new generation from shared original bytes; never mutate published chunks."""
+    from backend.services.documents import (
+        DocumentServiceError,
+        _library_query,
+        _lock_owner,
+        get_document,
+    )
+
+    await synchronize_terminal_preparations(session, owner)
+    await _lock_owner(session, owner)
+    row = (
+        await session.execute(
+            _library_query(owner)
+            .where(
+                Document.id == document_id,
+                Document.deleted_at.is_(None),
+                Document.status != "deleting",
+            )
+            .with_for_update(of=Document)
+        )
+    ).first()
+    if row is None:
+        raise DocumentServiceError("Không tìm thấy tài liệu.")
+    document, latest = row
+    if latest.id != expected_version_id:
+        # A repeated request after a lost response returns the generation it already created.
+        if latest.pipeline_config.get("reindex_from_version_id") == str(expected_version_id):
+            await session.rollback()
+            return await get_document(session, owner, document_id)
+        raise DocumentServiceError(
+            "Tài liệu đã thay đổi. Hãy làm mới trước khi xử lý lại.",
+            status_code=409,
+            code="document_version_changed",
+        )
+    active = await session.scalar(
+        select(DocumentVersion).where(
+            DocumentVersion.id == document.active_version_id,
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.owner_user_id == owner,
+            DocumentVersion.status == "ready",
+        )
+    )
+    if active is None or document.status != "ready":
+        raise DocumentServiceError(
+            "Tài liệu chưa có bản xử lý hoàn tất. Hãy dùng Xử lý hoặc Thử lại.",
+            status_code=409,
+            code="document_reindex_unavailable",
+        )
+    running = await session.scalar(
+        select(BackgroundJob.id)
+        .join(DocumentIngestionJob, DocumentIngestionJob.background_job_id == BackgroundJob.id)
+        .where(
+            DocumentIngestionJob.document_id == document_id,
+            DocumentIngestionJob.owner_user_id == owner,
+            BackgroundJob.user_id == owner,
+            BackgroundJob.status.in_(("queued", "running")),
+        )
+        .limit(1)
+    )
+    if running is not None or latest.status not in {"ready", "failed", "cancelled"}:
+        raise DocumentServiceError(
+            "Tài liệu đang được xử lý. Hãy đợi hoàn tất hoặc dừng xử lý trước.",
+            status_code=409,
+            code="document_reindex_busy",
+        )
+    replacement = DocumentVersion(
+        id=uuid4(),
+        document_id=document.id,
+        owner_user_id=owner,
+        version_number=latest.version_number + 1,
+        original_filename=latest.original_filename,
+        file_type=latest.file_type,
+        mime_type=latest.mime_type,
+        file_size_bytes=latest.file_size_bytes,
+        file_sha256=latest.file_sha256,
+        storage_key=latest.storage_key,
+        status="uploaded",
+        warnings=[],
+        pipeline_config={"reindex_from_version_id": str(latest.id)},
+    )
+    session.add(replacement)
+    await session.flush()
+    await enqueue_preparation(session, document, replacement)
+    document.revision += 1
     await session.commit()
     return await get_document(session, owner, document_id)
 
@@ -236,6 +344,13 @@ async def cancel_preparation(session: AsyncSession, owner: UUID, document_id: UU
             code="document_not_processing",
         )
     job, ingestion = row
+    version = await session.get(DocumentVersion, ingestion.version_id)
+    if version.ready_at is not None or version.status == "ready":
+        raise DocumentServiceError(
+            "Tài liệu đã xử lý hoàn tất; không còn bước xử lý để dừng.",
+            status_code=409,
+            code="document_not_processing",
+        )
     now = datetime.now(UTC)
     job.cancel_requested_at = now
     state = "cancel_requested"
@@ -246,10 +361,10 @@ async def cancel_preparation(session: AsyncSession, owner: UUID, document_id: UU
             "document_cancelled",
             "Đã dừng xử lý tài liệu.",
         )
-        version = await session.get(DocumentVersion, ingestion.version_id)
         version.status = "cancelled"
         version.error_code, version.error_message = ingestion.error_code, ingestion.error_message
-        document.status = "cancelled"
+        if document.active_version_id is None:
+            document.status = "cancelled"
         state = "cancelled"
     await session.commit()
     return {"id": document_id, "status": state, "message": "Đã yêu cầu dừng xử lý tài liệu."}
@@ -324,6 +439,17 @@ async def _locked(
     )
     if document is None or version is None or ingestion is None:
         raise BackgroundJobOwnershipError("Document preparation has been replaced")
+    latest = await session.scalar(
+        select(DocumentVersion.id)
+        .where(
+            DocumentVersion.document_id == document.id,
+            DocumentVersion.owner_user_id == owner,
+        )
+        .order_by(DocumentVersion.version_number.desc())
+        .limit(1)
+    )
+    if version.status != "ready" and latest != version_id:
+        raise BackgroundJobOwnershipError("Document generation has been superseded")
     if not stopping and (job.cancel_requested_at is not None or document.deleted_at is not None):
         raise JobCancellationRequested("Đã yêu cầu dừng xử lý tài liệu.")
     return document, version, ingestion, job
@@ -488,7 +614,7 @@ async def _record_interruption(context, version_id, state, code, message):
             document, version, ingestion, job = await _locked(
                 session, context, version_id, stopping=True
             )
-            if ingestion.status == "succeeded":
+            if ingestion.status == "succeeded" or version.ready_at is not None:
                 return  # A COMMIT may have succeeded even when its response was lost.
             if job.cancel_requested_at is not None or document.deleted_at is not None:
                 state, code, message = "cancelled", "document_cancelled", "Đã dừng xử lý tài liệu."
@@ -537,7 +663,7 @@ async def prepare_document(context: JobExecutionContext, version_id: UUID) -> di
             ingestion.status, ingestion.stage = "running", "parsing"
             ingestion.started_at, ingestion.finished_at = datetime.now(UTC), None
             ingestion.error_code = ingestion.error_message = None
-            document.status, version.status = "parsing", "parsing"
+            set_processing_status(document, version, "parsing")
             version.error_code = version.error_message = None
             await session.commit()
         if not staging_root.is_relative_to(storage.root):
@@ -553,7 +679,8 @@ async def prepare_document(context: JobExecutionContext, version_id: UUID) -> di
         info = await _run_phase(context, work, "parse", options)
         async with SessionFactory() as session:
             document, version, ingestion, _job = await _locked(session, context, version_id)
-            document.status, version.status, ingestion.stage = "chunking", "chunking", "chunking"
+            set_processing_status(document, version, "chunking")
+            ingestion.stage = "chunking"
             version.parser_version, version.page_count = info["parser_version"], info["page_count"]
             version.warnings = info["warnings"]
             await session.commit()
@@ -564,6 +691,7 @@ async def prepare_document(context: JobExecutionContext, version_id: UUID) -> di
             document, version, ingestion, _job = await _locked(session, context, version_id)
             config = {
                 "owner": str(owner),
+                "version_id": str(version_id),
                 "file_sha256": version.file_sha256,
                 "parser": parsed.parser_version,
                 "chunker": prepared.chunker_version,
@@ -615,7 +743,7 @@ async def prepare_document(context: JobExecutionContext, version_id: UUID) -> di
                 "awaiting_embedding": False,
                 "content_prepared": True,
             }
-            version.status, document.status = "embedding", "embedding"
+            set_processing_status(document, version, "embedding")
             ingestion.status, ingestion.stage, ingestion.finished_at = (
                 "running",
                 "embedding",

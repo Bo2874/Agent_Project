@@ -9,12 +9,34 @@
   };
   const processing = new Set(["queued", "parsing", "chunking", "embedding", "indexing", "deleting"]);
   const limit = 20;
+  let changeChannel = null;
+  try {
+    changeChannel = new BroadcastChannel("document-library-changes");
+    changeChannel.onmessage = (event) => {
+      if (event.data && ["upload", "delete", "retry", "cancel", "reindex"].includes(event.data.type)) {
+        window.dispatchEvent(new CustomEvent("document-library-changed", { detail: event.data }));
+      }
+    };
+  } catch { /* Scope reads and visibility refresh also work without BroadcastChannel. */ }
+
+  function publishChange(type, item) {
+    const detail = { type, documentId: item.id };
+    window.dispatchEvent(new CustomEvent("document-library-changed", { detail }));
+    try { changeChannel?.postMessage(detail); } catch { /* Page is closing. */ }
+  }
 
   function stateLabel(item) {
+    if (item.status === "deleting" && ["failed", "cancelled"].includes(item.cleanup_status)) {
+      return "Chưa dọn xong file · Có thể yêu cầu xóa lại";
+    }
+    if (item.reindexing && item.ready_for_qa) {
+      return `${labels[item.status] || item.status} · Bản trước vẫn sẵn sàng hỏi đáp`;
+    }
     return item.status === "embedding" && item.awaiting_embedding ? "Đã trích xuất và chia nội dung, chưa sẵn sàng hỏi đáp" : labels[item.status] || item.status;
   }
 
   function needsRefresh(item) {
+    if (item.status === "deleting" && ["failed", "cancelled"].includes(item.cleanup_status)) return false;
     return processing.has(item.status) && !(item.status === "embedding" && item.awaiting_embedding);
   }
 
@@ -134,6 +156,7 @@
           });
           if (result.deduplicated) reused += 1;
           else saved += 1;
+          publishChange("upload", result);
         } catch (error) {
           errors.push(`${file.name}: ${error.message}`);
         }
@@ -189,6 +212,7 @@
       controls();
       try {
         await request(`/api/documents/${item.id}`, { method: "DELETE" });
+        publishChange("delete", item);
         message(find("upload-status"), "Đã ngừng truy cập tài liệu. Hệ thống đang dọn file và giải phóng dung lượng.");
       } catch (error) {
         message(find("upload-status"), error.message, true);
@@ -204,7 +228,11 @@
       busy = true;
       controls();
       try {
-        await request(`/api/documents/${item.id}/${action}`, { method: "POST" });
+        await request(`/api/documents/${item.id}/${action}`, {
+          method: "POST",
+          ...(action === "reindex" ? { body: JSON.stringify({ expected_version_id: item.version_id }) } : {}),
+        });
+        publishChange(action, item);
         message(find("upload-status"), action === "cancel" ? "Đã yêu cầu dừng xử lý tài liệu." : "Đã đưa tài liệu vào hàng đợi xử lý lại.");
       } catch (error) {
         message(find("upload-status"), error.message, true);
@@ -258,6 +286,9 @@
             } else if (needsRefresh(item)) {
               actions.append(button("Dừng xử lý", () => changeProcessing(item, "cancel")));
             }
+            if (item.ready_for_qa && !needsRefresh(item)) {
+              actions.append(button("Xử lý lại", () => changeProcessing(item, "reindex")));
+            }
           }
           const removeButton = button(item.status === "deleting" ? "Yêu cầu xóa lại" : "Xóa", () => remove(item), "document-text-button document-delete");
           removeButton.setAttribute("aria-label", `Xóa tài liệu ${item.original_filename}`);
@@ -300,6 +331,7 @@
     }, 5000);
     window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });
     document.addEventListener("visibilitychange", () => { if (!document.hidden && !busy) void refresh(); });
+    window.addEventListener("document-library-changed", () => { if (!busy && !document.hidden) void refresh(); });
     void refresh();
   }
 
@@ -506,12 +538,22 @@
     let polling = false;
     const timer = window.setInterval(async () => {
       if (document.hidden || polling || busy || externalDisabled || dialog.open || !conversationId
-          || !items.some(needsRefresh)) return;
+          ) return;
       polling = true;
       try { await loadScope(conversationId, generation, true); }
       finally { polling = false; }
     }, 5000);
     window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });
+    window.addEventListener("document-library-changed", () => {
+      if (!busy && !externalDisabled && !dialog.open && conversationId) {
+        void loadScope(conversationId, generation, true);
+      }
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && !busy && !externalDisabled && !dialog.open && conversationId) {
+        void loadScope(conversationId, generation, true);
+      }
+    });
     controls();
     return {
       setDisabled(value) { externalDisabled = value; controls(); },

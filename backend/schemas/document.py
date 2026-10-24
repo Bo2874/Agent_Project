@@ -40,6 +40,8 @@ class DocumentResponse(BaseModel):
     error_code: str | None
     error_message: str | None
     ready_for_qa: bool
+    reindexing: bool = False
+    cleanup_status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None
     awaiting_embedding: bool = False
     deduplicated: bool = False
     created_at: datetime
@@ -84,6 +86,11 @@ class DocumentCancelResponse(BaseModel):
     id: UUID
     status: Literal["cancel_requested", "cancelled"]
     message: str
+
+
+class DocumentReindexRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version_id: UUID
 
 
 class ConversationDocumentSelection(BaseModel):
