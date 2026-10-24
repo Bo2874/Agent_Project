@@ -14,6 +14,8 @@ from backend.core.validation import translate_validation_error
 from backend.database import SessionFactory, engine
 from backend.dependencies_tools import close_tool_connections, start_tool_connections
 from backend.routes import admin, auth, chat, documents, memory, pages, plugins
+from backend.services.document_indexing import close_embedding_client
+from backend.services.document_query import close_reranker_client
 from backend.services.document_storage import DocumentStorageError
 from backend.services.documents import DocumentServiceError
 from backend.services.langgraph_checkpoints import (
@@ -41,6 +43,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         finally:
             await close_tool_connections()
     finally:
+        await close_reranker_client()
+        await close_embedding_client()
         await close_langgraph_checkpoints()
         await close_langsmith_tracing()
         await engine.dispose()

@@ -70,6 +70,16 @@ x-runtime-environment: &runtime-environment
   DOCUMENT_LIBREOFFICE_PATH: soffice
   DOCUMENT_MODEL_CACHE_PATH: /app/data/models
   DOCUMENT_EMBEDDING_REVISION: "${DEV_DOCUMENT_EMBEDDING_REVISION:-main}"
+  DOCUMENT_EMBEDDING_BATCH_SIZE: "${DEV_DOCUMENT_EMBEDDING_BATCH_SIZE:-4}"
+  DOCUMENT_EMBEDDING_TIMEOUT_SECONDS: "${DEV_DOCUMENT_EMBEDDING_TIMEOUT_SECONDS:-600}"
+  DOCUMENT_EMBEDDING_MEMORY_MB: "${DEV_DOCUMENT_EMBEDDING_MEMORY_MB:-4096}"
+  DOCUMENT_RERANKER_REVISION: "${DEV_DOCUMENT_RERANKER_REVISION:-main}"
+  DOCUMENT_RERANKER_BATCH_SIZE: "${DEV_DOCUMENT_RERANKER_BATCH_SIZE:-1}"
+  DOCUMENT_RERANKER_TIMEOUT_SECONDS: "${DEV_DOCUMENT_RERANKER_TIMEOUT_SECONDS:-600}"
+  DOCUMENT_RERANKER_MEMORY_MB: "${DEV_DOCUMENT_RERANKER_MEMORY_MB:-4096}"
+  DOCUMENT_REWRITE_TIMEOUT_SECONDS: "${DEV_DOCUMENT_REWRITE_TIMEOUT_SECONDS:-30}"
+  DOCUMENT_REWRITE_HISTORY_MESSAGES: "${DEV_DOCUMENT_REWRITE_HISTORY_MESSAGES:-8}"
+  DOCUMENT_REWRITE_HISTORY_TOKENS: "${DEV_DOCUMENT_REWRITE_HISTORY_TOKENS:-2000}"
   BACKGROUND_QUEUE_NAME: default
   BACKGROUND_WORKER_HEARTBEAT_PATH: /tmp/agent-worker/heartbeat.json
   BACKGROUND_WORKER_HEARTBEAT_MAX_AGE_SECONDS: "15"
@@ -110,7 +120,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/app/Dockerfile
-      target: app
+      target: migrate
     command: [python, -m, scripts.migrate_database]
     depends_on:
       postgres:
@@ -130,6 +140,7 @@ services:
       - "127.0.0.1:${DEV_HTTP_PORT:-8000}:8000"
     volumes:
       - document_data:/app/data/documents
+      - document_model_cache:/app/data/models
     depends_on:
       postgres:
         condition: service_healthy

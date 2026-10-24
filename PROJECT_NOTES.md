@@ -395,3 +395,118 @@
   [Docling SDK](https://github.com/docling-project/docling/blob/v2.142.1/docling/document_converter.py),
   [LibreOffice CLI](https://help.libreoffice.org/latest/en-US/text/shared/guide/start_parameters.html),
   [F2LLM](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B).
+- M3.5 (2026-10-24): thêm 4 file nguồn: agent_core/rag/embeddings.py,
+  scripts/run_embedding_model.py, backend/services/document_indexing.py và document_retrieval.py.
+  Không tạo test/fixture/tài liệu mới; không sửa .env thật hoặc tạo migration mới.
+- Provider F2LLM local qua JSON-line IPC, subprocess CPU float32 load lazily và giữ model giữa các
+  batch/query trong mỗi app/worker process; cache weights dùng chung trên disk. Chỉ giữ một revision
+  trong RAM mỗi provider; đổi revision thì dừng model cũ. Không tải model vào process web chính.
+  Shutdown app/worker đóng model; child dùng watchdog cha hiện có, không nhận secret DB/mail/provider.
+- Dùng SentenceTransformer encode_query với instruction chính thức của F2LLM và encode_document
+  với prompt rỗng; kiểm tra last-token pooling, 1.024 chiều, normalize và vector finite/norm hợp lệ.
+  Pin commit từ tokenizer M3.4, trust_remote_code=false, safetensors và token=False cho repo public.
+  Profile lưu model/revision/recipe/dimension/dtype/normalized và phiên bản Sentence Transformers.
+  Không giảm chiều hoặc âm thầm truncate: document tối đa 512 token, query tối đa 1.024 gồm prompt.
+- Giới hạn mặc định batch 4 (cấu hình 1–32), 600 giây/call, 4 GiB RSS/cây process; IPC tối đa 2 MiB,
+  tối đa 8 caller đang encode/chờ trong mỗi provider. Serialize inference bằng lock, hủy/timeout/lỗi
+  dừng model để không nhận nhầm response cũ; lần gọi sau có thể load lại. Không cache nội dung/query
+  hoặc ghi text/vector ra log/file IPC. Chưa có giới hạn RAM/inference toàn cụm khi chạy nhiều process.
+- Nối tiếp documents.prepare trên cùng background job/lease: parsing → chunking → embedding → indexing.
+  Sau chunking không dừng ở awaiting_embedding nữa. Embedding lưu theo batch và cập nhật progress;
+  retry/cancel rồi retry giữ bản trích/chunk/vector hợp lệ, chỉ chạy các vector còn thiếu. Profile khác
+  khiến toàn bộ vector của version chưa công bố bị reset để dựng nhất quán, không trộn implementation.
+- UI thư viện có Tiếp tục xử lý cho file awaiting_embedding từ M3.4; retry enqueue lại cùng version.
+  Ready hiển thị Đã xử lý. ready_for_qa chỉ true khi đúng version ready đang active; nhánh trả lời
+  document_qa vẫn chưa nối. Re-index ready không mở ở API retry đợt này, sẽ làm trong M3.8.
+- FTS dùng pg_catalog.simple + public.unaccent/lower; title/heading weight A, lexical body B.
+  Ghi tsvector tường minh vào document_chunks.search_tsv, tận dụng GIN đã có từ migration 0026.
+  Kiểm tra đủ vector không NULL/norm đúng và số row FTS đã ghi trước khi công bố active version/ready;
+  commit publication nguyên tử, ghi ready_at/profile/lexical config/pipeline hash và tăng doc revision.
+  Exact cosine là baseline, chưa tạo hoặc tuning HNSW. Không đổi schema/migration.
+- API POST /api/documents/search có auth: query, document_ids hoặc conversation_id (chỉ một scope),
+  mode dense/lexical, limit mặc định 20/tối đa 50. Không có scope/file chưa ready thì báo rõ, không
+  tự tìm cả thư viện. Không nhận owner từ client; kiểm tra hội thoại và toàn bộ ID trước khi gọi model.
+  SQL lọc owner ở document/version/chunk, document còn tồn tại/ready và đúng active version.
+- Dense dùng cosine distance pgvector, trả similarity = 1 - distance, giữ scope/version/profile sau
+  model; giải phóng connection trong lúc inference rồi xác minh lại. Scope thay đổi thì báo gửi lại,
+  không trả kết quả trộn version. Các file khác profile/revision/library không tìm dense chung.
+- Lexical giữ tối đa 16 term, ưu tiên từ trong ngoặc kép/mã số, bỏ một số từ chức năng và nối OR;
+  term được rút chỉ từ chữ/số, không nhận toán tử tsquery từ user. unaccent nhất quán lúc index/query,
+  rank bằng ts_rank_cd normalization 32, không gọi là BM25. Đây là heuristic baseline để user test sau.
+- Retrieval trả RetrievalResult với chunk/document/version ID, citation ID nguồn ổn định, title,
+  text gốc, page/section/offset, score_kind và retrieval_config_version; trust=untrusted.
+  Chưa fusion/hybrid, rerank, rewrite, đóng evidence context, sinh câu trả lời hay lưu citation message.
+- Thêm extra embedding và Sentence Transformers vào ingestion, khóa sentence-transformers 5.7.0
+  cùng dependency trong uv.lock; giữ PyTorch CPU. Docker app cài embedding, worker cài ingestion,
+  migrate chuyển sang target migrate chỉ base; app/worker cùng mount document_model_cache.
+  Cập nhật env mẫu, Dockerfile/Compose/README hiện có. Chưa cài extra nặng hoặc tải model weights.
+- Kiểm tra Python AST/JS syntax, Ruff lint/format, import app/worker registry/OpenAPI, TOML/YAML/lock
+  và compile SQL index/dense/lexical offline. Không chạy test chức năng, gọi DB/API/UI, xử lý file
+  thật, build Docker hoặc áp dụng migration; người dùng tự test trực quan sau. Tiếp theo M3.6.
+  Nguồn đối chiếu:
+  [F2LLM usage/prompt](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B),
+  [F2LLM pooling](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B/blob/main/1_Pooling/config.json),
+  [PostgreSQL FTS](https://www.postgresql.org/docs/17/textsearch-controls.html),
+  [pgvector](https://github.com/pgvector/pgvector#querying).
+
+## 2026-10-24 — M3.6: hybrid/RRF, Qwen rerank, history rewrite và evidence budget
+
+- Tiếp tục từng phần nhỏ theo yêu cầu; giữ các thay đổi M3.5 đang có trong working tree,
+  không commit/push thay user. Không tạo file test hoặc tài liệu hướng dẫn mới.
+- Thêm đúng 5 file: `agent_core/rag/local_models.py`, `agent_core/rag/reranking.py`,
+  `agent_core/rag/retrieval.py`, `scripts/run_reranker_model.py`,
+  `backend/services/document_query.py`. Sửa embedding client để dùng transport chung,
+  search service/schema/API, config/dependency factory/lifespan, env mẫu, Compose,
+  README Docker và PROJECT_PLAN.md. Không sửa bí mật trong .env hoặc thêm thư viện.
+- Transport LocalModelClient tách từ F2: process lazy/reuse, model revision/profile,
+  JSON-line IPC 2 MiB, serialized request, tối đa8 caller gồm cả đang chạy/chờ,
+  timeout/RSS, kill khi hủy/lỗi và parent watcher. Child chỉ có env runtime/cache tối thiểu,
+  không nhận DB/mail/DeepSeek credential. App shutdown đóng cả embedding và reranker.
+- Qwen/Qwen3-Reranker-0.6B dùng Transformers/PyTorch CPU float32, safetensors,
+  trust_remote_code=false; mặc định batch1, 4 GiB RSS, 600 giây/request.
+  Revision nhánh resolve về commit lúc load, cố định trong process/profile; revision SHA
+  dùng trực tiếp để có thể tận dụng cache offline. Hai model có thể cùng ở RAM;
+  giới hạn mỗi process không phải RAM tổng hệ thống. Chưa đo RAM/latency thực tế.
+- Scoring giữ template system/user/assistant + think rỗng của Qwen; instruction cho document QA,
+  logits yes/no rồi softmax lấy yes. Dùng API logits_to_keep=1 để chỉ tạo logits token cuối,
+  use_cache=false. Giới hạn mỗi cặp 2.048 token, không cắt ngầm nội dung đầu vào.
+  Rerank nhận embedding_text (có title/heading, chuẩn hóa từ M3.4); đoạn nguồn trả về vẫn
+  là text gốc, page/section/offset không đổi. Điểm chỉ dùng xếp hạng, không phải confidence đã hiệu chuẩn.
+- Hybrid: dense top20 và lexical top20 độc lập, không dùng lexical lọc ứng viên dense;
+  RRF cùng trọng số với k60, gộp trùng theo version/chunk ID, lấy tối đa20 ứng viên Qwen.
+  Khi điểm rerank bằng nhau giữ thứ tự fusion. Đây là pipeline cố định, không thêm agent loop
+  hoặc fallback bỏ rerank nếu model lỗi. PostgreSQL FTS hiện tại vẫn là lexical, không gọi là BM25.
+- Evidence nhắm6, tối đa8 đoạn theo CONTEXT_RAG_TOKEN_BUDGET hiện có (mặc định4.000);
+  slot7–8 ưu tiên file chưa được đại diện. Đo cả metadata/JSON/wrapper bằng estimator context
+  utf8_bytes_v1. Bỏ qua whole chunk không vừa budget, không cắt text rồi giữ offset sai.
+  Nếu có ứng viên nhưng không đoạn nào vừa thì trả document_evidence_budget rõ ràng.
+  Đây chưa phải tóm tắt có độ phủ toàn tài liệu hoặc truy vấn nhiều ý — làm ở M3.7.
+- Rewrite: không history thì không gọi LLM. Có history hội thoại đã xác thực owner thì gọi
+  model chat hiện có đúng một lần; prompt JSON yêu cầu standalone query, giữ ngôn ngữ/số liệu/
+  phủ định/các ý, giữ nguyên nếu đã rõ, không trả lời hoặc gọi tool.
+  History tối đa8 message, budget2.000 token ước lượng; message dài rút gọn có marker,
+  giữ chuỗi gần nhất và cờ history_trimmed. Metadata file cũng bounded/có cờ rút gọn,
+  không gửi toàn bộ tài liệu vào rewrite. Timeout mặc định30 giây, output bounded/validate JSON;
+  lỗi trả document_rewrite_failed, không âm thầm đổi về query khác.
+- Caller document_qa ở M3.7 có thể truyền current_message_id để loại câu hiện tại khỏi history
+  và callback nhận trace/status. API search không tạo message/run/citation giả; callback chỉ
+  ghi trace, không cộng token lần hai. Token provider đã báo được cộng UsageCounter hiện có
+  kể cả khi JSON lỗi/hủy; kiểm quota trước call. Chưa có token usage thì không tự ước lượng phí.
+- POST /api/documents/search mặc định mode=hybrid; vẫn hỗ trợ dense/lexical với limit riêng.
+  Hybrid cố định20+20/top20 rồi budget6–8 nên không dùng limit của baseline; schema mô tả rõ.
+  API search áp dụng rate limit agent_request hiện có. Response có query gốc/rewrite,
+  prompt version/model/usage/latency, profile Qwen, candidate counts, evidence budget và
+  fingerprint retrieval config. Việc lưu toàn bộ trace/citation vào run/message làm ở M3.7.
+- Scope vẫn chỉ file của user/đang chọn/active version ready; snapshot và kiểm tra lại sau
+  rewrite/embedding/rerank, giải phóng DB transaction trong lúc chạy model. Tài liệu bị xóa,
+  đổi scope/version/config thì không trả evidence cũ. Không mở quyền đọc file giữa user.
+- Thêm config/env mẫu cho revision/batch/RSS/timeout Qwen và history/timeout rewrite,
+  truyền qua Compose; dùng lại extra embedding/ingestion có Transformers và PyTorch CPU.
+  Chưa cài extra nặng, tải model, chạy database/migration/API/web hoặc build Docker.
+- Kiểm tra tĩnh đã đạt: Ruff; AST 17 file Python đang thay đổi/thêm, TOML/Compose YAML;
+  import app/OpenAPI không chạy lifespan; biên dịch SQL owner-scoped chunk/history offline;
+  uv lock --check --offline. Không tạo/chạy test chức năng hoặc benchmark/eval.
+  Người dùng tự kiểm thử trực quan sau; bước tiếp theo M3.7 nối document_qa và citation UI.
+  Nguồn đối chiếu:
+  [Qwen template/scoring](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B),
+  [Transformers Qwen3 logits_to_keep](https://github.com/huggingface/transformers/blob/v4.57.6/src/transformers/models/qwen3/modeling_qwen3.py).

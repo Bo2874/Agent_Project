@@ -17,6 +17,7 @@ from backend.core.config import get_settings
 from backend.core.logging import install_log_redaction
 from backend.core.worker_health import write_worker_heartbeat
 from backend.database import engine
+from backend.services.document_indexing import close_embedding_client
 
 
 def default_worker_id() -> str:
@@ -63,6 +64,7 @@ async def run(*, once: bool) -> None:
             )
             await worker.run_forever(stop)
     finally:
+        await close_embedding_client()
         if heartbeat_path is not None:
             heartbeat_path.unlink(missing_ok=True)
         await engine.dispose()

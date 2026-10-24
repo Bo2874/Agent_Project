@@ -1,8 +1,10 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from agent_core.contracts.retrieval import RetrievalResult
 
 DocumentStatus = Literal[
     "uploaded",
@@ -99,3 +101,55 @@ class ConversationDocumentSelection(BaseModel):
 class ConversationDocumentsResponse(BaseModel):
     conversation_id: UUID
     items: list[DocumentResponse]
+
+
+class DocumentSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, max_length=4000)
+    document_ids: list[UUID] = Field(default_factory=list, max_length=1000)
+    conversation_id: UUID | None = None
+    mode: Literal["dense", "lexical", "hybrid"] = "hybrid"
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=50,
+        description=(
+            "Top-k for dense/lexical only; hybrid uses fixed 20+20 candidates and evidence budget."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> Self:
+        if not self.query.strip() or "\x00" in self.query:
+            raise ValueError("Câu hỏi không hợp lệ.")
+        if bool(self.document_ids) == (self.conversation_id is not None):
+            raise ValueError("Chọn danh sách tài liệu hoặc một hội thoại.")
+        if len(self.document_ids) != len(set(self.document_ids)):
+            raise ValueError("Danh sách tài liệu không được trùng.")
+        return self
+
+
+class DocumentRewriteTrace(BaseModel):
+    status: Literal["skipped", "completed", "failed", "cancelled"] = "skipped"
+    query: str
+    prompt_version: str = "document-query-rewrite-v1"
+    history_messages: int = 0
+    history_trimmed: bool = False
+    file_metadata_trimmed: bool = False
+    provider: str | None = None
+    model: str | None = None
+    usage: dict[str, int] = Field(default_factory=dict)
+    latency_ms: int = 0
+
+
+class DocumentSearchResponse(BaseModel):
+    query: str
+    mode: Literal["dense", "lexical", "hybrid"]
+    items: list[RetrievalResult]
+    retrieval_config_version: str
+    rewrite: DocumentRewriteTrace | None = None
+    reranker_profile: dict[str, Any] | None = None
+    retrieval_metadata: dict[str, Any] = Field(default_factory=dict)
+    evidence_estimated_tokens: int = 0
+    evidence_token_budget: int | None = None
+    budget_skipped_chunks: int = 0

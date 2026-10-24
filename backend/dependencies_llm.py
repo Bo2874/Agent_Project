@@ -8,7 +8,7 @@ from agent_core.llm.types import ChatModel
 from backend.core.config import get_settings
 
 
-def create_chat_model() -> ChatModel:
+def create_chat_model(*, max_tokens: int | None = None) -> ChatModel:
     """Create one model instance for FastAPI dependencies and CLI entry points."""
     settings = get_settings()
     api_key = settings.deepseek_api_key
@@ -17,7 +17,7 @@ def create_chat_model() -> ChatModel:
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_model,
         thinking=settings.deepseek_thinking,
-        max_tokens=settings.deepseek_max_tokens,
+        max_tokens=max_tokens if max_tokens is not None else settings.deepseek_max_tokens,
     )
 
 

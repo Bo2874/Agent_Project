@@ -1,4 +1,4 @@
-"""Preparation on the existing queue; embeddings/publish-ready belong to the next stage."""
+"""Preparation and indexing on the existing queue with one fenced, resumable lease."""
 
 from __future__ import annotations
 
@@ -60,6 +60,9 @@ async def enqueue_preparation(
     ingestion: DocumentIngestionJob | None = None,
 ) -> None:
     """Caller holds the owner/document locks; enqueue and upload/retry commit together."""
+    from backend.services.document_indexing import has_prepared_content
+
+    resume = has_prepared_content(version)
     job = BackgroundJob(
         id=uuid4(),
         job_type="documents.prepare",
@@ -78,13 +81,14 @@ async def enqueue_preparation(
         )
         session.add(ingestion)
     ingestion.background_job_id = job.id
-    ingestion.status, ingestion.stage = "queued", "parsing"
+    ingestion.status, ingestion.stage = "queued", "embedding" if resume else "parsing"
     ingestion.started_at = ingestion.finished_at = None
     ingestion.error_code = ingestion.error_message = None
-    ingestion.completed_chunks, ingestion.total_chunks = 0, None
+    ingestion.completed_chunks, ingestion.total_chunks = 0, version.chunk_count if resume else None
     document.status, version.status = "queued", "queued"
     version.error_code = version.error_message = None
     version.pipeline_config = {
+        **(version.pipeline_config if resume else {}),
         "preparation_options": preparation_options(),
         "awaiting_embedding": False,
     }
@@ -180,7 +184,12 @@ async def retry_preparation(session: AsyncSession, owner: UUID, document_id: UUI
     if job and job.status in {"queued", "running"}:
         await session.rollback()
         return await get_document(session, owner, document_id)
-    if version.status not in {"uploaded", "failed", "cancelled"} or document.active_version_id:
+    pending_embedding = version.status == "embedding" and version.pipeline_config.get(
+        "awaiting_embedding"
+    )
+    if (
+        version.status not in {"uploaded", "failed", "cancelled"} and not pending_embedding
+    ) or document.active_version_id:
         raise DocumentServiceError(
             "Tài liệu đã xử lý hoặc đang chờ bước tiếp theo; không cần gửi xử lý lại.",
             status_code=409,
@@ -497,6 +506,7 @@ async def _record_interruption(context, version_id, state, code, message):
 async def prepare_document(context: JobExecutionContext, version_id: UUID) -> dict:
     from backend.background.queue import BackgroundJobOwnershipError
     from backend.background.worker import JobCancellationRequested, RetryableJobError
+    from backend.services.document_indexing import index_if_prepared
     from backend.services.document_storage import parsed_key
     from backend.services.documents import document_storage
 
@@ -505,14 +515,11 @@ async def prepare_document(context: JobExecutionContext, version_id: UUID) -> di
     staging_root = (storage.root / ".ingestion").resolve()
     try:
         await context.raise_if_cancelled()
+        indexed = await index_if_prepared(context, version_id)
+        if indexed is not None:
+            return indexed
         async with SessionFactory() as session:
             document, version, ingestion, _job = await _locked(session, context, version_id)
-            if ingestion.status == "succeeded" and version.chunk_count and version.pipeline_hash:
-                return {
-                    "content_prepared": True,
-                    "chunk_count": version.chunk_count,
-                    "next_stage": "embedding",
-                }
             options = version.pipeline_config.get("preparation_options") or preparation_options()
             source = storage.download_path(version.storage_key)
             request = {
@@ -605,22 +612,21 @@ async def prepare_document(context: JobExecutionContext, version_id: UUID) -> di
             version.pipeline_config = {
                 **version.pipeline_config,
                 **config,
-                "awaiting_embedding": True,
+                "awaiting_embedding": False,
+                "content_prepared": True,
             }
             version.status, document.status = "embedding", "embedding"
             ingestion.status, ingestion.stage, ingestion.finished_at = (
-                "succeeded",
-                "chunking",
-                datetime.now(UTC),
+                "running",
+                "embedding",
+                None,
             )
-            ingestion.completed_chunks = ingestion.total_chunks = len(prepared.chunks)
-            # Keep active_version and ready_at unset until vectors/index are complete.
+            ingestion.completed_chunks, ingestion.total_chunks = 0, len(prepared.chunks)
             await session.commit()
-        return {
-            "content_prepared": True,
-            "chunk_count": len(prepared.chunks),
-            "next_stage": "embedding",
-        }
+        indexed = await index_if_prepared(context, version_id)
+        if indexed is None:
+            raise PreparationError("document_chunks_incomplete", "Nội dung chưa đủ để lập index.")
+        return indexed
     except (asyncio.CancelledError, JobCancellationRequested):
         cancelled = await context.queue.is_cancel_requested(context.job)
         state = "cancelled" if cancelled else "queued"

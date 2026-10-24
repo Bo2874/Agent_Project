@@ -15,6 +15,10 @@ FROM dependencies AS ingestion-dependencies
 RUN uv sync --locked --extra ingestion --no-dev --no-install-project --no-build --no-cache \
     && uv pip check --python /opt/venv/bin/python
 
+FROM dependencies AS embedding-dependencies
+RUN uv sync --locked --extra embedding --no-dev --no-install-project --no-build --no-cache \
+    && uv pip check --python /opt/venv/bin/python
+
 # CI uses the same lock and interpreter; test dependencies never enter the runtime image.
 FROM dependencies AS test
 RUN uv sync --locked --extra dev --no-install-project --no-build --no-cache
@@ -48,7 +52,11 @@ COPY --chown=10001:10001 scripts/ ./scripts/
 COPY --chown=10001:10001 migrations/ ./migrations/
 USER 10001:10001
 
+FROM runtime AS migrate
+CMD ["python", "-m", "scripts.migrate_database"]
+
 FROM runtime AS app
+COPY --from=embedding-dependencies /opt/venv /opt/venv
 EXPOSE 8000
 HEALTHCHECK --interval=5s --timeout=5s --start-period=20s --retries=6 \
     CMD ["python", "-m", "scripts.check_container_health", "app"]

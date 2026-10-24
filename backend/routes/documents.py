@@ -1,11 +1,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
 from starlette.formparsers import MultiPartException
 from starlette.responses import FileResponse, JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from backend.core.config import get_settings
 from backend.dependencies import CurrentUser, DbSession
 from backend.schemas.document import (
     DocumentCancelResponse,
@@ -13,6 +14,8 @@ from backend.schemas.document import (
     DocumentDetailResponse,
     DocumentListResponse,
     DocumentResponse,
+    DocumentSearchRequest,
+    DocumentSearchResponse,
     DocumentStatus,
     DocumentType,
     DocumentUsageResponse,
@@ -26,8 +29,40 @@ from backend.services.documents import (
     list_documents,
     upload_document,
 )
+from backend.services.usage_limits import (
+    MINUTE_SECONDS,
+    UsageLimit,
+    UsageLimitExceeded,
+    consume_usage_limits,
+)
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+
+@router.post("/search", response_model=DocumentSearchResponse)
+async def search_document_chunks(
+    data: DocumentSearchRequest,
+    session: DbSession,
+    user: CurrentUser,
+) -> DocumentSearchResponse:
+    from backend.services.document_retrieval import search_documents
+
+    try:
+        await consume_usage_limits(
+            user.id,
+            (
+                UsageLimit(
+                    metric="agent_request",
+                    limit=get_settings().agent_requests_per_minute,
+                    window_seconds=MINUTE_SECONDS,
+                ),
+            ),
+        )
+    except UsageLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429, detail=str(exc), headers={"Retry-After": str(exc.retry_after_seconds)}
+        ) from None
+    return await search_documents(session, user.id, data)
 
 
 class DocumentUploadLimitMiddleware:

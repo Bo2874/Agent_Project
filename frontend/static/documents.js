@@ -4,7 +4,7 @@
   const labels = {
     uploaded: "Đã lưu, chưa sẵn sàng hỏi đáp", queued: "Đang chờ xử lý",
     parsing: "Đang đọc nội dung", chunking: "Đang chia nội dung",
-    embedding: "Đang xử lý", indexing: "Đang hoàn tất", ready: "Sẵn sàng",
+    embedding: "Đang xử lý", indexing: "Đang hoàn tất", ready: "Đã xử lý",
     failed: "Lỗi xử lý", cancelled: "Đã hủy xử lý", deleting: "Đang xóa",
   };
   const processing = new Set(["queued", "parsing", "chunking", "embedding", "indexing", "deleting"]);
@@ -253,8 +253,8 @@
             const download = node("a", "ghost-button", "Tải xuống");
             download.href = `/api/documents/${item.id}/download`;
             actions.append(download);
-            if (["uploaded", "failed", "cancelled"].includes(item.status)) {
-              actions.append(button(item.status === "uploaded" ? "Xử lý" : "Thử lại", () => changeProcessing(item, "retry")));
+            if (["uploaded", "failed", "cancelled"].includes(item.status) || item.awaiting_embedding) {
+              actions.append(button(item.awaiting_embedding ? "Tiếp tục xử lý" : item.status === "uploaded" ? "Xử lý" : "Thử lại", () => changeProcessing(item, "retry")));
             } else if (needsRefresh(item)) {
               actions.append(button("Dừng xử lý", () => changeProcessing(item, "cancel")));
             }

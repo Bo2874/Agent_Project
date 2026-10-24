@@ -37,7 +37,7 @@ flowchart LR
 
 - `postgres`: `pgvector/pgvector:0.8.7-pg17-bookworm`; không publish cổng DB ra host.
   `pg_isready` kiểm tra TCP của server cuối, tránh coi temporary init server là ready.
-- `migrate`: image riêng từ target app; chạy `scripts.migrate_database` rồi thoát.
+- `migrate`: image riêng từ target migrate/base dependency; chạy `scripts.migrate_database` rồi thoát.
   Lần lượt tạo extension `vector`, Alembic upgrade head và setup schema checkpoint LangGraph.
   `restart: no`; app/worker phụ thuộc `service_completed_successfully`.
 - `app`: image target `app`, UID/GID 10001, `uvicorn`, cổng 8000 trong container;
@@ -64,10 +64,25 @@ Package source nằm tại `/app` để đường dẫn templates/static/skills/
 - `postgres_data`: PG data, users/chat/memory/jobs/checkpoint; chỉ postgres mount volume này.
 - `document_data`: volume riêng tại `/app/data/documents`, app/worker cùng UID để đọc/ghi.
   Lưu upload/bản trích text riêng theo user và vùng tạm ingestion, không public qua static.
-- `document_model_cache`: chỉ worker mount tại `/app/data/models`; cache tokenizer F2LLM và model
-  layout/table của Docling. Image worker cài extra `ingestion` (PyTorch CPU) và LibreOffice Writer;
-  app/migrate không cài bộ parser này. Build image không tải model weights; lần xử lý đầu cần mạng
-  để điền cache. Chưa nối embedding/retrieval, file chia chunk xong vẫn chưa sẵn sàng hỏi đáp.
+- `document_model_cache`: app/worker mount tại `/app/data/models`; cache F2LLM, Qwen reranker/tokenizer và model
+  layout/table của Docling. Worker cài extra `ingestion` (gồm embedding/PyTorch CPU) và LibreOffice
+  Writer; app chỉ cài extra `embedding`, migrate giữ base dependency. Build không tải model weights;
+  lần xử lý/tìm kiếm đầu cần mạng để điền cache. Model embedding chạy trong subprocess được tái sử dụng,
+  mặc định batch 4, CPU float32, theo dõi RSS/timeout, không load model cho mỗi batch/query.
+  Worker công bố version ready sau khi đủ vector/FTS; nhánh trả lời document_qa chưa được nối ở M3.6.
+  Hybrid tìm 20 dense + 20 lexical, RRF rồi rerank tối đa 20 đoạn bằng Qwen3-Reranker-0.6B.
+  Reranker có process/cache riêng, CPU float32, mặc định batch 1, 4 GiB RSS, 600 giây/request;
+  embedding/reranker có thể cùng ở RAM nên giới hạn RSS từng process không phải RAM tổng app.
+  `DOCUMENT_RERANKER_REVISION=main` resolve về commit lúc load; pin commit nếu cần tái lập/offline.
+  `POST /api/documents/search` mặc định `mode=hybrid`; `dense`/`lexical` vẫn là baseline độc lập.
+  Hybrid lấy scope bằng `conversation_id` hoặc `document_ids`, nhắm 6 evidence/tối đa 8 theo
+  `CONTEXT_RAG_TOKEN_BUDGET`. `limit` chỉ áp dụng cho baseline dense/lexical; hybrid cố định top-k.
+  Có history của hội thoại thì gọi model chat một lần để rewrite; chỉ truyền tối đa 8 message,
+  budget history 2.000 token ước lượng và metadata file, không gửi toàn bộ tài liệu. Không history
+  thì bỏ rewrite. Response chứa query rewrite, usage/latency, profile reranker và evidence budget.
+  Token rewrite báo về được cộng quota hiện có, kể cả output lỗi; API search không tạo message/run.
+  Việc gắn trace vào run/citation bền vững và trả lời trong chat thuộc M3.7.
+  Hướng dẫn scoring: [Qwen model card](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B).
 - Root filesystem app/worker read-only; `/tmp` là tmpfs riêng, có quota 64 MiB.
   Không bind mount source, host `.env`, `.venv` hoặc Docker socket vào runtime.
 - `.dockerignore` dùng allow-list; build context chỉ nhận code/assets cần thiết, không nhận

@@ -42,9 +42,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+embedding = [
+    "sentence-transformers>=5.1,<6",
+    "torch>=2.2.2,<3",
+    "transformers>=4.57,<5",
+]
 ingestion = [
     "docling-slim[convert-core,format-docx,format-pdf,models-local]>=2.142.1,<2.143",
     "pypdf>=6.1,<7",
+    "sentence-transformers>=5.1,<6",
     "torch>=2.2.2,<3",
     "torchvision>=0,<1",
     "transformers>=4.57,<5",

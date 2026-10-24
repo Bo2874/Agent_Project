@@ -85,7 +85,11 @@ def _view(document: Document, version: DocumentVersion, *, deduplicated=False) -
         warnings=version.warnings,
         error_code=version.error_code,
         error_message=version.error_message,
-        ready_for_qa=document.status == "ready" and document.active_version_id is not None,
+        ready_for_qa=(
+            document.status == "ready"
+            and version.status == "ready"
+            and document.active_version_id == version.id
+        ),
         awaiting_embedding=(
             document.status == "embedding"
             and version.status == "embedding"

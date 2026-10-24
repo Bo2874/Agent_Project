@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     document_libreoffice_path: str = "soffice"
     document_model_cache_path: Path = PROJECT_ROOT / "data/models"
     document_embedding_revision: str = Field(default="main", min_length=1, max_length=160)
+    document_embedding_batch_size: int = Field(default=4, ge=1, le=32)
+    document_embedding_timeout_seconds: float = Field(default=600, ge=30, le=3600)
+    document_embedding_memory_mb: int = Field(default=4096, ge=1024, le=32768)
+    document_reranker_revision: str = Field(default="main", min_length=1, max_length=160)
+    document_reranker_batch_size: int = Field(default=1, ge=1, le=4)
+    document_reranker_timeout_seconds: float = Field(default=600, ge=30, le=3600)
+    document_reranker_memory_mb: int = Field(default=4096, ge=1024, le=32768)
+    document_rewrite_timeout_seconds: float = Field(default=30, ge=5, le=120)
+    document_rewrite_history_messages: int = Field(default=8, ge=1, le=20)
+    document_rewrite_history_tokens: int = Field(default=2000, ge=100, le=8000)
     db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "personal_agent_db"

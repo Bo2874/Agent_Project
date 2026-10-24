@@ -661,8 +661,10 @@ thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế n
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa nghiệm thu chức năng trên web.
 - [x] M3.4: Worker ingestion, parse/chuẩn hóa/chunk có nguồn; trạng thái, retry và cancel.
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa nghiệm thu parser/queue trên dữ liệu thật.
-- [ ] M3.5: Embedding F2LLM, lexical index và retrieval lọc owner/document/active version.
-- [ ] M3.6: Hybrid/RRF, Qwen rerank, LLM rewrite và đóng gói evidence theo budget.
+- [x] M3.5: Embedding F2LLM, lexical index và retrieval lọc owner/document/active version.
+  Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh/SQL offline, chưa chạy model hoặc database thật.
+- [x] M3.6: Hybrid/RRF, Qwen rerank, LLM rewrite và đóng gói evidence theo budget.
+  Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy model/database hoặc test chức năng.
 - [ ] M3.7: Nhánh document_qa, hỏi nối tiếp/nhiều ý/tóm tắt có độ phủ, citation bền vững và UI mở nguồn.
 - [ ] M3.8: Hoàn thiện delete/re-index/invalidation, user test tay trên web và sửa theo kết quả.
 
@@ -733,6 +735,56 @@ Chưa cài extra ingestion/LibreOffice trên máy Windows hoặc tải model wei
 và hướng dẫn trong infra/docker/app/README.md. Chỉ kiểm tra tĩnh/import/OpenAPI/lock/SQL offline,
 chưa test parser/worker/retry/cancel trên runtime, build Docker hoặc áp dụng migration.
 Tiếp theo M3.5: embedding F2LLM, lexical index và retrieval có scope owner/document/active version.
+
+M3.5: thêm `agent_core/rag/embeddings.py`, `scripts/run_embedding_model.py`,
+`backend/services/document_indexing.py`, `backend/services/document_retrieval.py`. F2LLM chạy CPU
+float32 trong subprocess giữ model giữa các batch/query, load lazily theo commit đã pin từ chunking;
+không load weights vào tiến trình web và không load lại mỗi query. encode_query có instruction đúng
+model card, encode_document không có instruction query; last-token pooling, đủ 1.024 chiều,
+normalize và cosine. Giới hạn mặc định batch 4, 600 giây/call, 4 GiB RSS/process tree, tối đa 8 caller
+đang xử lý/chờ; kiểm tra số vector/dimension/finite/norm và dừng model khi lỗi/hủy/timeout.
+Worker tiếp tục embedding trên cùng job documents.prepare; lưu từng batch và progress có lease fence,
+retry các vector thiếu, không parse/chunk lại khi bản trích và metadata còn đủ. Nếu profile thư viện
+khác thì rebuild toàn bộ vector của version chưa công bố, tránh trộn vector. File đang chờ embedding
+từ M3.4 có nút Tiếp tục xử lý qua retry. Chưa triển khai re-index tài liệu ready, giữ cho M3.8.
+Sau embedding, FTS simple + unaccent/lower với title/heading trọng số A, body B; GIN hiện có được
+cập nhật khi ghi tsvector. Chỉ publish active_version/ready trong một transaction khi đủ vector chuẩn
+hóa và FTS đã cập nhật đủ chunk; lưu profile/library/lexical config, pipeline hash và tăng revision.
+Thêm POST /api/documents/search nhận query, document_ids hoặc conversation_id, mode dense/lexical,
+limit mặc định 20 (tối đa 50). Đây là API retrieval nguồn, chưa phải nhánh trả lời document_qa.
+Mọi query lọc owner ở document/version/chunk và active version còn ready, không có scope thì từ chối.
+Dense là exact cosine baseline, chưa tạo HNSW. Không tìm chung các file khác embedding profile/revision;
+không giữ connection DB trong lúc model chạy, sau đó kiểm tra lại scope/version/profile trước truy vấn.
+Lexical rút tối đa 16 term có ưu tiên phần trong ngoặc kép/mã số, nối OR thay vì AND cả câu; dùng
+unaccent nhất quán hai phía, ts_rank_cd với normalization 32, không gọi đó là BM25.
+App cài extra embedding, worker extra ingestion có Sentence Transformers, migrate giữ base ở target
+migrate riêng; app/worker cùng mount model cache. Không đổi schema/migration hoặc .env thật.
+Chỉ kiểm tra tĩnh/import/OpenAPI/lock và SQL compile; chưa cài extra nặng, tải model, chạy DB/API/UI,
+build Docker hoặc test chức năng. Tiếp theo M3.6: hybrid/RRF, Qwen rerank, rewrite và evidence budget.
+
+M3.6: thêm `agent_core/rag/local_models.py`, `agent_core/rag/reranking.py`,
+`agent_core/rag/retrieval.py`, `scripts/run_reranker_model.py` và `backend/services/document_query.py`.
+Transport subprocess dùng chung cho F2/Qwen, giữ mô hình lazy/cached, IPC/queue/RSS/timeout bounded;
+app đóng cả hai khi shutdown. Qwen CPU float32, batch 1, safetensors/trust_remote_code=false,
+resolve commit, template yes/no chính thức và softmax hai logits; không generate hoặc cắt ngầm passage.
+Rerank dùng embedding_text có title/heading, evidence giữ text gốc/offset/citation ID.
+
+`POST /api/documents/search` mặc định hybrid: dense20 + lexical20 độc lập → RRF k60 cùng trọng số,
+khử trùng chunk/version → tối đa20 Qwen → nhắm6/tối đa8 evidence theo budget RAG hiện có.
+Slot 7–8 dành cho file chưa được đại diện; đây không phải bảo đảm phủ đủ tài liệu để tóm tắt.
+Budget đo cả JSON/metadata/wrapper bằng estimator context hiện có; không sửa text/offset để ép vừa.
+Baseline dense/lexical vẫn dùng limit riêng; hybrid cố định top-k, không bỏ qua rerank nếu lỗi.
+Kiểm tra lại owner/scope/active version sau rewrite/model inference; không giữ DB connection lúc chạy model.
+
+Rewrite chỉ khi có recent history của hội thoại đã xác thực owner, một call model chat hiện có,
+JSON output chứa query, tối đa8 message/budget2.000 token history và metadata file bounded.
+Rút gọn message dài có marker/cờ, giữ chuỗi gần nhất; caller M3.7 có thể truyền current_message_id
+để không đưa câu hiện tại vào history lần nữa. Không gửi toàn bộ tài liệu vào rewrite.
+Response có query gốc/rewrite, token/latency, model profile và fingerprint retrieval config;
+token rewrite đã báo được cộng quota kể cả JSON lỗi. Có callback trace cho recorder ở M3.7;
+search API không tạo message/run/citation giả. Lỗi rewrite/rerank trả lỗi rõ, không fallback âm thầm.
+Thêm config/env mẫu và Compose; dùng lại dependency embedding hiện có, không thêm thư viện.
+Chưa nối document_qa, chưa trả lời hoặc lưu citation/run trace bền vững; phần đó làm ở M3.7.
 
 **Upload và ingestion**
 
