@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import os
 import re
+import shutil
 import unicodedata
 import zipfile
 from dataclasses import dataclass
@@ -74,6 +75,10 @@ def original_key(owner: UUID, document: UUID, version: UUID, file_type: str) -> 
     if file_type not in MIME_TYPES:
         raise DocumentStorageError("Định dạng file không hợp lệ.")
     return f"{owner}/{document}/{version}/original.{file_type}"
+
+
+def parsed_key(owner: UUID, document: UUID, version: UUID) -> str:
+    return f"{owner}/{document}/{version}/parsed.json"
 
 
 def _validate_docx(path: Path, max_unpacked_bytes: int, max_entries: int) -> None:
@@ -180,6 +185,27 @@ class LocalDocumentStorage:
         self.root = root.resolve()
         self.max_unpacked_bytes, self.max_entries = max_unpacked_bytes, max_entries
 
+    def staging_directory(self, owner: UUID, document: UUID, version: UUID | None = None) -> Path:
+        base = (self.root / ".ingestion").resolve()
+        candidate = (base / str(owner) / str(document)).resolve()
+        if version is not None:
+            candidate = (candidate / str(version)).resolve()
+        if not base.is_relative_to(self.root) or not candidate.is_relative_to(base):
+            raise DocumentStorageError("Vùng xử lý tài liệu không hợp lệ.")
+        return candidate
+
+    async def cleanup_staging(self, owner: UUID, document: UUID) -> None:
+        # Resolve/check the exact owner/document subtree before recursive removal.
+        target = self.staging_directory(owner, document)
+        if not target.exists():
+            return
+        task = asyncio.create_task(asyncio.to_thread(shutil.rmtree, target))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
     def _path(self, key: str) -> Path:
         if not _KEY.fullmatch(key):
             raise DocumentStorageError("Khóa lưu trữ không hợp lệ.")
@@ -242,6 +268,27 @@ class LocalDocumentStorage:
 
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self._delete, key)
+
+    async def publish_parsed(self, source: Path, key: str) -> None:
+        task = asyncio.create_task(asyncio.to_thread(self._publish_parsed, source, key))
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            await task
+            raise
+
+    def _publish_parsed(self, source: Path, key: str) -> None:
+        resolved = source.resolve()
+        staging = (self.root / ".ingestion").resolve()
+        if not staging.is_relative_to(self.root) or not resolved.is_relative_to(staging):
+            raise DocumentStorageError("Bản trích xuất không thuộc vùng xử lý riêng.")
+        destination = self._path(key)
+        if destination.name != "parsed.json":
+            raise DocumentStorageError("Khóa bản trích xuất không hợp lệ.")
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        destination = self._path(key)
+        os.chmod(resolved, 0o600)
+        os.replace(resolved, destination)
 
     def _delete(self, key: str) -> None:
         # Delete a validated file, then empty parent directories; never recursively delete.

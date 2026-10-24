@@ -8,6 +8,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from backend.dependencies import CurrentUser, DbSession
 from backend.schemas.document import (
+    DocumentCancelResponse,
     DocumentDeleteResponse,
     DocumentDetailResponse,
     DocumentListResponse,
@@ -16,6 +17,7 @@ from backend.schemas.document import (
     DocumentType,
     DocumentUsageResponse,
 )
+from backend.services.document_ingestion import cancel_preparation, retry_preparation
 from backend.services.documents import (
     delete_document,
     document_usage,
@@ -167,3 +169,21 @@ async def remove_document(
     user: CurrentUser,
 ) -> DocumentDeleteResponse:
     return await delete_document(session, user.id, document_id)
+
+
+@router.post("/{document_id}/retry", response_model=DocumentDetailResponse, status_code=202)
+async def retry_document(
+    document_id: UUID,
+    session: DbSession,
+    user: CurrentUser,
+) -> DocumentDetailResponse:
+    return await retry_preparation(session, user.id, document_id)
+
+
+@router.post("/{document_id}/cancel", response_model=DocumentCancelResponse, status_code=202)
+async def cancel_document(
+    document_id: UUID,
+    session: DbSession,
+    user: CurrentUser,
+) -> DocumentCancelResponse:
+    return DocumentCancelResponse(**await cancel_preparation(session, user.id, document_id))

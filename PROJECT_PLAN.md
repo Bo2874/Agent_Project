@@ -659,7 +659,8 @@ thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế n
   Code hoàn thành ngày 2026-10-24; đã kiểm tra cú pháp/import/OpenAPI/lint/lock, chưa test chức năng.
 - [x] M3.3: Thư viện trên web, upload/chọn file trong hội thoại, giữ scope khi mở lại.
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa nghiệm thu chức năng trên web.
-- [ ] M3.4: Worker ingestion, parse/chuẩn hóa/chunk có nguồn; trạng thái, retry và cancel.
+- [x] M3.4: Worker ingestion, parse/chuẩn hóa/chunk có nguồn; trạng thái, retry và cancel.
+  Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa nghiệm thu parser/queue trên dữ liệu thật.
 - [ ] M3.5: Embedding F2LLM, lexical index và retrieval lọc owner/document/active version.
 - [ ] M3.6: Hybrid/RRF, Qwen rerank, LLM rewrite và đóng gói evidence theo budget.
 - [ ] M3.7: Nhánh document_qa, hỏi nối tiếp/nhiều ý/tóm tắt có độ phủ, citation bền vững và UI mở nguồn.
@@ -701,7 +702,37 @@ UI khóa gửi/chuyển/xóa hội thoại trong lúc upload/lưu lựa chọn h
 Không dùng dòng nhắc cố định dưới ô chat để hiển thị trạng thái tài liệu. Chưa nối scope vào JEV,
 retrieval hoặc prompt: việc nối nhánh document_qa làm ở M3.7. Chỉ kiểm tra cú pháp Python/JS/Jinja,
 lint/format, import/OpenAPI và biên dịch SQL offline; chưa gọi API/DB, áp dụng migration hoặc test UI.
-Tiếp theo M3.4: worker ingestion, parse/chuẩn hóa và chunk có nguồn theo thiết kế đã chốt.
+M3.3 kết thúc với UI thư viện/scope; việc xử lý nội dung được nối tiếp trong M3.4 dưới đây.
+
+M3.4: thêm `agent_core/rag/{__init__,documents,parsing,chunking}.py`,
+`backend/services/document_ingestion.py` và `scripts/process_document.py`. Upload mới enqueue
+`documents.prepare` cùng transaction; file uploaded từ đợt trước có thể bấm Xử lý hoặc upload lại
+để vào queue. Worker chạy hai tiến trình con parsing/chunking, kiểm tra checksum, timeout, RSS
+của cây process, cancel và lease trước khi ghi. Tiến trình con dừng khi worker cha chết; không
+truyền secret DB/mail/provider vào môi trường parser. Vùng tạm có namespace owner/document/version;
+cleanup khi xóa tài liệu dọn cả bản trích có thể đã ghi trước một COMMIT mất phản hồi.
+PDF: pypdf kiểm tra page/mã hóa/lớp text; Docling đọc layout/table với OCR, remote service và external
+plugin tắt. PDF không text/mã hóa báo lỗi, trang không/ít text và ảnh được cảnh báo; lỗi/partial parse
+không được xuất bản như đã đọc đủ. DOC chuyển bằng LibreOffice headless/profile riêng trước Docling;
+DOCX dùng Docling với giới hạn archive và remote/local fetch tắt; TXT giải mã UTF-8/UTF-16 bằng Python.
+Giữ original_text và offset trong parsed.json; text bảng là biểu diễn TSV có header/row metadata,
+rich cell được serialize trước khi đưa vào bảng. Chunk theo heading/đoạn/câu bằng LlamaIndex
+SentenceSplitter và tokenizer F2LLM thực; tối đa 512 token gồm title/heading/header và special token,
+overlap tối đa 64 token trong mục dài, không overlap giữa bảng/mục không liên quan. NFC/khoảng trắng
+chỉ chuẩn hóa bản embedding/lexical, giữ đoạn trích gốc và tọa độ. Header/footer giữ trong bản trích,
+không đưa vào chunk; heading/header quá dài được rút gọn phần context, có cảnh báo.
+Lưu tokenizer commit, parser/chunker version, pipeline hash có owner/file/config và chunk ID ổn định.
+Ghi thay chunk trong transaction; retry không nhân đôi. Job preparation hoàn tất ở chunking;
+document/version tạm ở embedding với awaiting_embedding=true, vector NULL, active_version/ready_at
+chưa đặt. UI hiện đã trích/chia xong nhưng chưa sẵn sàng hỏi đáp, không báo embedding đang chạy.
+Bổ sung POST retry/cancel có owner, nút tương ứng trên thư viện và cập nhật trạng thái trong chat;
+đồng bộ trạng thái failed/cancelled từ queue khi worker mất lease/hết retry. Worker bỏ ghi khi mất quyền.
+Extra ingestion khóa Docling slim PDF/Word, pypdf, transformers và PyTorch CPU; base thêm psutil.
+Docker worker cài extra/LibreOffice, có volume model cache riêng; app/migrate không cài parser nặng.
+Chưa cài extra ingestion/LibreOffice trên máy Windows hoặc tải model weights; cấu hình trong env mẫu
+và hướng dẫn trong infra/docker/app/README.md. Chỉ kiểm tra tĩnh/import/OpenAPI/lock/SQL offline,
+chưa test parser/worker/retry/cancel trên runtime, build Docker hoặc áp dụng migration.
+Tiếp theo M3.5: embedding F2LLM, lexical index và retrieval có scope owner/document/active version.
 
 **Upload và ingestion**
 

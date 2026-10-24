@@ -1,4 +1,4 @@
-"""Owner-scoped library operations; uploads remain uploaded until ingestion is connected."""
+"""Owner-scoped library operations with durable preparation and deferred RAG publication."""
 
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ from backend.services.document_storage import (
     MIME_TYPES,
     LocalDocumentStorage,
     original_key,
+    parsed_key,
     validate_filename,
 )
 
@@ -85,6 +86,11 @@ def _view(document: Document, version: DocumentVersion, *, deduplicated=False) -
         error_code=version.error_code,
         error_message=version.error_message,
         ready_for_qa=document.status == "ready" and document.active_version_id is not None,
+        awaiting_embedding=(
+            document.status == "embedding"
+            and version.status == "embedding"
+            and bool(version.pipeline_config.get("awaiting_embedding", False))
+        ),
         deduplicated=deduplicated,
         created_at=document.created_at,
         updated_at=document.updated_at,
@@ -145,6 +151,9 @@ async def list_documents(
     limit: int,
     offset: int,
 ) -> DocumentListResponse:
+    from backend.services.document_ingestion import synchronize_terminal_preparations
+
+    await synchronize_terminal_preparations(session, owner)
     filters = [Document.owner_user_id == owner]
     if not include_deleting and status != "deleting":
         filters.append(Document.deleted_at.is_(None))
@@ -172,6 +181,9 @@ async def list_documents(
 async def get_document(
     session: AsyncSession, owner: UUID, document_id: UUID
 ) -> DocumentDetailResponse:
+    from backend.services.document_ingestion import synchronize_terminal_preparations
+
+    await synchronize_terminal_preparations(session, owner)
     row = (
         await session.execute(
             _library_query(owner).where(
@@ -247,6 +259,9 @@ async def _lock_conversation(session: AsyncSession, owner: UUID, conversation_id
 async def get_conversation_documents(
     session: AsyncSession, owner: UUID, conversation_id: UUID
 ) -> ConversationDocumentsResponse:
+    from backend.services.document_ingestion import synchronize_terminal_preparations
+
+    await synchronize_terminal_preparations(session, owner)
     conversation = await session.scalar(
         select(Conversation.id).where(
             Conversation.id == conversation_id, Conversation.user_id == owner
@@ -312,6 +327,8 @@ async def set_conversation_documents(
 async def upload_document(
     session: AsyncSession, owner: UUID, upload: UploadFile, *, conversation_id: UUID | None
 ) -> DocumentResponse:
+    from backend.services.document_ingestion import enqueue_preparation
+
     settings, storage = get_settings(), document_storage()
     name, file_type = validate_filename(upload.filename, upload.content_type)
     if upload.size is not None and upload.size > settings.document_max_file_bytes:
@@ -346,6 +363,14 @@ async def upload_document(
         if duplicate:
             document, version = duplicate
             await _attach(session, owner, conversation_id, document.id)
+            if version.status == "uploaded":
+                ingestion = await session.scalar(
+                    select(DocumentIngestionJob).where(
+                        DocumentIngestionJob.version_id == version.id,
+                        DocumentIngestionJob.owner_user_id == owner,
+                    )
+                )
+                await enqueue_preparation(session, document, version, ingestion)
             await session.commit()
             return _view(document, version, deduplicated=True)
         usage = await document_usage(session, owner)
@@ -381,6 +406,7 @@ async def upload_document(
         session.add(version)
         await session.flush()
         await _attach(session, owner, conversation_id, document_id)
+        await enqueue_preparation(session, document, version)
         commit_started = True
         try:
             await session.commit()
@@ -530,11 +556,14 @@ async def cleanup_deleted_document(context: JobExecutionContext, document_id: UU
         ).all()
         storage = document_storage()
         try:
+            await storage.cleanup_staging(owner, document_id)
             for version in versions:
                 await context.raise_if_cancelled()
                 await storage.delete(version.storage_key)
-                if version.parsed_storage_key:
-                    await storage.delete(version.parsed_storage_key)
+                # A file publish may precede an ambiguous/rolled-back metadata COMMIT.
+                await storage.delete(
+                    version.parsed_storage_key or parsed_key(owner, document_id, version.id)
+                )
         except OSError as exc:
             raise RetryableJobError(
                 "Chưa thể dọn file tài liệu.", error_code="document_cleanup_io"

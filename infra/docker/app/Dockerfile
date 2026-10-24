@@ -11,6 +11,10 @@ COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --locked --no-dev --no-install-project --no-build --no-cache \
     && uv pip check --python /opt/venv/bin/python
 
+FROM dependencies AS ingestion-dependencies
+RUN uv sync --locked --extra ingestion --no-dev --no-install-project --no-build --no-cache \
+    && uv pip check --python /opt/venv/bin/python
+
 # CI uses the same lock and interpreter; test dependencies never enter the runtime image.
 FROM dependencies AS test
 RUN uv sync --locked --extra dev --no-install-project --no-build --no-cache
@@ -28,7 +32,7 @@ WORKDIR /app
 COPY --from=dependencies /opt/venv /opt/venv
 RUN groupadd --gid 10001 agent \
     && useradd --uid 10001 --gid agent --no-create-home agent \
-    && mkdir -p /app/data/documents \
+    && mkdir -p /app/data/documents /app/data/models \
     && chown -R agent:agent /app
 COPY --chown=10001:10001 pyproject.toml uv.lock .python-version alembic.ini ./
 COPY --chown=10001:10001 agent_core/ ./agent_core/
@@ -51,6 +55,12 @@ HEALTHCHECK --interval=5s --timeout=5s --start-period=20s --retries=6 \
 CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM runtime AS worker
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libreoffice-writer fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=ingestion-dependencies /opt/venv /opt/venv
+USER 10001:10001
 HEALTHCHECK --interval=5s --timeout=5s --start-period=15s --retries=6 \
     CMD ["python", "-m", "scripts.check_container_health", "worker"]
 CMD ["python", "-m", "scripts.run_background_worker"]

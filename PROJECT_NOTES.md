@@ -337,3 +337,61 @@
   truy vấn PostgreSQL offline. Chưa chạy test chức năng, mở web, gọi API/DB, áp dụng migration hoặc
   tải model; không sửa .env và không thêm dependency. Chưa nối file được chọn vào JEV/LLM/retrieval.
   Tiếp theo M3.4: worker ingestion, parser/chuẩn hóa/chunk có nguồn; người dùng tự test trực quan sau.
+- M3.4 (2026-10-24): thêm 6 file nguồn: agent_core/rag/__init__.py, documents.py, parsing.py,
+  chunking.py; backend/services/document_ingestion.py; scripts/process_document.py. Đây là pipeline
+  nội bộ, không đăng ký parser/chunker làm tool và không thay đổi Choice/JEV ở đợt này.
+- Upload mới tạo job documents.prepare và DocumentIngestionJob cùng transaction với document/version;
+  tái upload file uploaded cũ hoặc POST /api/documents/{id}/retry cũng có thể enqueue. Dùng queue
+  PostgreSQL và worker hiện có, không tạo scheduler/queue thứ hai; tối đa 3 lần thử cho lỗi tạm thời.
+  Lỗi nội dung/thiếu dependency/giới hạn được báo để user chủ động thử lại sau khi sửa nguyên nhân.
+- Worker gọi parsing rồi chunking bằng subprocess Python, kiểm tra checksum/size file gốc; có timeout
+  theo phase, theo dõi tổng RSS của cây process và dừng process con khi hủy/quá hạn/vượt bộ nhớ.
+  Watchdog trong child dừng cả các tiến trình Office con khi worker cha chết. Chỉ truyền môi trường
+  tối thiểu, không đưa secret DB/SMTP/LLM/JEV vào parser; vẫn không coi process riêng là OS sandbox.
+- Vùng tạm nằm trong private storage theo owner/document/version/attempt; scratch/profile Office
+  nằm trong attempt, cache model nằm riêng. Dọn attempt sau hoàn tất/lỗi/hủy; delete tài liệu dọn
+  cả cây staging của owner/document sau khi job chạy đã dừng. Resolve/kiểm tra đích trước recursive
+  cleanup; không đụng file user khác. parsed.json được publish nguyên tử, chế độ file riêng.
+  Cleanup cũng dọn parsed.json có thể đã được ghi trước COMMIT chưa rõ kết quả.
+- PDF dùng pypdf preflight số trang, mã hóa và lớp text rồi Docling slim đọc layout/table; OCR,
+  remote service và external plugin tắt. PDF không lớp text/mã hóa báo rõ; trang không/ít text, ảnh
+  và trang không có text sau parse có cảnh báo. Không chấp nhận Docling partial/failed như đọc đủ.
+  Kiểm tra ít text là cảnh báo coverage, không phải phương pháp phát hiện ảnh scan hoàn hảo.
+- DOC dùng LibreOffice headless, profile riêng với macro security cao và link update tắt, chuyển
+  sang DOCX; xác minh output/giới hạn archive rồi Docling đọc. DOCX bật giới hạn unpack/member và
+  tắt remote/local resource fetch. TXT nhận UTF-8/UTF-16; giữ text/offset, heading dạng # nếu có.
+  Chưa hỗ trợ OCR; không đưa ảnh hoặc nội dung tài liệu lên dịch vụ parse/model từ xa.
+- Bản trích giữ original_text, block/heading path, PDF page, source ref và offset tính theo text
+  trong parsed.json. Bảng biểu diễn TSV theo hàng/cột, giữ header/row metadata; rich cell serialize
+  trước khi đưa vào bảng, không lặp subtree lần nữa. Header/footer vẫn giữ ở artifact, bỏ khỏi chunk.
+- Chunker dùng LlamaIndex SentenceSplitter, tokenizer thực của codefuse-ai/F2LLM-v2-0.6B;
+  resolve revision thành commit trước khi load tokenizer, trust_remote_code=false. Giới hạn 512 token
+  gồm title/heading/table header và special token; overlap tối đa 64 token cho mục dài, không qua
+  heading/bảng không liên quan. Bảng nhóm hàng và lặp header ở context; hàng quá dài tách có cờ fragment.
+  Header/title quá dài rút gọn context và cảnh báo, metadata/bản trích vẫn giữ đầy đủ.
+- Chuẩn hóa Unicode NFC/khoảng trắng cho embedding_text/lexical_text, không sửa đoạn trích làm nguồn.
+  Kiểm tra từng chunk khớp substring/checksum của original_text; offset không tính trên bản chuẩn hóa.
+  Chunk ID UUID5 ổn định theo version/pipeline/index/hash; thay chunk trong transaction, không nhân đôi
+  khi retry. Lưu parser/chunker version, tokenizer commit và pipeline hash gồm owner/file/config.
+- Thêm POST retry/cancel có đăng nhập và ownership; UI thư viện có Xử lý/Thử lại/Dừng xử lý,
+  hiển thị số chunk/cảnh báo và tự làm mới trạng thái trong chat. Job bị mất lease/failed/cancelled
+  được đồng bộ sang trạng thái tài liệu khi đọc API; background worker bỏ ghi kết quả khi mất quyền.
+  Các lần ghi ingestion kiểm tra worker/attempt/started_at/lease và lấy khóa theo owner/document/job.
+- Preparation hoàn tất ở stage chunking: DocumentIngestionJob succeeded, document/version embedding,
+  awaiting_embedding=true, vector còn NULL, active_version/ready_at chưa đặt, ready_for_qa=false.
+  UI hiện đã trích/chia xong nhưng chưa sẵn sàng hỏi đáp; chưa chạy embedding, lexical index hoặc retrieval.
+- Thêm cấu hình giới hạn: 500 trang, 5 triệu ký tự text, 20.000 chunk, 128 MiB/artifact, 600 giây/phase,
+  4 GiB RSS/cây process; có thể chỉnh trong env mẫu. Thêm đường dẫn LibreOffice/cache model/revision.
+  Khóa extra ingestion với docling-slim 2.142.1 (PDF/Word/local models), pypdf, transformers và PyTorch
+  CPU từ index riêng; không kéo CUDA/OCR. Base thêm psutil 7.2.2; môi trường local chỉ cài base/dev,
+  chưa cài extra ingestion/LibreOffice hoặc tải model weights. Tokenizer và Docling layout/table model
+  sẽ được tải vào cache khi chạy xử lý lần đầu; hướng dẫn Windows đã thêm vào README Docker hiện có.
+- Docker worker cài extra ingestion/LibreOffice Writer, có volume document_model_cache riêng;
+  app/migrate giữ dependency nhẹ. Cập nhật Dockerfile/Compose/env mẫu, không sửa .env thật.
+- Kiểm tra cú pháp Python/JS, Ruff lint/format, import ứng dụng/registry, OpenAPI, YAML/TOML/lock
+  và SQL compile offline; không tạo/chạy test chức năng, fixture/eval, xử lý tài liệu thật, gọi API/DB,
+  build/chạy Docker hay áp dụng migration. User tự nghiệm thu tay sau. Tiếp theo M3.5 embedding/index.
+  API Docling/LibreOffice và tokenizer đã đối chiếu nguồn chính thức:
+  [Docling SDK](https://github.com/docling-project/docling/blob/v2.142.1/docling/document_converter.py),
+  [LibreOffice CLI](https://help.libreoffice.org/latest/en-US/text/shared/guide/start_parameters.html),
+  [F2LLM](https://huggingface.co/codefuse-ai/F2LLM-v2-0.6B).

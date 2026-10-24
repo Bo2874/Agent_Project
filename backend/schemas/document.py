@@ -38,6 +38,7 @@ class DocumentResponse(BaseModel):
     error_code: str | None
     error_message: str | None
     ready_for_qa: bool
+    awaiting_embedding: bool = False
     deduplicated: bool = False
     created_at: datetime
     updated_at: datetime
@@ -75,6 +76,12 @@ class DocumentDeleteResponse(BaseModel):
     id: UUID
     status: Literal["deleting"] = "deleting"
     message: str = "Tài liệu đã ngừng cho phép truy cập và đang được dọn dữ liệu."
+
+
+class DocumentCancelResponse(BaseModel):
+    id: UUID
+    status: Literal["cancel_requested", "cancelled"]
+    message: str
 
 
 class ConversationDocumentSelection(BaseModel):

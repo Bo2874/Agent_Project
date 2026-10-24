@@ -63,7 +63,11 @@ Package source nằm tại `/app` để đường dẫn templates/static/skills/
 
 - `postgres_data`: PG data, users/chat/memory/jobs/checkpoint; chỉ postgres mount volume này.
 - `document_data`: volume riêng tại `/app/data/documents`, app/worker cùng UID để đọc/ghi.
-  Đây là phần chuẩn bị storage; chưa triển khai upload/RAG của M3.
+  Lưu upload/bản trích text riêng theo user và vùng tạm ingestion, không public qua static.
+- `document_model_cache`: chỉ worker mount tại `/app/data/models`; cache tokenizer F2LLM và model
+  layout/table của Docling. Image worker cài extra `ingestion` (PyTorch CPU) và LibreOffice Writer;
+  app/migrate không cài bộ parser này. Build image không tải model weights; lần xử lý đầu cần mạng
+  để điền cache. Chưa nối embedding/retrieval, file chia chunk xong vẫn chưa sẵn sàng hỏi đáp.
 - Root filesystem app/worker read-only; `/tmp` là tmpfs riêng, có quota 64 MiB.
   Không bind mount source, host `.env`, `.venv` hoặc Docker socket vào runtime.
 - `.dockerignore` dùng allow-list; build context chỉ nhận code/assets cần thiết, không nhận
@@ -76,6 +80,14 @@ Không đặt `container_name` hoặc tên volume cố định. `--project-name`
 container/network/volume, dùng được cho nhiều lần thử mà không đụng PostgreSQL trên Windows.
 Thay `DEV_DB_*` sau khi đã tạo volume không tự đổi role/password/database bên trong PostgreSQL;
 cần migration/quản lý DB tương ứng hoặc dùng một project mới cho dữ liệu dev mới.
+
+Nếu chạy Python trực tiếp trên Windows, cài dependency worker bằng
+`.tools\uv\bin\uv.exe sync --locked --extra dev --extra ingestion`, cài LibreOffice Writer riêng
+và đặt `DOCUMENT_LIBREOFFICE_PATH=C:/Program Files/LibreOffice/program/soffice.com` nếu chưa có
+`soffice` trong PATH. Chạy worker bằng `.venv\Scripts\python.exe -m scripts.run_background_worker`.
+Các giá trị quota/timeout/bộ nhớ/page/chunk và cache model có trong `.env.example`; không đưa secret
+DB/mail/provider vào tiến trình parser. Parser chạy tách process, bị dừng khi timeout/vượt RSS/hủy;
+đây không phải sandbox hệ điều hành để thực thi tài liệu tùy ý. OCR tắt.
 
 ## Kiểm tra startup offline
 

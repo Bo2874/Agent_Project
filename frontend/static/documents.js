@@ -10,6 +10,14 @@
   const processing = new Set(["queued", "parsing", "chunking", "embedding", "indexing", "deleting"]);
   const limit = 20;
 
+  function stateLabel(item) {
+    return item.status === "embedding" && item.awaiting_embedding ? "Đã trích xuất và chia nội dung, chưa sẵn sàng hỏi đáp" : labels[item.status] || item.status;
+  }
+
+  function needsRefresh(item) {
+    return processing.has(item.status) && !(item.status === "embedding" && item.awaiting_embedding);
+  }
+
   function node(tag, className, text) {
     const element = document.createElement(tag);
     if (className) element.className = className;
@@ -143,7 +151,11 @@
     title.title = item.original_filename;
     const date = new Date(item.created_at).toLocaleDateString("vi-VN");
     info.append(title, node("span", "document-meta", `${item.file_type.toUpperCase()} · ${bytes(item.file_size_bytes)} · ${date}`));
-    info.append(node("span", `document-state status-${item.status}`, labels[item.status] || item.status));
+    info.append(node("span", `document-state status-${item.status}`, stateLabel(item)));
+    if (item.chunk_count) info.append(node("span", "document-meta", `${item.chunk_count} đoạn nội dung`));
+    for (const warning of item.warnings || []) {
+      if (warning.message) info.append(node("span", "document-meta", warning.message));
+    }
     if (item.error_message) info.append(node("span", "document-error", item.error_message));
     return info;
   }
@@ -178,6 +190,22 @@
       try {
         await request(`/api/documents/${item.id}`, { method: "DELETE" });
         message(find("upload-status"), "Đã ngừng truy cập tài liệu. Hệ thống đang dọn file và giải phóng dung lượng.");
+      } catch (error) {
+        message(find("upload-status"), error.message, true);
+      } finally {
+        await refresh();
+        busy = false;
+        controls();
+      }
+    }
+
+    async function changeProcessing(item, action) {
+      if (busy) return;
+      busy = true;
+      controls();
+      try {
+        await request(`/api/documents/${item.id}/${action}`, { method: "POST" });
+        message(find("upload-status"), action === "cancel" ? "Đã yêu cầu dừng xử lý tài liệu." : "Đã đưa tài liệu vào hàng đợi xử lý lại.");
       } catch (error) {
         message(find("upload-status"), error.message, true);
       } finally {
@@ -225,6 +253,11 @@
             const download = node("a", "ghost-button", "Tải xuống");
             download.href = `/api/documents/${item.id}/download`;
             actions.append(download);
+            if (["uploaded", "failed", "cancelled"].includes(item.status)) {
+              actions.append(button(item.status === "uploaded" ? "Xử lý" : "Thử lại", () => changeProcessing(item, "retry")));
+            } else if (needsRefresh(item)) {
+              actions.append(button("Dừng xử lý", () => changeProcessing(item, "cancel")));
+            }
           }
           const removeButton = button(item.status === "deleting" ? "Yêu cầu xóa lại" : "Xóa", () => remove(item), "document-text-button document-delete");
           removeButton.setAttribute("aria-label", `Xóa tài liệu ${item.original_filename}`);
@@ -263,7 +296,7 @@
     next.addEventListener("click", () => { if (!next.disabled) { offset += limit; void refresh(); } });
     const timer = window.setInterval(() => {
       if (!document.hidden && !busy && list.getAttribute("aria-busy") !== "true"
-          && items.some((item) => processing.has(item.status))) void refresh();
+          && items.some(needsRefresh)) void refresh();
     }, 5000);
     window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });
     document.addEventListener("visibilitychange", () => { if (!document.hidden && !busy) void refresh(); });
@@ -284,6 +317,7 @@
     let busy = false;
     let externalDisabled = false;
     let generation = 0;
+    let scopeGeneration = 0;
     let draft = new Set();
     let offset = 0;
     let total = 0;
@@ -315,27 +349,28 @@
       find("count").textContent = scopeKnown ? `${items.length} file được chọn` : "Chưa tải được lựa chọn";
       for (const item of items) {
         const chip = node("div", `document-chip status-${item.status}`);
-        chip.title = `${item.original_filename} · ${labels[item.status] || item.status}`;
+        chip.title = `${item.original_filename} · ${stateLabel(item)}`;
         const name = node("span", "document-chip-name", item.original_filename);
         const remove = button("×", () => saveSelection(items.filter((other) => other.id !== item.id).map((other) => other.id)), "document-text-button");
         remove.setAttribute("aria-label", `Bỏ chọn ${item.original_filename} khỏi hội thoại`);
-        chip.append(name, node("small", "", labels[item.status] || item.status), remove);
+        chip.append(name, node("small", "", stateLabel(item)), remove);
         find("chips").append(chip);
       }
       controls();
     }
 
     async function loadScope(id, current, preserveStatus = false) {
+      const scopeRequest = ++scopeGeneration;
       try {
         const data = await request(`/api/conversations/${id}/documents`);
-        if (current !== generation || id !== conversationId) return false;
+        if (current !== generation || id !== conversationId || scopeRequest !== scopeGeneration) return false;
         items = data.items;
         scopeKnown = true;
         render();
         if (!preserveStatus) message(status, items.length ? "File đã lưu. Các file chưa sẵn sàng sẽ chưa dùng để hỏi đáp." : "Chưa chọn tài liệu. Tải file hoặc chọn lại từ thư viện của bạn.");
         return true;
       } catch (error) {
-        if (current !== generation || id !== conversationId) return false;
+        if (current !== generation || id !== conversationId || scopeRequest !== scopeGeneration) return false;
         scopeKnown = false;
         items = [];
         render();
@@ -355,6 +390,7 @@
     async function saveSelection(ids) {
       if (busy || externalDisabled || !conversationId) return;
       const id = conversationId;
+      ++scopeGeneration;
       busy = true;
       notify();
       try {
@@ -441,6 +477,7 @@
       if (!fileInput.files.length || busy || externalDisabled || !conversationId) return;
       const files = Array.from(fileInput.files);
       const id = conversationId;
+      ++scopeGeneration;
       busy = true;
       notify();
       try { await uploadFiles(files, id, find("progress"), status); }
@@ -466,6 +503,15 @@
     picker("prev").addEventListener("click", () => { if (!picker("prev").disabled) { offset = Math.max(0, offset - limit); void loadPicker(); } });
     picker("next").addEventListener("click", () => { if (!picker("next").disabled) { offset += limit; void loadPicker(); } });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) void refreshScope(); });
+    let polling = false;
+    const timer = window.setInterval(async () => {
+      if (document.hidden || polling || busy || externalDisabled || dialog.open || !conversationId
+          || !items.some(needsRefresh)) return;
+      polling = true;
+      try { await loadScope(conversationId, generation, true); }
+      finally { polling = false; }
+    }, 5000);
+    window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });
     controls();
     return {
       setDisabled(value) { externalDisabled = value; controls(); },

@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from backend.background.queue import ClaimedJob, PostgresJobQueue
+from backend.background.queue import BackgroundJobOwnershipError, ClaimedJob, PostgresJobQueue
 
 logger = logging.getLogger(__name__)
 _JOB_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,79}$")
@@ -116,6 +116,14 @@ class BackgroundWorker:
         return True
 
     async def _execute(self, job: ClaimedJob) -> None:
+        try:
+            await self._execute_owned(job)
+        except BackgroundJobOwnershipError:
+            logger.warning(
+                "Background job %s không còn thuộc worker này; dừng ghi kết quả.", job.id
+            )
+
+    async def _execute_owned(self, job: ClaimedJob) -> None:
         handler = self.registry.get(job.job_type)
         if handler is None:
             await self.queue.fail(
@@ -129,6 +137,8 @@ class BackgroundWorker:
             result = await self._run_with_control(handler, context, job.payload)
             if not isinstance(result, dict):
                 raise TypeError("Background handler phải trả object")
+        except BackgroundJobOwnershipError:
+            raise
         except JobCancellationRequested:
             await self.queue.cancel_running(job)
             return

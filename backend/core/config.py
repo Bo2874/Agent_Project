@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     document_max_documents: int = Field(default=1000, ge=1, le=100000)
     document_max_unpacked_bytes: int = Field(default=100 * 1024 * 1024, ge=1024)
     document_max_archive_entries: int = Field(default=2000, ge=2, le=10000)
+    document_max_pages: int = Field(default=500, ge=1, le=2000)
+    document_max_text_chars: int = Field(default=5_000_000, ge=1000, le=20_000_000)
+    document_max_chunks: int = Field(default=20_000, ge=1, le=50_000)
+    document_max_artifact_bytes: int = Field(
+        default=128 * 1024 * 1024, ge=1024, le=512 * 1024 * 1024
+    )
+    document_process_timeout_seconds: float = Field(default=600, ge=30, le=3600)
+    document_process_memory_mb: int = Field(default=4096, ge=512, le=32768)
+    document_libreoffice_path: str = "soffice"
+    document_model_cache_path: Path = PROJECT_ROOT / "data/models"
+    document_embedding_revision: str = Field(default="main", min_length=1, max_length=160)
     db_host: str = "localhost"
     db_port: int = 5432
     db_name: str = "personal_agent_db"
