@@ -657,7 +657,8 @@ thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế n
   Chưa có dịch vụ upload/quota, query filter quyền, kiểm tra ready khi publish và handler ingestion.
 - [x] M3.2: Storage và API upload/list/status/download/delete, ownership/quota và kiểm tra container file.
   Code hoàn thành ngày 2026-10-24; đã kiểm tra cú pháp/import/OpenAPI/lint/lock, chưa test chức năng.
-- [ ] M3.3: Thư viện trên web, upload/chọn file trong hội thoại, giữ scope khi mở lại.
+- [x] M3.3: Thư viện trên web, upload/chọn file trong hội thoại, giữ scope khi mở lại.
+  Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa nghiệm thu chức năng trên web.
 - [ ] M3.4: Worker ingestion, parse/chuẩn hóa/chunk có nguồn; trạng thái, retry và cancel.
 - [ ] M3.5: Embedding F2LLM, lexical index và retrieval lọc owner/document/active version.
 - [ ] M3.6: Hybrid/RRF, Qwen rerank, LLM rewrite và đóng gói evidence theo budget.
@@ -685,7 +686,22 @@ có retry I/O, chờ ingestion đang chạy dừng và cho phép yêu cầu dele
 Không tạo queue ingestion khi chưa có handler: upload còn `uploaded`, `ready_for_qa=false`.
 Full PDF parse/page limit/encryption/scan coverage và OCR chưa có; chuyển sang M3.4 (OCR vẫn để sau).
 Dependency nhỏ thêm trực tiếp: `olefile`, `defusedxml`; không tải model/Docling/LibreOffice ở bước này.
-Chưa áp dụng migration hoặc chạy API/test với database thật. Chưa có UI thư viện; tiếp theo M3.3.
+Trong M3.2 chưa áp dụng migration hoặc chạy API/test với database thật.
+
+M3.3: thêm `frontend/templates/documents.html`, `frontend/static/documents.js` và trang `/documents`
+có đăng nhập; liên kết từ dashboard/chat. Thư viện có upload nhiều file lần lượt, tiến độ truyền file,
+quota, lọc tên/type/status, phân trang, tải xuống và xóa. Xóa trả trạng thái đang dọn; dung lượng
+chỉ giảm sau khi worker cleanup hoàn tất. File upload hiện còn `uploaded`, chưa sẵn sàng hỏi đáp.
+Trong chat có upload đồng thời gắn file, chọn lại file cũ qua hộp chọn có lọc/phân trang, bỏ chọn
+và làm mới. Lựa chọn lưu trong `conversation_documents`, được đọc lại khi chuyển/mở hội thoại;
+không xóa file thư viện khi bỏ chọn hoặc xóa hội thoại. Bổ sung GET/PUT
+`/api/conversations/{conversation_id}/documents`, kiểm tra owner của hội thoại và toàn bộ file
+trước khi thay đổi danh sách trong một transaction. Chặn đổi lựa chọn khi có AgentRun đang hoạt động;
+UI khóa gửi/chuyển/xóa hội thoại trong lúc upload/lưu lựa chọn hoặc mở hộp chọn.
+Không dùng dòng nhắc cố định dưới ô chat để hiển thị trạng thái tài liệu. Chưa nối scope vào JEV,
+retrieval hoặc prompt: việc nối nhánh document_qa làm ở M3.7. Chỉ kiểm tra cú pháp Python/JS/Jinja,
+lint/format, import/OpenAPI và biên dịch SQL offline; chưa gọi API/DB, áp dụng migration hoặc test UI.
+Tiếp theo M3.4: worker ingestion, parse/chuẩn hóa và chunk có nguồn theo thiết kế đã chốt.
 
 **Upload và ingestion**
 

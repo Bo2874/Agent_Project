@@ -67,6 +67,18 @@ async def memories_page(request: Request, user: OptionalUser) -> Response:
     )
 
 
+@router.get("/documents", response_class=HTMLResponse)
+async def documents_page(request: Request, user: OptionalUser) -> Response:
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse(
+        request=request,
+        name="documents.html",
+        context={"user": user},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request, user: OptionalUser) -> Response:
     if user is None:

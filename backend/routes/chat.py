@@ -48,6 +48,7 @@ from backend.schemas.chat import (
     ToolApprovalDecision,
     ToolApprovalResponse,
 )
+from backend.schemas.document import ConversationDocumentSelection, ConversationDocumentsResponse
 from backend.services.agent_runs import (
     AgentRunRecorder,
     AgentRunResumeError,
@@ -66,6 +67,7 @@ from backend.services.chat import (
     list_conversations,
     list_messages,
 )
+from backend.services.documents import get_conversation_documents, set_conversation_documents
 from backend.services.history_compression import prepare_history_context
 from backend.services.langgraph_checkpoints import get_langgraph_checkpointer
 from backend.services.langgraph_memory_store import (
@@ -479,6 +481,23 @@ async def get_conversation_messages(
         )
     messages = await list_messages(session, conversation.id)
     return [MessageResponse.model_validate(item) for item in messages]
+
+
+@router.get("/{conversation_id}/documents", response_model=ConversationDocumentsResponse)
+async def get_selected_documents(
+    conversation_id: UUID, session: DbSession, user: CurrentUser
+) -> ConversationDocumentsResponse:
+    return await get_conversation_documents(session, user.id, conversation_id)
+
+
+@router.put("/{conversation_id}/documents", response_model=ConversationDocumentsResponse)
+async def put_selected_documents(
+    conversation_id: UUID,
+    data: ConversationDocumentSelection,
+    session: DbSession,
+    user: CurrentUser,
+) -> ConversationDocumentsResponse:
+    return await set_conversation_documents(session, user.id, conversation_id, data.document_ids)
 
 
 @router.get("/{conversation_id}/runs", response_model=list[AgentRunTimelineResponse])

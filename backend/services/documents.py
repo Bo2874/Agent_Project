@@ -16,6 +16,7 @@ from starlette.datastructures import UploadFile
 from backend.core.config import Settings, get_settings
 from backend.database import SessionFactory
 from backend.models import (
+    AgentRun,
     BackgroundJob,
     Conversation,
     ConversationDocument,
@@ -25,6 +26,7 @@ from backend.models import (
     User,
 )
 from backend.schemas.document import (
+    ConversationDocumentsResponse,
     DocumentDeleteResponse,
     DocumentDetailResponse,
     DocumentListResponse,
@@ -208,14 +210,7 @@ async def _attach(
 ) -> None:
     if conversation_id is None:
         return
-    # Same lock order as conversation deletion; the FK enforces ownership as well.
-    conversation = await session.scalar(
-        select(Conversation.id)
-        .where(Conversation.id == conversation_id, Conversation.user_id == owner)
-        .with_for_update()
-    )
-    if conversation is None:
-        raise DocumentServiceError("Không tìm thấy hội thoại.", code="conversation_not_found")
+    await _lock_conversation(session, owner, conversation_id)
     existing = await session.get(ConversationDocument, (conversation_id, document_id))
     if existing is None:
         session.add(
@@ -223,6 +218,95 @@ async def _attach(
                 conversation_id=conversation_id, document_id=document_id, owner_user_id=owner
             )
         )
+
+
+async def _lock_conversation(session: AsyncSession, owner: UUID, conversation_id: UUID) -> None:
+    conversation = await session.scalar(
+        select(Conversation.id)
+        .where(Conversation.id == conversation_id, Conversation.user_id == owner)
+        .with_for_update()
+    )
+    if conversation is None:
+        raise DocumentServiceError("Không tìm thấy hội thoại.", code="conversation_not_found")
+    active = await session.scalar(
+        select(AgentRun.id)
+        .where(
+            AgentRun.conversation_id == conversation_id,
+            AgentRun.status.in_(("queued", "running", "waiting_approval")),
+        )
+        .limit(1)
+    )
+    if active is not None:
+        raise DocumentServiceError(
+            "Hội thoại đang xử lý. Hãy đợi hoàn tất rồi thay đổi tài liệu.",
+            status_code=409,
+            code="conversation_busy",
+        )
+
+
+async def get_conversation_documents(
+    session: AsyncSession, owner: UUID, conversation_id: UUID
+) -> ConversationDocumentsResponse:
+    conversation = await session.scalar(
+        select(Conversation.id).where(
+            Conversation.id == conversation_id, Conversation.user_id == owner
+        )
+    )
+    if conversation is None:
+        raise DocumentServiceError("Không tìm thấy hội thoại.", code="conversation_not_found")
+    rows = (
+        await session.execute(
+            _library_query(owner)
+            .join(ConversationDocument, ConversationDocument.document_id == Document.id)
+            .where(
+                ConversationDocument.conversation_id == conversation_id,
+                ConversationDocument.owner_user_id == owner,
+                Document.deleted_at.is_(None),
+                Document.status != "deleting",
+            )
+            .order_by(ConversationDocument.created_at, Document.id)
+        )
+    ).all()
+    return ConversationDocumentsResponse(
+        conversation_id=conversation_id,
+        items=[_view(document, version) for document, version in rows],
+    )
+
+
+async def set_conversation_documents(
+    session: AsyncSession, owner: UUID, conversation_id: UUID, document_ids: list[UUID]
+) -> ConversationDocumentsResponse:
+    await _lock_owner(session, owner)
+    await _lock_conversation(session, owner, conversation_id)
+    if document_ids:
+        available = (
+            await session.scalars(
+                select(Document.id).where(
+                    Document.id.in_(document_ids),
+                    Document.owner_user_id == owner,
+                    Document.deleted_at.is_(None),
+                    Document.status != "deleting",
+                )
+            )
+        ).all()
+        if set(available) != set(document_ids):
+            raise DocumentServiceError("Một số tài liệu không còn khả dụng.")
+    await session.execute(
+        delete(ConversationDocument).where(
+            ConversationDocument.conversation_id == conversation_id,
+            ConversationDocument.owner_user_id == owner,
+        )
+    )
+    session.add_all(
+        [
+            ConversationDocument(
+                conversation_id=conversation_id, document_id=identifier, owner_user_id=owner
+            )
+            for identifier in document_ids
+        ]
+    )
+    await session.commit()
+    return await get_conversation_documents(session, owner, conversation_id)
 
 
 async def upload_document(

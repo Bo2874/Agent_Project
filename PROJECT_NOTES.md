@@ -311,3 +311,29 @@
   Cài olefile 0.47 theo uv.lock, khai báo trực tiếp defusedxml 0.7.1; không tải model ở bước này.
   Kiểm tra cú pháp/import/OpenAPI/lint/lock; chưa chạy test chức năng, gọi API/DB, áp dụng migration
   hoặc tạo test/fixture/báo cáo. User sẽ kiểm tra tay sau; tiếp theo làm M3.3 UI thư viện/upload/chọn file.
+- M3.3 (2026-10-24): thêm trang thư viện riêng `/documents` có đăng nhập, liên kết từ dashboard/chat;
+  tạo `frontend/templates/documents.html` và `frontend/static/documents.js`, cập nhật template chat,
+  dashboard, CSS và chat.js. Không tạo tài liệu hoặc file kiểm thử riêng cho đợt này.
+- Thư viện hỗ trợ upload nhiều file lần lượt bằng API M3.2, tiến độ truyền file thực qua XHR,
+  quota/giới hạn mỗi file lấy từ server, tìm tên/lọc định dạng/trạng thái, phân trang và tải xuống.
+  Hiển thị trung thực `uploaded`: file đã lưu nhưng chưa sẵn sàng hỏi đáp; chưa enqueue ingestion.
+  Sau upload/delete làm mới danh sách và dung lượng; chỉ tự làm mới định kỳ khi có trạng thái đang
+  xử lý/đang xóa. File đang xóa vẫn hiển thị và tính quota cho đến khi worker cleanup dọn xong.
+- Upload trong chat đồng thời lưu vào thư viện và gắn vào hội thoại. Hộp chọn thư viện có tìm tên,
+  lọc type và phân trang; giữ lựa chọn nháp qua các trang, chỉ áp dụng khi bấm lưu. Hủy hộp chọn không
+  đổi lựa chọn; bỏ chọn file khỏi chat không xóa file thư viện. Chip file có thanh cuộn giới hạn chiều
+  cao; trạng thái upload/lỗi có vùng riêng, không ghi đè dòng nhắc cố định bên dưới ô nhập chat.
+- Bổ sung GET/PUT `/api/conversations/{conversation_id}/documents` trong routes/chat.py, schema
+  ConversationDocumentSelection/ConversationDocumentsResponse và service đọc/lưu lựa chọn.
+  Scope được lưu bền trong conversation_documents và tải lại khi chuyển hoặc mở lại hội thoại.
+  API không nhận owner từ client, kiểm tra hội thoại và tất cả file thuộc user, bỏ file đã thu hồi;
+  nếu có file không khả dụng thì không thay đổi một phần danh sách. Giới hạn 1.000 ID, từ chối ID trùng.
+- Lưu lựa chọn/upload gắn hội thoại dùng khóa user rồi conversation, kiểm tra AgentRun đang hoạt động
+  và trả 409 nếu hội thoại bận. UI khóa gửi tin/chuyển/tạo/xóa hội thoại khi upload/lưu hoặc mở hộp chọn;
+  khóa thao tác tài liệu trong lúc stream. Xóa file thư viện thu hồi liên kết ở mọi hội thoại theo API
+  M3.2; xóa hội thoại chỉ cascade liên kết, giữ tài liệu thư viện. Lỗi/mất phản hồi không tự gửi lại
+  upload/PUT/delete; làm mới để đọc trạng thái server, tránh nhân đôi tác vụ do retry mù.
+- Kiểm tra cú pháp JS bằng node --check, Python/Jinja, Ruff lint/format, import/OpenAPI và biên dịch
+  truy vấn PostgreSQL offline. Chưa chạy test chức năng, mở web, gọi API/DB, áp dụng migration hoặc
+  tải model; không sửa .env và không thêm dependency. Chưa nối file được chọn vào JEV/LLM/retrieval.
+  Tiếp theo M3.4: worker ingestion, parser/chuẩn hóa/chunk có nguồn; người dùng tự test trực quan sau.

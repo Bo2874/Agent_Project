@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DocumentStatus = Literal[
     "uploaded",
@@ -75,3 +75,20 @@ class DocumentDeleteResponse(BaseModel):
     id: UUID
     status: Literal["deleting"] = "deleting"
     message: str = "Tài liệu đã ngừng cho phép truy cập và đang được dọn dữ liệu."
+
+
+class ConversationDocumentSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    document_ids: list[UUID] = Field(max_length=1000)
+
+    @field_validator("document_ids")
+    @classmethod
+    def unique_documents(cls, value: list[UUID]) -> list[UUID]:
+        if len(value) != len(set(value)):
+            raise ValueError("Danh sách tài liệu không được trùng lặp.")
+        return value
+
+
+class ConversationDocumentsResponse(BaseModel):
+    conversation_id: UUID
+    items: list[DocumentResponse]

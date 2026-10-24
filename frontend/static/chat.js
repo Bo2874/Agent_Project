@@ -11,15 +11,18 @@ if (chatApp) {
   let activeConversationId = null;
   let conversationMutationPending = false;
   let streamInProgress = false;
+  let documentMutationPending = false;
+  let documentPanel = null;
 
   function updateConversationControls() {
-    const disabled = streamInProgress || conversationMutationPending;
+    const disabled = streamInProgress || conversationMutationPending || documentMutationPending;
     textarea.disabled = disabled;
     sendButton.disabled = disabled;
     chatApp.querySelector("[data-new-chat]").disabled = disabled;
     conversationList.querySelectorAll("button").forEach((button) => {
       button.disabled = disabled;
     });
+    documentPanel?.setDisabled(streamInProgress || conversationMutationPending);
   }
 
   function setBusy(isBusy) {
@@ -408,7 +411,7 @@ if (chatApp) {
   }
 
   async function selectConversation(conversation, refreshList = true) {
-    if (streamInProgress) return;
+    if (streamInProgress || documentMutationPending) return;
     activeConversationId = conversation.id;
     title.textContent = conversation.title;
     document.querySelectorAll(".conversation-item").forEach((item) => {
@@ -419,6 +422,7 @@ if (chatApp) {
     const [messages, runs] = await Promise.all([
       requestJson(`/api/conversations/${conversation.id}/messages`),
       requestJson(`/api/conversations/${conversation.id}/runs`),
+      documentPanel?.setConversation(conversation.id),
     ]);
     if (activeConversationId !== conversation.id) return;
     const runsByAssistantMessage = new Map(
@@ -610,5 +614,11 @@ if (chatApp) {
     }
   });
 
+  documentPanel = window.DocumentLibrary.createChatPanel(chatApp, {
+    onBusyChange(isBusy) {
+      documentMutationPending = isBusy;
+      updateConversationControls();
+    },
+  });
   loadConversations().catch((error) => showError(error.message));
 }

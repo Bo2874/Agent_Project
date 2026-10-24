@@ -27,6 +27,7 @@
                 <p class="chat-status" data-chat-status role="status" aria-live="polite"></p>
             </div>
             <div class="chat-header-actions">
+                <a class="model-pill memory-link document-nav-link" href="/documents">Tài liệu</a>
                 <a class="model-pill memory-link plugin-nav-link" href="/plugins">Plugins</a>
                 <a class="model-pill memory-link" href="/memories">Bộ nhớ</a>
                 <span class="model-pill">{{ model_name }}</span>
@@ -42,6 +43,46 @@
         </div>
 
         <div class="composer-wrap">
+            <section class="chat-documents" data-chat-documents aria-label="Tài liệu trong hội thoại">
+                <div class="chat-document-actions">
+                    <button class="ghost-button" type="button" data-chat-document-upload disabled>＋ Tải file</button>
+                    <button class="ghost-button" type="button" data-chat-document-choose disabled>Chọn từ thư viện</button>
+                    <button class="document-text-button" type="button" data-chat-document-refresh disabled aria-label="Làm mới tài liệu">↻</button>
+                    <span data-chat-document-count>Đang tải tài liệu…</span>
+                </div>
+                <input type="file" accept=".pdf,.doc,.docx,.txt" multiple hidden data-chat-document-files aria-label="File tải vào hội thoại">
+                <div class="chat-document-chips" data-chat-document-chips></div>
+                <progress max="100" value="0" hidden data-chat-document-progress aria-label="Tiến độ tải file"></progress>
+                <p class="document-status" data-chat-document-status role="status" aria-live="polite"></p>
+                <dialog class="document-picker" data-document-picker aria-labelledby="document-picker-title">
+                    <div class="document-picker-shell">
+                        <header><h2 id="document-picker-title">Chọn tài liệu cho hội thoại</h2>
+                            <button class="document-text-button" type="button" data-picker-close aria-label="Đóng">×</button>
+                        </header>
+                        <p class="document-hint">Bạn có thể chọn file chưa xử lý xong. File chỉ dùng để hỏi đáp khi sẵn sàng.</p>
+                        <form class="document-filters" data-picker-filters role="search">
+                            <input name="q" type="search" placeholder="Tìm tên file…" maxlength="255" aria-label="Tìm tài liệu">
+                            <select name="file_type" aria-label="Định dạng tài liệu">
+                                <option value="">Mọi định dạng</option><option value="pdf">PDF</option>
+                                <option value="doc">DOC</option><option value="docx">DOCX</option><option value="txt">TXT</option>
+                            </select>
+                            <button class="ghost-button" type="submit">Tìm</button>
+                        </form>
+                        <p class="document-status" data-picker-status role="status" aria-live="polite"></p>
+                        <div class="document-picker-list" data-picker-list></div>
+                        <div class="document-pagination">
+                            <button class="ghost-button" type="button" data-picker-prev>Trước</button>
+                            <span data-picker-page></span>
+                            <button class="ghost-button" type="button" data-picker-next>Sau</button>
+                        </div>
+                        <footer>
+                            <button class="document-text-button" type="button" data-picker-clear>Bỏ chọn tất cả</button>
+                            <span data-picker-count></span>
+                            <button class="ghost-button" type="button" data-picker-save>Lưu lựa chọn</button>
+                        </footer>
+                    </div>
+                </dialog>
+            </section>
             <form class="composer" data-message-form>
                 <textarea name="content" rows="1" maxlength="12000" placeholder="Nhắn cho Personal Agent…" required></textarea>
                 <button type="submit" aria-label="Gửi tin nhắn">↑</button>
@@ -51,5 +92,6 @@
     </section>
 </main>
 <script src="{{ url_for('static', path='/markdown.js') }}" defer></script>
+<script src="{{ url_for('static', path='/documents.js') }}" defer></script>
 <script src="{{ url_for('static', path='/chat.js') }}" defer></script>
 {% endblock %}

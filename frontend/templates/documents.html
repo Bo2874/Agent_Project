@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Tài liệu của bạn · Personal Agent{% endblock %}
+{% block body %}
+<main class="shell documents-page" data-documents-page>
+    <nav>
+        <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
+        <div class="nav-actions">
+            <a class="text-link" href="/chat">Trở lại chat</a>
+            <button class="ghost-button" data-logout>Đăng xuất</button>
+        </div>
+    </nav>
+    <header class="documents-hero">
+        <div>
+            <p class="eyebrow">Không gian riêng</p>
+            <h1>Tài liệu của bạn</h1>
+            <p class="lead">Lưu file một lần, chọn lại trong các hội thoại của bạn. Xóa hội thoại không xóa tài liệu.</p>
+        </div>
+        <div class="document-quota">
+            <span data-document-usage>Đang tải dung lượng…</span>
+            <progress data-document-quota max="1" value="0" aria-label="Dung lượng thư viện đã sử dụng"></progress>
+        </div>
+    </header>
+    <section class="document-upload-box">
+        <form data-document-upload-form>
+            <label for="library-files">Thêm tài liệu</label>
+            <p class="document-hint">PDF có text, Word DOC/DOCX và TXT. PDF scan cần OCR, sẽ được hỗ trợ sau.</p>
+            <div class="document-upload-controls">
+                <input id="library-files" type="file" accept=".pdf,.doc,.docx,.txt" multiple required>
+                <button class="ghost-button" type="submit">Tải lên thư viện</button>
+            </div>
+        </form>
+        <progress data-document-upload-progress max="100" value="0" hidden aria-label="Tiến độ tải file"></progress>
+        <p class="document-status" data-document-upload-status role="status" aria-live="polite"></p>
+    </section>
+    <form class="document-filters" data-document-filters role="search" aria-label="Lọc tài liệu">
+        <input name="q" type="search" placeholder="Tìm theo tên tài liệu…" maxlength="255" aria-label="Tên tài liệu">
+        <select name="file_type" aria-label="Định dạng">
+            <option value="">Mọi định dạng</option><option value="pdf">PDF</option>
+            <option value="doc">DOC</option><option value="docx">DOCX</option><option value="txt">TXT</option>
+        </select>
+        <select name="status" aria-label="Trạng thái">
+            <option value="">Mọi trạng thái</option><option value="uploaded">Đã lưu</option>
+            <option value="queued">Đang chờ</option><option value="parsing">Đang đọc</option>
+            <option value="chunking">Đang chuẩn bị nội dung</option><option value="embedding">Đang xử lý</option>
+            <option value="indexing">Đang hoàn tất</option><option value="ready">Sẵn sàng</option>
+            <option value="failed">Lỗi xử lý</option><option value="cancelled">Đã hủy</option>
+            <option value="deleting">Đang xóa</option>
+        </select>
+        <button class="ghost-button" type="submit">Tìm</button>
+        <button class="ghost-button" type="button" data-document-refresh>Làm mới</button>
+    </form>
+    <p class="document-status" data-document-list-status role="status" aria-live="polite"></p>
+    <section class="document-list" data-document-list aria-label="Danh sách tài liệu" aria-busy="true"></section>
+    <div class="document-pagination">
+        <button class="ghost-button" data-document-prev disabled>Trước</button>
+        <span data-document-page-info></span>
+        <button class="ghost-button" data-document-next disabled>Sau</button>
+    </div>
+</main>
+<script src="{{ url_for('static', path='/documents.js') }}" defer></script>
+{% endblock %}
