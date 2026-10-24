@@ -37,6 +37,10 @@ class AgentRun(Base):
             name="ck_agent_runs_context_trimmed_messages",
         ),
         CheckConstraint("resume_count >= 0", name="ck_agent_runs_resume_count"),
+        CheckConstraint(
+            "rag_trace IS NULL OR jsonb_typeof(rag_trace) = 'object'",
+            name="ck_agent_runs_rag_trace",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -68,6 +72,7 @@ class AgentRun(Base):
     loaded_tool_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resume_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rag_trace: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

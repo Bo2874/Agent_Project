@@ -153,3 +153,21 @@ class DocumentSearchResponse(BaseModel):
     evidence_estimated_tokens: int = 0
     evidence_token_budget: int | None = None
     budget_skipped_chunks: int = 0
+
+
+class DocumentCitationResponse(BaseModel):
+    message_id: UUID | None = None
+    citation_id: str
+    document_id: UUID
+    version_id: UUID
+    chunk_id: UUID
+    title: str
+    page_start: int | None = None
+    page_end: int | None = None
+    section: str | None = None
+    start_offset: int | None = None
+    end_offset: int | None = None
+
+
+class DocumentCitationSourceResponse(DocumentCitationResponse):
+    text: str

@@ -665,7 +665,8 @@ thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế n
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh/SQL offline, chưa chạy model hoặc database thật.
 - [x] M3.6: Hybrid/RRF, Qwen rerank, LLM rewrite và đóng gói evidence theo budget.
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy model/database hoặc test chức năng.
-- [ ] M3.7: Nhánh document_qa, hỏi nối tiếp/nhiều ý/tóm tắt có độ phủ, citation bền vững và UI mở nguồn.
+- [x] M3.7: Nhánh document_qa, hỏi nối tiếp/nhiều ý/tóm tắt có độ phủ, citation bền vững và UI mở nguồn.
+  Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy migration/model hoặc nghiệm thu web.
 - [ ] M3.8: Hoàn thiện delete/re-index/invalidation, user test tay trên web và sửa theo kết quả.
 
 M3.1 chỉ chuẩn bị schema, không bật RAG hoặc tự tải model. `document_ingestion_jobs` ghi tiến độ,
@@ -785,6 +786,43 @@ token rewrite đã báo được cộng quota kể cả JSON lỗi. Có callback
 search API không tạo message/run/citation giả. Lỗi rewrite/rerank trả lỗi rõ, không fallback âm thầm.
 Thêm config/env mẫu và Compose; dùng lại dependency embedding hiện có, không thêm thư viện.
 Chưa nối document_qa, chưa trả lời hoặc lưu citation/run trace bền vững; phần đó làm ở M3.7.
+
+M3.7: thêm `agent_core/rag/qa.py`, `backend/services/document_qa.py` và migration
+`20261024_0027_document_qa_trace.py` (cột JSONB rag_trace trên agent_runs). Sửa runner để nhánh
+document_qa gọi workflow LangGraph plan → retrieve → answer; nhánh chat/tool giữ workflow cũ.
+RAG cần V2_ENABLED, V2_ROUTING_ENABLED, V2_RAG_ENABLED và JEV active; Compose nhận
+DEV_V2_RAG_ENABLED, mặc định tắt. Không tự sửa .env private hoặc bật cờ deployment.
+
+JEV nhận thêm metadata file đang chọn (tối đa20 title/status, kèm tổng số), không nhận text file.
+Query routing policy 2.1; resume chat/tool đã pin policy 2.0 vẫn được hỗ trợ. Không tạo choice mới.
+QA có một call lập truy vấn: có recent history thì resolve tham chiếu/standalone query, không
+history giữ query chính nguyên văn; tách tối đa3 câu hỏi con, chọn qa hoặc summary. Dùng history
+owner-scoped/bounded M3.6, loại user message hiện tại để không gửi trùng; không rewrite thêm
+trong từng retrieval. Metadata plan tối đa20 file, title rút gọn, có cờ thông báo rút gọn.
+
+QA thường: chạy hybrid M3.6 cho từng câu hỏi con, xen kẽ kết quả/gộp chunk trùng rồi đóng evidence
+theo budget. Câu trả lời dùng query đã resolve/các ý/coverage và evidence; history không làm nguồn
+cho sự kiện tài liệu. Không cấp tool/Skill, không ghi tài liệu vào user memory.
+Tóm tắt: lấy mọi chunk của scope đã chọn, tối đa64 chunk; vừa context thì trả lời trực tiếp,
+không vừa thì notes theo batch và rút gọn nhiều tầng trước câu trả lời cuối. Mọi batch giữ label
+nguồn gốc; vượt chunk/call/token/time/context budget thì báo rõ yêu cầu thu hẹp, không thay bằng
+top-k rồi tuyên bố đã tóm tắt toàn bộ. Dùng budget Agent hiện có (mặc định8 call/20.000 token/120 giây).
+
+Output model JSON được kiểm schema và đối chiếu [S<number>]/sources với các chunk thực sự cấp
+trong context; từ chối nhãn lạ, URL gắn vào nhãn hoặc nguồn không khớp. Thiếu dữ kiện thì nói rõ,
+không tự suy diễn. Validation này kiểm cấu trúc/binding, chưa chứng minh ngữ nghĩa của từng claim.
+Chỉ phát câu trả lời sau validation; SSE timeline vẫn báo từng model call, không stream JSON thô.
+Recorder/quota chung ghi từng call và usage lỗi/hủy đã báo về. Trace lưu query gốc/plan/history
+counts, profiles/config retrieval, source references, coverage, usage và latency; không lưu text
+chunk đầy đủ vào trace. QA lỗi chưa có durable checkpoint để resume; user gửi lại câu hỏi.
+
+Câu trả lời/citation bindings được commit cùng transaction, kiểm lại owner/conversation/scope/
+active version dưới khóa owner → conversation → document. Citation gắn message/version/chunk,
+không dùng bản trích trôi nổi. API history trả metadata citation; API nguồn xác thực owner,
+private/no-store, trả text gốc/trang/mục/offset; bỏ chọn file vẫn mở citation cũ, xóa thư viện thì ẩn.
+Web có inline [S1], danh sách nguồn, dialog đoạn trích và tải file gốc đúng version; text qua DOM
+textContent. Chưa có OCR, trích ảnh hoặc highlight trực tiếp trong PDF viewer.
+Kiểm tra tĩnh/SQL offline, chưa áp dụng migration, gọi model/DB/API hoặc test browser. Tiếp theo M3.8.
 
 **Upload và ingestion**
 

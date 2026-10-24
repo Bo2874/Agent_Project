@@ -69,7 +69,7 @@ Package source nằm tại `/app` để đường dẫn templates/static/skills/
   Writer; app chỉ cài extra `embedding`, migrate giữ base dependency. Build không tải model weights;
   lần xử lý/tìm kiếm đầu cần mạng để điền cache. Model embedding chạy trong subprocess được tái sử dụng,
   mặc định batch 4, CPU float32, theo dõi RSS/timeout, không load model cho mỗi batch/query.
-  Worker công bố version ready sau khi đủ vector/FTS; nhánh trả lời document_qa chưa được nối ở M3.6.
+  Worker công bố version ready sau khi đủ vector/FTS; M3.7 đã nối nhánh document_qa có citation.
   Hybrid tìm 20 dense + 20 lexical, RRF rồi rerank tối đa 20 đoạn bằng Qwen3-Reranker-0.6B.
   Reranker có process/cache riêng, CPU float32, mặc định batch 1, 4 GiB RSS, 600 giây/request;
   embedding/reranker có thể cùng ở RAM nên giới hạn RSS từng process không phải RAM tổng app.
@@ -81,7 +81,17 @@ Package source nằm tại `/app` để đường dẫn templates/static/skills/
   budget history 2.000 token ước lượng và metadata file, không gửi toàn bộ tài liệu. Không history
   thì bỏ rewrite. Response chứa query rewrite, usage/latency, profile reranker và evidence budget.
   Token rewrite báo về được cộng quota hiện có, kể cả output lỗi; API search không tạo message/run.
-  Việc gắn trace vào run/citation bền vững và trả lời trong chat thuộc M3.7.
+  M3.7 lưu trace vào agent_runs.rag_trace (migration 0027), bind citation vào message/version/chunk
+  và cho phép mở nguồn từ chat, gồm cả khi tải lại hội thoại. API nguồn kiểm owner/private-no-store;
+  bỏ chọn file không xóa citation, xóa file thư viện thì không đọc nguồn đó được nữa.
+  Luồng chat cần DEV_V2_ENABLED=true, DEV_V2_ROUTING_ENABLED=true, DEV_V2_RAG_ENABLED=true,
+  JEV active và key provider hợp lệ. Các cờ vẫn mặc định false; không tự bật khi deploy.
+  QA lập tối đa3 câu hỏi con, dùng hybrid cho từng ý. Tóm tắt toàn file xử lý mọi chunk (tối đa64),
+  ghi notes theo batch/thu gọn khi cần; vượt giới hạn thì báo rõ, không tự đổi thành tóm tắt top-k.
+  QA dùng AGENT_MAX_STEPS/TOTAL_TOKENS/DURATION_SECONDS hiện có (mặc định8/20.000/120 giây).
+  Khi cache model còn lạnh hoặc tài liệu dài, giới hạn thời gian có thể cần tăng trong cấu hình
+  host trước đợt test; chưa có số đo runtime để chọn giá trị tối ưu. QA lỗi cần gửi lại câu hỏi,
+  chưa resume từ checkpoint. Câu trả lời phát sau khi kiểm JSON/nhãn nguồn, không phát JSON thô.
   Hướng dẫn scoring: [Qwen model card](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B).
 - Root filesystem app/worker read-only; `/tmp` là tmpfs riêng, có quota 64 MiB.
   Không bind mount source, host `.env`, `.venv` hoặc Docker socket vào runtime.

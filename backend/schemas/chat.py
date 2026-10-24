@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from backend.schemas.document import DocumentCitationResponse
+
 
 class ConversationCreate(BaseModel):
     title: str | None = Field(default=None, max_length=160)
@@ -53,6 +55,7 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     created_at: datetime
+    citations: list[DocumentCitationResponse] = Field(default_factory=list)
 
 
 class ToolCallTimelineResponse(BaseModel):

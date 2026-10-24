@@ -1408,3 +1408,49 @@ nav {
   .admin-metric-card { min-height: 138px; }
   .admin-metric-card p { margin-top: 22px; }
 }
+:root .citation-inline {
+  border: 0;
+  border-radius: 4px;
+  padding: 0 3px;
+  color: #2563eb;
+  background: #eff6ff;
+  cursor: pointer;
+  font: inherit;
+}
+
+.message-citations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.message-citations strong { width: 100%; font-size: 0.85rem; }
+.citation-source {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  text-align: left;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: #1d4ed8;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.citation-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: 85dvh;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  padding: 24px;
+}
+.citation-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+.citation-dialog h2 { overflow-wrap: anywhere; padding-right: 65px; }
+.citation-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
+.citation-close { float: right; }

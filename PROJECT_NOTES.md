@@ -510,3 +510,61 @@
   Nguồn đối chiếu:
   [Qwen template/scoring](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B),
   [Transformers Qwen3 logits_to_keep](https://github.com/huggingface/transformers/blob/v4.57.6/src/transformers/models/qwen3/modeling_qwen3.py).
+
+## 2026-10-24 — M3.7: document_qa, hỏi nối tiếp/nhiều ý/tóm tắt và citation trên web
+
+- Tiếp tục phần kế tiếp sau M3.6, giữ yêu cầu triển khai từng phần để user review/commit/push.
+  Không tạo/chạy test chức năng, fixture/eval hoặc browser test; không đọc/sửa secret .env.
+- Thêm 3 file: agent_core/rag/qa.py, backend/services/document_qa.py và migration
+  migrations/versions/20261024_0027_document_qa_trace.py. Migration thêm agent_runs.rag_trace JSONB
+  nullable với check object; chưa áp dụng DB. Sửa contract score_kind để có coverage cho full-scope
+  summary; không gán điểm coverage thành điểm cosine/rerank giả.
+- Sửa graph runner bằng handler tùy chọn cho document_qa; handler chạy LangGraph plan → retrieve
+  → answer, không có orchestration framework thứ hai. Chat/tool_task giữ workflow thực thi cũ,
+  planned_task vẫn stub. RAG chỉ hoạt động khi master/routing/rag flags bật và JEV active;
+  Compose đã nhận DEV_V2_RAG_ENABLED thay vì hard-code false, vẫn mặc định tắt.
+- JEV query input bổ sung title/status của tối đa20 file đang chọn và tổng số file, không truyền
+  nội dung tài liệu. Instruction nhắc có file không làm mọi query thành document_qa.
+  Query policy 2.1; giữ khả năng resume chat/tool checkpoint đã pin policy 2.0.
+- QA có call lập truy vấn JSON: lấy history owner-scoped/bounded từ M3.6, loại message hiện tại,
+  resolve tham chiếu khi có history, giữ query chính nguyên văn khi không history; tách tối đa3 ý
+  và chọn qa hoặc summary. Đây là call lập truy vấn ngay cả khi không history, khác API search
+  M3.6 vẫn bỏ call rewrite nếu không history. File metadata bounded20/title200 ký tự/cờ rút gọn.
+- QA thường chạy hybrid M3.6 cho từng ý với explicit document_ids; không đưa history vào lại
+  để tránh gọi rewrite lần hai. Xen kẽ kết quả của các ý, khử trùng chunk, đóng context theo budget;
+  lưu số evidence của từng ý để model nói rõ ý nào thiếu dữ liệu. Không dùng history làm nguồn
+  factual cho nội dung file và không trích memory từ nội dung tài liệu.
+- Summary đọc mọi chunk thuộc các active version trong scope, tối đa64; vượt giới hạn báo rõ
+  chọn ít file hơn/hỏi chủ đề cụ thể. Vừa RAG budget thì trả lời trực tiếp; không vừa thì chia batch,
+  model tạo notes có label nguồn, gộp/thu gọn nhiều tầng đến khi vừa rồi sinh câu trả lời cuối.
+  Giữ source labels của từng batch/note; coverage trace có loaded/processed chunk count và số tầng.
+  Không dùng top-k thay cho toàn file hoặc tự nhận tóm tắt đủ khi budget chặn xử lý.
+- Dùng budget/quota hiện có: max_steps (số call QA), max_total_tokens, max_duration_seconds;
+  mặc định8 call/20.000 token/120 giây. Vượt giới hạn trả lỗi rõ, usage thực đã báo vẫn được ghi.
+  Chưa đo độ trễ cold/warm cache, RAM, giới hạn tài liệu hay chất lượng đa ý/tóm tắt trên dữ liệu thật.
+- Model QA không nhận tool/Skill. Output JSON gồm answer/sources/answerable; validate schema
+  strict và nhãn [S<number>] phải khớp sources, nằm trong evidence đã cấp. Không cho nhãn citation
+  tự gắn URL. Thiếu dữ liệu thì không suy đoán, answerable=false/sources rỗng.
+  Đây là kiểm tra cấu trúc/binding, không phải evaluator chứng minh từng claim đúng ngữ nghĩa.
+  Chỉ phát answer sau validation; timeline SSE vẫn phát model started/completed/failed, không
+  đưa JSON chưa kiểm tra lên bubble. Chưa có durable QA checkpoint/resume; lỗi thì gửi lại câu hỏi.
+- Dùng AgentRunRecorder/ModelCall/RunStep và UsageCounter hiện có cho từng call, gồm token đã báo
+  khi output lỗi/hủy; cập nhật recorder để giữ usage ở model_failed và trạng thái cancelled.
+  Callback QA tự charge đúng một lần, không đi qua quota handler của vòng tool để tránh cộng đôi.
+  rag_trace lưu query/plan/history count, retrieval config/profile, evidence IDs/metadata, coverage,
+  usage/status/latency; không nhân bản text chunk đầy đủ vào trace. Không tạo billing store mới.
+- complete_agent_run mở rộng tùy chọn cho QA: khóa owner → conversation → document trước khi
+  tạo message, kiểm scope/active version/deleted; message, citation bindings, trace và trạng thái
+  completed cùng transaction. Nếu scope đổi thì rollback, không lưu answer/citation trộn version.
+- Citation ID S1/S2 là label riêng từng answer, binding lưu document/version/chunk/config version
+  cụ thể. API history trả metadata citation, source API đọc đúng binding và lọc owner cả conversation/
+  document/chunk; private/no-store. Query metadata không load vectors/text, chỉ source detail lấy text.
+  File bỏ chọn vẫn xem nguồn cũ, file thư viện bị xóa thì source 404; admin không có nhánh đọc chéo owner.
+- Web sửa chat.js/styles.css: inline citation button, danh sách nguồn, dialog text gốc/trang/mục,
+  tải file gốc đúng version; dùng DOM/textContent, không render HTML từ tên file/đoạn trích.
+  Reload hội thoại phục hồi citation metadata; nguồn bị xóa hiển thị lỗi mở nguồn rõ ràng.
+  Footer AI có thể mắc lỗi giữ nguyên; không in route/điểm debug. QA error không hiện nút resume giả.
+- Cập nhật PROJECT_PLAN.md/README Docker/env mẫu Compose. Chưa bật cờ runtime hoặc áp dụng
+  migration; chưa chạy LLM/JEV/embedding/Qwen/DB/API/UI, build Docker hoặc xử lý tài liệu thật.
+  Kiểm tra tĩnh: Ruff/Python AST/JS syntax/Compose YAML/import app/OpenAPI, migration chain head0027,
+  biên dịch SQL citation ownership/run trace offline. Người dùng tự test trực quan sau; tiếp theo M3.8.

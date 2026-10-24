@@ -33,6 +33,7 @@ from agent_core.skills import SkillRegistry, SkillSelectionConfig
 from agent_core.tools import ToolContext, ToolRegistry, ToolSelectionConfig
 from agent_core.tools.types import ToolAuthorizationError
 from backend.core.config import get_settings
+from backend.database import SessionFactory
 from backend.dependencies import CurrentUser, DbSession
 from backend.dependencies_decisions import DecisionProviderDependency
 from backend.dependencies_llm import ChatModelDependency
@@ -48,7 +49,12 @@ from backend.schemas.chat import (
     ToolApprovalDecision,
     ToolApprovalResponse,
 )
-from backend.schemas.document import ConversationDocumentSelection, ConversationDocumentsResponse
+from backend.schemas.document import (
+    ConversationDocumentSelection,
+    ConversationDocumentsResponse,
+    DocumentCitationResponse,
+    DocumentCitationSourceResponse,
+)
 from backend.services.agent_runs import (
     AgentRunRecorder,
     AgentRunResumeError,
@@ -67,7 +73,12 @@ from backend.services.chat import (
     list_conversations,
     list_messages,
 )
-from backend.services.documents import get_conversation_documents, set_conversation_documents
+from backend.services.document_qa import DocumentQAResult, message_citations, stream_document_qa
+from backend.services.documents import (
+    DocumentServiceError,
+    get_conversation_documents,
+    set_conversation_documents,
+)
 from backend.services.history_compression import prepare_history_context
 from backend.services.langgraph_checkpoints import get_langgraph_checkpointer
 from backend.services.langgraph_memory_store import (
@@ -261,6 +272,27 @@ async def stream_assistant_response(
 
     routing_flags = settings.v2_features
     plugin_stack = AsyncExitStack()
+    document_result = DocumentQAResult()
+    used_document_qa = False
+
+    async def document_qa_handler():
+        nonlocal used_document_qa
+        used_document_qa = True
+        async for item in stream_document_qa(
+            model=model,
+            owner=user_id,
+            conversation_id=conversation_id,
+            message_id=user_message_id,
+            query=user_message_content,
+            run_id=agent_run_id,
+            recorder=recorder,
+            quota_guard=quota_guard,
+            limits=limits,
+            context_budget=context_budget,
+            result=document_result,
+        ):
+            yield item
+
     try:
         if decision_provider is not None and hasattr(decision_provider, "bind_run"):
             try:
@@ -282,9 +314,19 @@ async def stream_assistant_response(
             and not getattr(decision_provider, "shadow", False)
         ):
             await quota_guard.before_execution("model")
+            selected_documents = []
+            if routing_flags.is_enabled("rag"):
+                async with SessionFactory() as document_session:
+                    selected = await get_conversation_documents(
+                        document_session, user_id, conversation_id
+                    )
+                    selected_documents = [
+                        {"title": doc.title[:200], "status": doc.status} for doc in selected.items
+                    ]
             query_decision = await route_query_with_jev(
                 query_messages if query_messages is not None else model_messages,
                 decision_provider,
+                selected_documents=selected_documents,
             )
         runtime = await plugin_stack.enter_async_context(
             plugin_runtime(registry, skill_registry, tool_context)
@@ -329,6 +371,7 @@ async def stream_assistant_response(
             decision_provider=decision_provider,
             query_routing_decision=query_decision,
             routing_messages=query_messages,
+            document_qa_handler=document_qa_handler if routing_flags.is_enabled("rag") else None,
         ):
             if isinstance(item, RoutingDecision):
                 yield sse_event("routing", {**item.model_dump(mode="json"), "resumed": resume})
@@ -356,11 +399,19 @@ async def stream_assistant_response(
             agent_run_id=agent_run_id,
             conversation_id=conversation_id,
             content=content,
+            document_result=document_result if used_document_qa else None,
+            document_owner=user_id if used_document_qa else None,
         )
         yield sse_event(
             "done",
             {
                 "message_id": str(message.id),
+                "citations": [
+                    hit.model_dump(mode="json", exclude={"text"})
+                    for hit in document_result.evidence
+                ]
+                if used_document_qa
+                else [],
                 "usage": {
                     "prompt_tokens": usage.prompt_tokens,
                     "completion_tokens": usage.completion_tokens,
@@ -379,6 +430,9 @@ async def stream_assistant_response(
             stop_reason="client_disconnected",
         )
         raise
+    except DocumentServiceError as exc:
+        await fail_agent_run(agent_run_id, "failed", exc.detail, stop_reason=exc.code)
+        yield sse_event("error", {"message": exc.detail, "code": exc.code, "resumable": False})
     except LLMConfigurationError as exc:
         await fail_agent_run(
             agent_run_id,
@@ -408,7 +462,9 @@ async def stream_assistant_response(
             str(exc),
             stop_reason=exc.code,
         )
-        yield sse_event("error", {"message": str(exc), "code": exc.code})
+        yield sse_event(
+            "error", {"message": str(exc), "code": exc.code, "resumable": not used_document_qa}
+        )
     except SelectionPolicyError as exc:
         await fail_agent_run(agent_run_id, "failed", str(exc), stop_reason=exc.code)
         yield sse_event("error", {"message": str(exc), "code": exc.code})
@@ -471,7 +527,7 @@ async def remove_conversation(
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
 async def get_conversation_messages(
-    conversation_id: UUID, session: DbSession, user: CurrentUser
+    conversation_id: UUID, session: DbSession, user: CurrentUser, response: Response
 ) -> list[MessageResponse]:
     conversation = await get_owned_conversation(session, conversation_id, user.id)
     if conversation is None:
@@ -480,7 +536,40 @@ async def get_conversation_messages(
             detail="Không tìm thấy hội thoại",
         )
     messages = await list_messages(session, conversation.id)
-    return [MessageResponse.model_validate(item) for item in messages]
+    response.headers["Cache-Control"] = "private, no-store"
+    citations = await message_citations(session, user.id, conversation.id, [m.id for m in messages])
+    by_message = {}
+    for citation in citations:
+        by_message.setdefault(citation["message_id"], []).append(
+            DocumentCitationResponse.model_validate(citation)
+        )
+    return [
+        MessageResponse.model_validate(item).model_copy(
+            update={"citations": by_message.get(item.id, [])}
+        )
+        for item in messages
+    ]
+
+
+@router.get(
+    "/{conversation_id}/messages/{message_id}/citations/{citation_id}",
+    response_model=DocumentCitationSourceResponse,
+)
+async def get_citation_source(
+    conversation_id: UUID,
+    message_id: UUID,
+    citation_id: str,
+    session: DbSession,
+    user: CurrentUser,
+    response: Response,
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    rows = await message_citations(
+        session, user.id, conversation_id, [message_id], source_id=citation_id
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Nguồn không còn khả dụng hoặc đã bị xóa.")
+    return rows[0]
 
 
 @router.get("/{conversation_id}/documents", response_model=ConversationDocumentsResponse)

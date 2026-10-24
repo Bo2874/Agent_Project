@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from time import perf_counter
@@ -250,6 +250,7 @@ async def run_agent_graph_stream(
     query_routing_decision: RoutingDecision | None = None,
     routing_messages: Sequence[ModelMessage] | None = None,
     shortlist_config: ShortlistConfig | None = None,
+    document_qa_handler: Callable[[], AsyncIterator[AgentStreamItem]] | None = None,
 ) -> AsyncIterator[AgentStreamItem | RoutingDecision]:
     """Execute model/tool turns with LangGraph as the only orchestrator."""
 
@@ -347,7 +348,7 @@ async def run_agent_graph_stream(
                 and routing_decision.policy_version == ROUTING_POLICY_VERSION
             ) or (
                 routing_decision.provider == "jev"
-                and routing_decision.policy_version == QUERY_POLICY_VERSION
+                and routing_decision.policy_version in {QUERY_POLICY_VERSION, "jev_query2.0.0"}
                 and decision_provider is not None
             )
             if (
@@ -414,6 +415,10 @@ async def run_agent_graph_stream(
                     raise
                 logger.warning("Shadow route trace unavailable; baseline execution continues")
         yield routing_decision
+        if routing_decision.route == "document_qa" and document_qa_handler is not None:
+            async for item in document_qa_handler():
+                yield item
+            return
         if routing_decision.route in {"document_qa", "planned_task"}:
             message = (
                 "Chức năng hỏi đáp theo tài liệu chưa sẵn sàng. "

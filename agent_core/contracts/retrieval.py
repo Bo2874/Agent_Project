@@ -27,7 +27,7 @@ class RetrievalResult(EvidenceReference):
     title: ShortText
     text: Annotated[StrictStr, Field(min_length=1, max_length=50_000)]
     score: Annotated[float, Field(strict=True)]
-    score_kind: Literal["similarity", "distance", "lexical", "fusion", "rerank"]
+    score_kind: Literal["similarity", "distance", "lexical", "fusion", "rerank", "coverage"]
     retrieval_config_version: Version
     page_start: PositiveInt | None = None
     page_end: PositiveInt | None = None

@@ -218,17 +218,23 @@ class AgentRunRecorder:
             run_step = await session.get(RunStep, step_id)
             model_call = await session.get(ModelCall, model_call_id)
             if run_step is not None:
-                run_step.status = "failed"
+                run_step.status = "cancelled" if event.finish_reason == "cancelled" else "failed"
                 run_step.summary = "Không thể nhận kết quả từ model."
                 run_step.finished_at = now
             if model_call is not None:
-                model_call.status = "failed"
+                model_call.status = "cancelled" if event.finish_reason == "cancelled" else "failed"
                 model_call.latency_ms = event.duration_ms
                 model_call.error_message = redact_text(
                     event.error_message or "Model call thất bại",
                     max_length=500,
                 )
                 model_call.finished_at = now
+                if event.usage is not None:
+                    model_call.prompt_tokens = event.usage.prompt_tokens
+                    model_call.completion_tokens = event.usage.completion_tokens
+                    model_call.total_tokens = event.usage.total_tokens
+                    model_call.cached_input_tokens = event.usage.cached_input_tokens
+                    model_call.cache_miss_input_tokens = event.usage.cache_miss_input_tokens
             await session.commit()
 
     async def _record_tool_started(self, event: AgentLoopEvent) -> None:
@@ -347,8 +353,19 @@ async def complete_agent_run(
     agent_run_id: UUID,
     conversation_id: UUID,
     content: str,
+    document_result=None,
+    document_owner: UUID | None = None,
 ) -> Message:
     async with SessionFactory() as session:
+        if document_result is not None:
+            from backend.services.document_qa import lock_document_answer_scope
+
+            await lock_document_answer_scope(
+                session,
+                owner=document_owner,
+                conversation_id=conversation_id,
+                result=document_result,
+            )
         assistant_message = Message(
             conversation_id=conversation_id,
             role="assistant",
@@ -356,11 +373,19 @@ async def complete_agent_run(
         )
         session.add(assistant_message)
         await session.flush()
+        if document_result is not None:
+            from backend.services.document_qa import bind_document_citations
+
+            await bind_document_citations(
+                session, message=assistant_message, owner=document_owner, result=document_result
+            )
 
         agent_run = await session.get(AgentRun, agent_run_id)
         if agent_run is None:
             raise RuntimeError("Không tìm thấy agent run")
         agent_run.status = "completed"
+        if document_result is not None:
+            agent_run.rag_trace = document_result.trace
         agent_run.stop_reason = "final_answer"
         agent_run.finished_at = datetime.now(UTC)
 

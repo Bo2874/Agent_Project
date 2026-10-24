@@ -136,6 +136,99 @@ if (chatApp) {
     return bubble;
   }
 
+  const sourceDialog = document.createElement("dialog");
+  sourceDialog.className = "citation-dialog";
+  sourceDialog.setAttribute("aria-label", "Nguồn tài liệu");
+  document.body.append(sourceDialog);
+  let sourceRequest = 0;
+  sourceDialog.addEventListener("close", () => {
+    sourceRequest += 1;
+    sourceDialog.replaceChildren();
+  });
+
+  async function openSource(conversationId, messageId, citationId) {
+    const requestId = ++sourceRequest;
+    sourceDialog.replaceChildren();
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "ghost-button citation-close";
+    close.textContent = "Đóng";
+    close.addEventListener("click", () => sourceDialog.close());
+    const heading = document.createElement("h2");
+    heading.textContent = `[${citationId}] Đang tải nguồn…`;
+    const details = document.createElement("p");
+    const excerpt = document.createElement("pre");
+    sourceDialog.append(close, heading, details, excerpt);
+    if (!sourceDialog.open) sourceDialog.showModal();
+    try {
+      const source = await requestJson(
+        `/api/conversations/${encodeURIComponent(conversationId)}/messages/` +
+        `${encodeURIComponent(messageId)}/citations/${encodeURIComponent(citationId)}`,
+      );
+      if (requestId !== sourceRequest || !sourceDialog.open) return;
+      heading.textContent = `[${source.citation_id}] ${source.title}`;
+      details.textContent = [
+        source.page_start ? `Trang ${source.page_start}${source.page_end > source.page_start ? `–${source.page_end}` : ""}` : "",
+        source.section || "",
+      ].filter(Boolean).join(" · ");
+      excerpt.textContent = source.text;
+      const download = document.createElement("a");
+      download.className = "ghost-button";
+      download.textContent = "Tải file gốc";
+      download.href = `/api/documents/${encodeURIComponent(source.document_id)}/download` +
+        `?version_id=${encodeURIComponent(source.version_id)}`;
+      sourceDialog.append(download);
+    } catch (error) {
+      if (requestId !== sourceRequest || !sourceDialog.open) return;
+      heading.textContent = "Không mở được nguồn";
+      details.textContent = error.message;
+    }
+  }
+
+  function renderCitations(bubble, citations, messageId, conversationId) {
+    const valid = (citations || []).filter((source) => /^S\d+$/.test(source.citation_id));
+    bubble.parentElement.querySelector(".message-citations")?.remove();
+    if (!valid.length || !messageId) return;
+    const byLabel = new Map(valid.map((source) => [source.citation_id, source]));
+    function citationButton(label, full = false) {
+      const source = byLabel.get(label);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = full ? "citation-source" : "citation-inline";
+      button.textContent = full
+        ? `[${label}] ${source.title}${source.page_start ? ` · tr. ${source.page_start}` : ""}`
+        : `[${label}]`;
+      button.title = `Mở nguồn: ${source.title}`;
+      button.addEventListener("click", () => openSource(conversationId, messageId, label));
+      return button;
+    }
+    const nodes = [];
+    const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!node.parentElement.closest("a,button,code,pre") && /\[S\d+\]/.test(node.textContent)) nodes.push(node);
+    }
+    for (const node of nodes) {
+      const fragment = document.createDocumentFragment();
+      let offset = 0;
+      for (const match of node.textContent.matchAll(/\[(S\d+)\]/g)) {
+        fragment.append(document.createTextNode(node.textContent.slice(offset, match.index)));
+        fragment.append(byLabel.has(match[1]) ? citationButton(match[1]) : document.createTextNode(match[0]));
+        offset = match.index + match[0].length;
+      }
+      fragment.append(document.createTextNode(node.textContent.slice(offset)));
+      node.replaceWith(fragment);
+    }
+    const panel = document.createElement("section");
+    panel.className = "message-citations";
+    panel.setAttribute("aria-label", "Nguồn tham khảo");
+    const label = document.createElement("strong");
+    label.textContent = "Nguồn tham khảo";
+    panel.append(label);
+    for (const source of valid) panel.append(citationButton(source.citation_id, true));
+    bubble.after(panel);
+  }
+
   function createAgentTimeline(assistantBubble, expanded = true) {
     const root = document.createElement("details");
     root.className = "agent-timeline is-running";
@@ -447,6 +540,7 @@ if (chatApp) {
     } else {
       messages.forEach((message) => {
         const bubble = addMessage(message.role, message.content);
+        if (message.role === "assistant") renderCitations(bubble, message.citations, message.id, conversation.id);
         const run = runsByAssistantMessage.get(message.id);
         if (message.role === "assistant" && run) renderStoredTimeline(bubble, run);
         if (message.role === "user") {
@@ -520,7 +614,7 @@ if (chatApp) {
         }
         if (parsed.event === "error") {
           finishTimeline(timeline, "failed");
-          addResumeButton(timeline, runId);
+          if (parsed.data.resumable !== false) addResumeButton(timeline, runId);
           if (!assistantMarkdown) {
             assistantMarkdown = parsed.data.message;
             window.renderMarkdown(assistantBubble, assistantMarkdown);
@@ -529,6 +623,7 @@ if (chatApp) {
           throw new Error(parsed.data.message);
         }
         if (parsed.event === "done") {
+          renderCitations(assistantBubble, parsed.data.citations, parsed.data.message_id, activeConversationId);
           const usage = parsed.data.usage;
           finishTimeline(
             timeline,
