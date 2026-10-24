@@ -7,7 +7,7 @@ Tài liệu chính:
 - Kiến trúc và ranh giới hệ thống: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 - Runbook khởi động, E2E, backup/restore và xử lý sự cố: [`OPERATIONS.md`](OPERATIONS.md).
 - Kịch bản demo và trình bày phỏng vấn: [`INTERVIEW_GUIDE.md`](INTERVIEW_GUIDE.md).
-- Cài dependency từ lockfile và chạy CI: [`docs/DEPENDENCIES_AND_CI.md`](docs/DEPENDENCIES_AND_CI.md).
+- Cài dependency từ lockfile và kiểm tra thủ công: [`docs/DEPENDENCIES_AND_CI.md`](docs/DEPENDENCIES_AND_CI.md).
 - Manifest, namespace/policy và catalog plugin: [`docs/plugins/README.md`](docs/plugins/README.md).
 - Plugin API, grant/connection và credential reference theo user: [`docs/plugins/API.md`](docs/plugins/API.md).
 - PluginManager, stdio profile, timeout và health: [`docs/plugins/STDIO_RUNTIME.md`](docs/plugins/STDIO_RUNTIME.md).

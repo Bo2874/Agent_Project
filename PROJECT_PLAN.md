@@ -369,6 +369,10 @@ Chưa push workflow mới/chưa có GitHub Actions run cho thay đổi này; loc
 Chi tiết: [nghiệm thu Ngày 79](reports/checks/2026-10-18-day79/VALIDATION.md),
 [dependency/CI](docs/DEPENDENCIES_AND_CI.md), [dataset scaffold](evals/datasets/foundation/README.md).
 
+Cập nhật 2026-10-24: theo yêu cầu user, đã gỡ `.github/workflows/ci.yml` (Foundation CI).
+Sau khi commit/push thay đổi này, repo không còn workflow tự chạy lint/unit/integration khi push/PR.
+Các kết quả CI/gate phía trên là lịch sử; kiểm thử tiếp theo do user chạy thủ công khi cần.
+
 ### M1 — Plugin platform và nhiều MCP server
 
 Thiết kế:
@@ -934,7 +938,7 @@ Các đường dẫn dưới đây là vị trí thiết kế; chỉ tạo khi �
 | Planning | `agent_core/planning/`, `agent_core/agents/`, `graph/workflow.py` | plans, task/attempt projection, checkpoint namespaces |
 | Streaming | recorder, `backend/routes/chat.py`, frontend timeline | root/task event envelope, run_events, SSE cursor |
 | Cache | `backend/cache/`, provider adapters | Redis versioned keys; authoritative versions trong DB |
-| Deploy | `infra/docker/app/`, Compose, `.github/workflows/`, `OPERATIONS.md` | image digest, migrations, release/eval/backup manifests |
+| Deploy | `infra/docker/app/`, Compose, `OPERATIONS.md`; workflow CI đã gỡ | image digest, migrations, release/eval/backup manifests |
 
 Các API mới dùng auth/ownership hiện có. Mọi luồng route/tool/RAG/sub-agent đi qua cùng policy,
 usage accounting và recorder. File/credential thật chỉ có reference trong state; context/checkpoint

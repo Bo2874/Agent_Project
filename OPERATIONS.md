@@ -153,10 +153,10 @@ uv lock --check --offline
 uv pip check
 ```
 
-Workflow [Foundation CI](.github/workflows/ci.yml) chạy lint/unit trên Windows/Linux và
-migration/integration trên Compose với database mới; không cần model key. Hướng dẫn cài mới,
-nâng dependency, gate local và kích hoạt GitHub Actions:
-[Dependency và CI](docs/DEPENDENCIES_AND_CI.md).
+Workflow Foundation CI đã gỡ theo yêu cầu user ngày 2026-10-24. Push/pull request không còn
+kích hoạt kiểm thử tự động từ repo này; lint/unit và migration/integration chạy thủ công khi cần.
+Hướng dẫn cài mới, nâng dependency và gate local:
+[Dependency và kiểm tra thủ công](docs/DEPENDENCIES_AND_CI.md).
 
 Chạy phần offline trước:
 

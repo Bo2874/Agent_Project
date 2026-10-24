@@ -1,7 +1,9 @@
-# Dependency lock và CI nền tảng
+# Dependency lock và kiểm tra thủ công
 
 Repo đích: [Bo2874/Agent_Project](https://github.com/Bo2874/Agent_Project).
-Workflow: [Foundation CI](../.github/workflows/ci.yml).
+Workflow Foundation CI đã gỡ theo yêu cầu user ngày 2026-10-24. Sau khi commit/push thay đổi này,
+push/pull request không tự chạy lint/unit/integration. Các lệnh trong tài liệu là công cụ chạy
+thủ công khi cần; phần lịch sử CI bên dưới không mô tả workflow đang hoạt động.
 
 ## Môi trường được hỗ trợ
 
@@ -10,7 +12,7 @@ Workflow: [Foundation CI](../.github/workflows/ci.yml).
   ARM/macOS hoặc Python minor khác cần mở rộng resolver markers và thêm gate kiểm chứng.
 - **uv 0.13.1**, được kiểm tra bằng `tool.uv.required-version`.
 - `uv.lock` khóa cả dependency trực tiếp/transitive, runtime và extra `dev`, cùng artifact hash.
-  `pyproject.toml` vẫn mô tả constraints; cài thông thường và CI phải dùng lock.
+  `pyproject.toml` vẫn mô tả constraints; cài dependency từ lock.
 
 ## Cài mới trên Windows
 
@@ -46,17 +48,17 @@ uv pip check
 
 Review diff `pyproject.toml`/`uv.lock`, chạy lại lint, unit cả hai OS và migration/integration.
 Nếu nâng Python hoặc uv, cập nhật cả `.python-version`, `tool.uv.required-version`,
-workflow và Dockerfile. Docker Python/uv/PostgreSQL được pin theo digest; cập nhật digest là
+Dockerfile. Docker Python/uv/PostgreSQL được pin theo digest; cập nhật digest là
 một thay đổi có review. Không dùng `--frozen` để bỏ qua kiểm tra freshness trong gate này.
 
 Lock tái lập dependency closure và kiểm tra hash; không cam kết image byte-for-byte giống nhau
 hoặc tải được khi registry/network không sẵn sàng. Dev/runtime khác nhau ở extra `dev` và
 dependency marker theo OS, nhưng cùng xuất phát từ một lock. Docker runtime không có pytest/ruff.
 
-## CI chạy gì
+## Lịch sử workflow CI đã gỡ
 
-`push` vào `main`, `pull_request` và `workflow_dispatch` kích hoạt workflow. Không cần API key
-hay DB secret để chạy; `contents: read`, action commit SHA cố định, không publish/deploy image.
+Workflow cũ được kích hoạt bởi `push` vào `main`, `pull_request` và `workflow_dispatch`, có các
+job dưới đây. Hiện không còn workflow này trong repo.
 
 1. `workflow-lint`: actionlint 1.7.12 với image digest cố định; kiểm tra syntax/expression/action input.
 2. `lint-unit`: matrix Ubuntu 24.04 + Windows 2025, Python 3.11.17, sync `--locked`, lock freshness,
@@ -77,14 +79,12 @@ Unit/lint/dataset sau sync:
 
 ```powershell
 uv run --no-sync python -m ruff check .
-uv run --no-sync python -m scripts.validate_eval_dataset
-uv run --no-sync python -m scripts.validate_foundation_datasets
 uv run --no-sync python -m scripts.evaluate_skills
 uv run --no-sync python -m pytest -q
 ```
 
 Nếu thiếu config ứng dụng, dùng các giá trị synthetic trong `infra/ci/offline.env` cho process test;
-không ghi đè `.env` thật. GitHub Actions đặt sẵn các giá trị này trong job environment.
+không ghi đè `.env` thật. Workflow cũ đặt sẵn các giá trị này trong job environment.
 
 Integration chỉ cần Python stdlib trên host và Docker Linux containers/Compose:
 
@@ -129,7 +129,7 @@ budget; Compose gate chạy `scripts.check_capability_catalog` và lưu số sch
 token eager/selected cùng real MCP discovery giữa run. HTTP probe thêm refresh no-op cho matrix
 TLS JSON/SSE modern/legacy; plugin API probe kiểm tra metadata auth và quyền admin discovery.
 
-## Kích hoạt trên GitHub
+## Lịch sử mở rộng CI
 
 Ngày 89 thêm gate `python -m scripts.validate_routing_dataset` trong matrix Windows/Linux:
 300 query Việt/Anh, grouping dev/test và consistency với taxonomy. Không gọi provider; không
@@ -145,9 +145,8 @@ cookie/SSE/DI/PostgreSQL, chuyển tool/schema sau observation, Skill/none. Fixt
 DecisionProvider của project; không gọi hoặc mock SDK Jev. Dependency/lock/migration giữ nguyên,
 hosted workflow chưa được xác minh bởi việc chạy gate local.
 
-Commit/push các thay đổi Ngày 79–86, phần đầu Ngày 88 và Ngày 89–91, mở tab **Actions → Foundation CI** để xem run và artifacts.
-Nếu repo tắt Actions, cần bật trong Settings. Có thể đặt các job trên thành required checks khi cấu hình
-branch protection. Việc tạo workflow và chạy gate local không tự tạo một GitHub Actions run.
+Các ghi chép Ngày 79–91 ở trên là lịch sử. Hiện việc push code không kích hoạt Foundation CI;
+các script/gate local chỉ được chạy khi có yêu cầu kiểm tra thủ công.
 
 Nguồn: [uv locking/sync](https://docs.astral.sh/uv/concepts/projects/sync/),
 [uv Docker](https://docs.astral.sh/uv/guides/integration/docker/),

@@ -79,10 +79,11 @@ chạy UID 10001 với root filesystem read-only. Worker health dựa trên hear
 Chi tiết và giới hạn profile: [Docker dev](infra/docker/app/README.md).
 
 Dependency runtime/dev cùng dùng `uv.lock` trên Python 3.11.17/uv 0.13.1 cho Windows x64 và
-Linux x86_64. Docker dùng image digest cố định và `uv sync --locked`; CI matrix kiểm tra unit
-cả hai OS, gate Compose kiểm tra migration/integration trên dữ liệu mới. Các dataset V2 synthetic
+Linux x86_64. Docker dùng image digest cố định và `uv sync --locked`. Workflow GitHub Actions
+đã gỡ theo yêu cầu user ngày 2026-10-24; lint/unit và gate Compose chỉ chạy thủ công khi cần.
+Các dataset V2 synthetic
 chỉ là fixture nghiệm thu, không được runtime import để routing/retrieval/scheduling.
-Chi tiết: [Dependency và CI](docs/DEPENDENCIES_AND_CI.md).
+Chi tiết: [Dependency và kiểm tra thủ công](docs/DEPENDENCIES_AND_CI.md).
 
 ## Plugin metadata nền tảng
 

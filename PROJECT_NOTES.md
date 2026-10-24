@@ -181,7 +181,7 @@
 - Feature flag V2: master switch và từng chức năng, mặc định tắt; kiểm tra dependency giữa flag
 - Docker app/worker: multi-stage image, UID 10001, root read-only và healthcheck
 - Docker volume: dữ liệu PostgreSQL và tài liệu lưu riêng, giữ qua recreate container
-- GitHub Actions: lint/unit Windows và Linux, manifest/dataset validation, migration và integration
+- GitHub Actions: đã gỡ workflow ngày 2026-10-24 theo yêu cầu user; kiểm thử chạy thủ công khi cần
 - Plugin manifest: schema 1.0, exact SemVer, server/tool/Skill và credential slot logical
 - Plugin namespace: canonical capability ID, alias riêng và giữ nguyên remote tool name
 - Plugin policy: role, approval, side effect, timeout/concurrency và retry có điều kiện
