@@ -45,21 +45,17 @@
         <div class="composer-wrap">
             <section class="chat-documents" data-chat-documents aria-label="Tài liệu trong hội thoại">
                 <div class="chat-document-actions">
-                    <button class="ghost-button" type="button" data-chat-document-upload disabled>＋ Tải file</button>
                     <button class="ghost-button" type="button" data-chat-document-choose disabled>Chọn từ thư viện</button>
-                    <button class="document-text-button" type="button" data-chat-document-refresh disabled aria-label="Làm mới tài liệu">↻</button>
                     <span data-chat-document-count>Đang tải tài liệu…</span>
                 </div>
-                <input type="file" accept=".pdf,.doc,.docx,.txt" multiple hidden data-chat-document-files aria-label="File tải vào hội thoại">
                 <div class="chat-document-chips" data-chat-document-chips></div>
-                <progress max="100" value="0" hidden data-chat-document-progress aria-label="Tiến độ tải file"></progress>
                 <p class="document-status" data-chat-document-status role="status" aria-live="polite"></p>
                 <dialog class="document-picker" data-document-picker aria-labelledby="document-picker-title">
                     <div class="document-picker-shell">
                         <header><h2 id="document-picker-title">Chọn tài liệu cho hội thoại</h2>
                             <button class="document-text-button" type="button" data-picker-close aria-label="Đóng">×</button>
                         </header>
-                        <p class="document-hint">Bạn có thể chọn file chưa xử lý xong. File chỉ dùng để hỏi đáp khi sẵn sàng.</p>
+                        <p class="document-hint">Chỉ hiển thị tài liệu đã sẵn sàng hỏi đáp. Tải file mới tại trang <a href="/documents">Tài liệu</a>.</p>
                         <form class="document-filters" data-picker-filters role="search">
                             <input name="q" type="search" placeholder="Tìm tên file…" maxlength="255" aria-label="Tìm tài liệu">
                             <select name="file_type" aria-label="Định dạng tài liệu">

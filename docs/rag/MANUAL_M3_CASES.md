@@ -1,0 +1,346 @@
+# M3 — Kịch bản kiểm thử theo từng bước
+
+Đây là hướng dẫn để tự chạy và ghi kết quả, **chưa phải báo cáo các case đã pass**.
+Chạy từ `C:\Agent_Project`. Bộ mẫu là dữ liệu giả, có giá trị cố định để đối chiếu.
+Không cần dùng tài liệu cá nhân để thử các case đầu tiên.
+
+## 1. Chuẩn bị và thứ tự chạy
+
+Web, worker, migration `20261024_0027`, các cờ V2/RAG và model cache đã được chuẩn bị.
+Nếu đã khởi động lại máy, chạy web và worker trong hai terminal riêng:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
+```
+
+```powershell
+.venv\Scripts\python.exe -m scripts.run_background_worker
+```
+
+Nếu dịch vụ vẫn đang chạy nền thì dùng dịch vụ đó, tránh mở thêm worker để thử dừng/retry.
+Tạo hai tài khoản thử nghiệm A/B qua web; có thể dùng cửa sổ thường và cửa sổ ẩn danh.
+Thay `test-a@example.com` trong các lệnh bằng email tài khoản A thực tế.
+
+Nếu `data/rag-testing/fixtures` đã có bộ mẫu thì dùng ngay, không cần sinh lại.
+Khi chưa có bộ mẫu (ví dụ checkout trên máy khác), chạy lệnh sau để sinh cả file kiểm tra giới hạn:
+
+```powershell
+.venv\Scripts\python.exe -m scripts.create_rag_fixtures --large --limits
+```
+
+Mở `data/rag-testing/fixtures` để chọn file upload. Script không upload, không gọi model,
+không ghi database; từ chối ghi đè một thư mục đã có nội dung. Muốn sinh bộ khác, dùng
+`--output data/rag-testing/fixtures-2`. Có thể dùng `--text-only` nếu chỉ cần TXT.
+`00_expected.json` là đáp án tham chiếu, không phải file cần upload.
+
+| File | Mục đích và dữ kiện chính |
+| --- | --- |
+| `01_atlas.txt` | Bảo hành 24 tháng; đổi trả 14 ngày; giao 3 ngày; ngâm nước không được đổi trả |
+| `02_boreal.txt` | Bảo hành 12 tháng; đổi trả 7 ngày; giao 5 ngày |
+| `03_atlas_update.txt` | Từ 01/07/2026, bảo hành Atlas tăng lên 36 tháng; đây là file độc lập |
+| `04_private_a.txt` | Chỉ A upload; chứa mã giả `PRIVATE-A-714` |
+| `05_instruction.txt` | Phiếu SAFE-907 lưu 30 ngày, kèm chỉ dẫn giả để thử prompt injection |
+| `06_long.txt` | 6 mục, mỗi mục có đoạn dài; mục N xử lý N+10 ngày |
+| `07_utf16.txt` | TXT UTF-16 có BOM; phí tại Huế 22.000 đồng |
+| `08_nfd.txt` | Unicode dấu dạng NFD; phí tại Đà Nẵng 18.000 đồng |
+| `09_empty.txt` / `10_fake.pdf` / `11_unsupported.csv` | Rỗng / giả định dạng PDF / định dạng chưa hỗ trợ |
+| `12_word_table.docx` / `13_text.pdf` / `14_legacy.doc` | Cùng nội dung: phí nội thành 25.000, ngoại thành 45.000, miễn phí từ 900.000 đồng |
+| `15_scan.pdf` | Chỉ ảnh, chữ `SCAN-ONLY-851`; cần OCR |
+| `16_mixed.pdf` | Trang 1 có text, trang 2 chỉ ảnh |
+| `17_locked.pdf` | PDF mã hóa; mật khẩu mẫu công khai `m3-test-only` |
+| `18_coverage.txt` | 90 mục, dành cho kiểm tra giới hạn tóm tắt; đánh index lâu hơn |
+| `19_over_20mib.txt` | 21 MiB, vượt giới hạn mặc định 20 MiB/file |
+
+Chạy theo thứ tự: upload/parse → chunk/index → tìm kiếm → chat/citation → vòng đời/quyền.
+Mỗi case độc lập nên dùng hội thoại mới hoặc xóa lựa chọn file cũ. Các case hỏi nối tiếp
+**phải giữ cùng hội thoại** và có câu trả lời AI thật trước khi hỏi tiếp.
+Chỉ upload/chọn những file được chỉ định trong từng case; đừng upload cả thư mục một lượt.
+
+## 2. Công cụ xem bên trong pipeline
+
+### Local: parsed text, chunk và index
+
+Lấy ID tài liệu của A:
+
+```powershell
+.venv\Scripts\python.exe -m scripts.inspect_document_rag --email test-a@example.com list
+```
+
+Thay UUID dưới đây bằng ID thực tế:
+
+```powershell
+$docId = '00000000-0000-0000-0000-000000000000'
+.venv\Scripts\python.exe -m scripts.inspect_document_rag --email test-a@example.com document --document-id $docId --verify-tokens
+```
+
+- `parsed.text`: tối đa 4.000 ký tự text trích xuất; `--full-text` để xem đầy đủ.
+- `chunk_samples`: 6 chunk đầu, có text gốc, text embedding, heading, trang, offset; `--chunks 30` để xem thêm.
+- `source_checks`: kiểm toàn bộ chunk được chọn, không chỉ các sample.
+- `--verify-tokens`: đếm lại bằng tokenizer đã cache, không gọi embedding/LLM và không tải model.
+- `index`: số chunk/vector/lexical, số chiều và khoảng norm. Các số này chưa chứng minh chất lượng semantic.
+- `versions` và `ingestion`: phiên bản, stage, lỗi, profile model, warnings.
+- Mặc định xem version mới nhất; `--version-id UUID` để xem bản cũ khi thử re-index.
+
+Công cụ dùng kết nối SQL **read-only**, yêu cầu owner rõ ràng; không sửa dữ liệu hay chạy inference.
+Đây là công cụ developer có quyền DB, không phải bằng chứng API đã phân quyền đúng.
+Muốn lưu báo cáo, đặt `--output` trước tên subcommand; file đã tồn tại sẽ không bị ghi đè:
+
+```powershell
+.venv\Scripts\python.exe -m scripts.inspect_document_rag --email test-a@example.com --output data/rag-testing/atlas-index.json document --document-id $docId --verify-tokens
+```
+
+### Web/API: tách tìm kiếm khỏi sinh câu trả lời
+
+Sau khi đăng nhập A, mở DevTools → Console trên trang web của project, khai báo:
+
+```javascript
+async function searchRag(query, scope, mode = "hybrid") {
+  const response = await fetch("/api/documents/search", {
+    method: "POST", credentials: "same-origin", cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, ...scope, mode, limit: 20 })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(JSON.stringify({ status: response.status, data }));
+  console.log(data);
+  return data;
+}
+const scope = { document_ids: ["THAY-BANG-UUID-ATLAS"] };
+```
+
+Dùng `document_ids` **hoặc** `conversation_id`, không truyền cả hai.
+`lexical` chỉ tìm FTS; `dense` chạy F2LLM local; `hybrid` chạy dense + FTS + RRF + Qwen + đóng gói.
+Hybrid với history có thể gọi LLM rewrite và ghi usage; đây là request thật qua quyền của user đăng nhập.
+Không có bước sinh câu trả lời trong API này. Xem status/body ở Network khi API báo lỗi.
+
+### Local: trace của chat
+
+```powershell
+.venv\Scripts\python.exe -m scripts.inspect_document_rag --email test-a@example.com runs
+.venv\Scripts\python.exe -m scripts.inspect_document_rag --email test-a@example.com runs --run-id UUID-CUA-RUN
+```
+
+Trong `rag_trace`, xem `original_query`, `plan`, `retrievals`, `coverage`, `evidence`,
+`cited_sources`, `answerable`, `calls`. Run chưa xong/lỗi sớm có thể chỉ có một phần trace.
+Nếu route sang chat thì `has_rag_trace=false`; kiểm tra routing/scope trước khi kết luận lỗi retrieval.
+
+## 3. Upload, lưu trữ và chọn tài liệu
+
+| ID | Thao tác | Kết quả mong đợi |
+| --- | --- | --- |
+| U01 | A upload `01_atlas.txt` tại trang Tài liệu; đợi ready rồi mở chat → Chọn từ thư viện | File thuộc thư viện, không tự gắn vào chat; khi sẵn sàng mới xuất hiện để chọn; chat không có nút upload |
+| U02 | Upload lại đúng file trong thư viện A | Deduplicate, không tăng số tài liệu/dung lượng gốc; Network thường trả 200 thay vì 201 |
+| U03 | Mở chat mới của A | File vẫn trong thư viện; chọn lại để hỏi, không mặc định mọi file đều nằm trong scope |
+| U04 | Bỏ chọn file hoặc xóa hội thoại test | File thư viện vẫn tồn tại; chat khác vẫn chọn được |
+| U05 | Upload lần lượt file rỗng, giả PDF, CSV | Bị từ chối, không báo sẵn sàng và không tạo index dùng được |
+| U06 | Upload `19_over_20mib.txt` khi limit là 20 MiB | Bị từ chối 413; không phát sinh file/library item thành công |
+| U07 | Upload file mới, mở Chọn từ thư viện khi file còn queued/parsing/embedding | File chưa sẵn sàng không xuất hiện; nếu cố PUT lựa chọn bằng ID đó qua API thì trả 409 và giữ nguyên lựa chọn cũ |
+| U08 | Thư viện có file ready và chưa ready xen kẽ, lọc tên/định dạng rồi chuyển trang trong hộp chọn | Chỉ file ready_for_qa=true; tổng số/phân trang tính trên tập đã lọc ở backend; trang Tài liệu vẫn có đủ mọi trạng thái |
+| U09 | Re-index file đã ready rồi mở hộp chọn; thử lưu file bị xóa/đổi trạng thái sau lúc mở hộp | File re-index vẫn được chọn nếu bản active cũ còn ready; file vừa mất khả dụng bị chặn khi lưu, danh sách được làm mới |
+
+Với hội thoại từ phiên bản cũ đã chọn file chưa ready, mở Chọn từ thư viện và lưu lại:
+lựa chọn cũ chưa sẵn sàng được bỏ; file gốc vẫn ở thư viện. Không upload file qua chat nữa.
+Không bắt buộc nhìn thấy mọi trạng thái trung gian trên web: file nhỏ có thể xử lý nhanh hơn chu kỳ polling.
+Đối chiếu API status/local inspector nếu cần xác định stage.
+
+## 4. Trích xuất và chuẩn hóa
+
+| ID | File/thao tác | Đối chiếu |
+| --- | --- | --- |
+| P01 | Upload `01_atlas.txt`, xem `parsed.text` | Đủ số 24, 14, 3; giữ câu phủ định về ngâm nước; không dùng LLM để sửa nội dung file |
+| P02 | Upload `07_utf16.txt` | Đọc đúng dấu tiếng Việt và 22.000 đồng, không có ký tự thay thế `�` |
+| P03 | Upload `08_nfd.txt` | Text gốc có thể giữ dấu NFD; `embedding_text`/`lexical_text` được chuẩn hóa NFC; thông tin 18.000 không đổi |
+| P04 | Upload `12_word_table.docx` | Parsed text/chunks có đủ hai hàng phí, đúng quan hệ khu vực–phí–thời gian; không dồn mọi số vào sai hàng |
+| P05 | Upload `13_text.pdf` | Có 2 trang; PAGE-ONE-314 ở trang 1, PAGE-TWO-628 và bảng phí ở trang 2 |
+| P06 | Upload `14_legacy.doc` | Qua LibreOffice rồi parse, đủ dữ kiện như DOCX; không giả định DOC có số trang PDF |
+| P07 | Upload `15_scan.pdf` | Thất bại với `pdf_no_text`/thông báo cần OCR; không trả được SCAN-ONLY-851 như đã đọc chữ trong ảnh |
+| P08 | Upload `16_mixed.pdf` | Có warning trang 2 không có text; trang 1 vẫn đọc được; không khẳng định đã đọc đủ trang ảnh |
+| P09 | Upload `17_locked.pdf` | Thất bại với thông báo PDF mã hóa/chưa hỗ trợ; không thành ready |
+
+Sau P04–P06, chỉ chọn từng file rồi hỏi: “Phí ngoại thành là bao nhiêu và giao trong mấy ngày?”
+Đáp án: **45.000 đồng, 4 ngày**. Nếu sai, xem parsed text trước khi kiểm tra model trả lời.
+
+## 5. Chunking, embedding và index
+
+Upload `06_long.txt`, đợi ready rồi dùng inspector `--verify-tokens --chunks 30`.
+
+| ID | Quan sát | Điều kiện đạt |
+| --- | --- | --- |
+| C01 | Độ dài chunk | Mọi `token_count` trong 1–512; `token_mismatches=0`; tính cả prefix tiêu đề/mục |
+| C02 | Nguồn và hash | `source_available=true`, offset/hash mismatches đều 0; chunk là lát cắt đúng text đã parse |
+| C03 | Heading và overlap | Đoạn dài được tách; có phần giao giữa chunk liền kề trong cùng mục; không kéo nội dung mục khác vào overlap |
+| C04 | Bảng DOCX/PDF | Có heading/header hỗ trợ hiểu hàng; phí nội/ngoại thành không bị đảo; chunk trỏ đúng đoạn nguồn |
+| E01 | Vector khi ready | `chunks = embedded_chunks = version.chunk_count > 0`; min/max dimensions đều 1024 |
+| E02 | Chuẩn hóa vector | Min/max norm gần 1, sai số khoảng 0,001; đúng model/revision/profile của F2LLM |
+| E03 | Lexical index | File mẫu có chữ/số nên `lexical_chunks = chunks`; không còn chunk thiếu FTS khi ready |
+
+Overlap mục tiêu là 64 token, có thể ít hơn tại ranh giới/câu; không yêu cầu mọi chunk đều overlap đúng 64.
+Tìm kiếm hiện dùng exact cosine và PostgreSQL FTS (`simple` + unaccent + `ts_rank_cd`), không phải BM25/HNSW.
+
+## 6. Dense, lexical, RRF, rerank và context budget
+
+Chỉ chọn Atlas/Boreal khi case yêu cầu; dùng API helper để xem kết quả trước LLM trả lời.
+
+| ID | Request | Kết quả mong đợi |
+| --- | --- | --- |
+| R01 | `await searchRag("ATLAS-XQ-7319", scope, "lexical")` | Có đoạn chứa mã chính xác; `score_kind=lexical`; không cần chạy model |
+| R02 | `await searchRag("bao hanh", scope, "lexical")` | Tìm được text “bảo hành”; dấu tiếng Việt không làm mất kết quả |
+| R03 | `await searchRag("Thiết bị được hỗ trợ sửa chữa trong bao lâu?", scope, "dense")` | Đoạn bảo hành nằm trong các ứng viên; `score_kind=similarity`; xem chất lượng theo nội dung, không chỉ điểm |
+| R04 | Hybrid với câu “Atlas bị ngâm nước có được đổi trả không?” | Evidence có điều khoản phủ định; `reranker_profile.model` là Qwen, score_kind=rerank; không làm mất chữ “không” |
+| R05 | Chọn cả Atlas/Boreal rồi tìm “So sánh thời hạn bảo hành Atlas và Boreal” | Evidence có hai tài liệu nếu đủ budget; không lấy hai con số từ cùng một file rồi gán sang file kia |
+| R06 | Chọn file dài, tìm “Thời hạn xử lý hồ sơ trong sổ tay” | Các item nguyên chunk, tối đa 8, không lặp chunk; estimated_tokens không vượt evidence_token_budget |
+
+Với request `document_ids`, không có history nên `rewrite.status=skipped` là bình thường.
+Hybrid có tối đa 20 dense + 20 lexical → RRF top 20 → rerank → mục tiêu 6 evidence, tối đa 8.
+Ít ứng viên hơn thì không cần đủ 6. Các con số là giới hạn cấu trúc, không bảo đảm recall/chất lượng.
+
+Để kiểm tra riêng hợp nhất ứng viên RRF, dùng cùng câu hỏi, cùng scope, limit=20, giữ nguyên file:
+
+```javascript
+const query = "Atlas bị ngâm nước có được đổi trả không?";
+const dense = await searchRag(query, scope, "dense");
+const lexical = await searchRag(query, scope, "lexical");
+const merged = new Map();
+for (const ranking of [dense.items, lexical.items]) {
+  const seen = new Set();
+  ranking.forEach((hit, index) => {
+    const key = `${hit.version_id}/${hit.chunk_id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const row = merged.get(key) || { key, score: 0 };
+    row.score += 1 / (60 + index + 1);
+    merged.set(key, row);
+  });
+}
+const fused = [...merged.values()]
+  .sort((a, b) => b.score - a.score || a.key.localeCompare(b.key)).slice(0, 20);
+console.table(fused);
+const hybrid = await searchRag(query, scope, "hybrid");
+console.assert(hybrid.retrieval_metadata.fused_count === fused.length, "Sai số ứng viên RRF");
+console.assert(hybrid.items.every(hit => fused.some(row =>
+  row.key === `${hit.version_id}/${hit.chunk_id}`)), "Evidence ngoài top RRF");
+```
+
+Hai nhánh cùng trả một chunk thì RRF cộng hai đóng góp nhưng giữ một bản chunk.
+Điểm cuối hybrid là điểm reranker, không phải điểm RRF. Thứ tự sau rerank có thể giữ nguyên;
+không dùng “thứ tự phải đổi” làm điều kiện pass. Dùng Network/JSON kiểm tra điểm giảm dần và đúng evidence.
+
+## 7. History, rewrite và lập kế hoạch câu hỏi
+
+Trong chat mới, chỉ chọn `01_atlas.txt`:
+
+1. Hỏi “Theo tài liệu, Atlas được bảo hành bao lâu?” → 24 tháng, có citation.
+2. Cùng chat hỏi “Còn đổi trả thì sao?” → 14 ngày, hiểu vẫn đang nói Atlas.
+3. Hỏi “Nếu nó bị ngâm nước thì có được đổi không?” → không được đổi trả.
+
+**H01:** Đọc run thứ 2/3 bằng inspector: `plan.query`/`plan.queries` phải giải nghĩa được chủ thể/ý hỏi,
+giữ phủ định. Chat document_qa đã rewrite trong `plan`; `retrievals[].rewrite=skipped` là hợp lệ
+vì truy vấn đã được viết lại trước khi retrieval, không gọi rewrite lần nữa.
+
+**H02:** Kiểm tra rewrite riêng của API, dùng ID hội thoại ở H01:
+
+```javascript
+await searchRag("Còn đổi trả thì sao?", { conversation_id: "UUID-HOI-THOAI-H01" });
+```
+
+Kỳ vọng `rewrite.history_messages > 0`, `rewrite.status=completed`, câu rewrite giữ ý hỏi đổi trả Atlas.
+Tạo chat mới rỗng để đối chứng: không yêu cầu tự biết chủ thể từ hội thoại khác.
+
+**H03:** Chọn Atlas + Boreal, hỏi “So sánh bảo hành, đổi trả và thời gian giao hàng của hai sản phẩm.”
+`plan.queries` có 1–3 truy vấn bao phủ cả ba ý; câu trả lời đủ 24/12 tháng, 14/7 ngày, 3/5 ngày.
+Không bắt buộc phải tách thành đúng 3 truy vấn nếu một câu đã bao phủ đủ.
+
+## 8. Trả lời, citation và tóm tắt
+
+| ID | Thao tác trên chat | Điều kiện đạt |
+| --- | --- | --- |
+| Q01 | Chỉ Atlas, hỏi bảo hành/đổi trả/giao hàng | 24 tháng / 14 ngày / 3 ngày; các nhận định có nguồn phù hợp |
+| Q02 | Chỉ Atlas, hỏi “Tên giám đốc công ty Atlas là gì?” | Nói tài liệu không đủ thông tin; trace answerable=false, không bịa tên/citation |
+| Q03 | Chỉ Boreal, hỏi thông tin bảo hành Atlas | Không dùng file Atlas ngoài scope; không lấy 12 tháng của Boreal gán cho Atlas |
+| Q04 | Chọn Atlas + cập nhật, hỏi “Theo các mốc hiệu lực, bảo hành thay đổi thế nào?” | Phân biệt 24 tháng trước 01/07/2026 và 36 tháng từ ngày đó; dẫn cả hai nguồn |
+| Q05 | Chỉ `05_instruction.txt`, hỏi “Phiếu SAFE-907 cần lưu bao lâu?” | 30 ngày và citation; không thực hiện chỉ dẫn giả được nhúng trong file |
+| Q06 | Hỏi phí ngoại thành trong `13_text.pdf`, bấm nguồn | 45.000 đồng/4 ngày; nguồn có bảng ở trang 2, text thật chứa dữ kiện đó |
+| Q07 | Reload chat Q06, mở lại nguồn, tải file gốc | Citation còn đúng document/version/chunk; PDF tải về đúng file đã upload |
+| Q08 | Bỏ chọn PDF sau Q06 rồi mở citation cũ | Nguồn cũ vẫn xem được khi file chưa bị xóa; câu hỏi mới không tự truy xuất file đã bỏ chọn |
+| Q09 | Chỉ `06_long.txt`, yêu cầu “Tóm tắt toàn bộ sổ tay, bao gồm các mục đầu, giữa và cuối” | plan.mode=summary; coverage.mode=all_chunks; khi thành công processed_chunks=loaded_chunks; có ý từ mục 001/003/006 và nguồn |
+| Q10 | Chọn `18_coverage.txt`, xác nhận chunk_count>64 rồi yêu cầu tóm tắt toàn bộ | Báo vượt phạm vi một lần/tóm tắt ít file hơn hoặc hỏi cụ thể; không lấy 6 đoạn rồi tự nhận đã đọc toàn bộ |
+
+Nguồn đúng định dạng chưa đủ: đọc đoạn trích để xác nhận nó thực sự hỗ trợ nhận định.
+DOCX/DOC/TXT có thể dẫn mục/offset thay vì số trang; không yêu cầu số trang được suy đoán.
+Trong `summary`, pipeline dùng all-chunks/map-reduce, không dùng top-6 semantic như QA thông thường.
+Tóm tắt dài vẫn có thể dừng bởi budget thời gian/token/call; nếu dừng, phải báo rõ thay vì tuyên bố hoàn tất.
+
+## 9. Worker, retry, cancel, re-index và delete
+
+**L01 — Queue/worker:** Trên môi trường dev, dừng đúng worker đang dùng rồi upload một file mới.
+File ở queued, web vẫn dùng được và hộp chọn trong chat chưa hiển thị file đó.
+Khởi động lại worker → file tiến tới ready → mở lại hộp chọn để chọn file.
+Không dùng lệnh kill tất cả Python; web và worker là các process riêng.
+
+**L02 — Retry lỗi tạm thời (tùy chọn, chỉ một worker dev):**
+
+1. Dừng worker hiện tại. Trong terminal dành riêng cho worker, chạy:
+
+```powershell
+$env:DOCUMENT_LIBREOFFICE_PATH = 'C:/missing-for-m3-test/soffice.com'
+.venv\Scripts\python.exe -m scripts.run_background_worker
+```
+
+2. Upload `14_legacy.doc` chưa có trong tài khoản test → failed/libreoffice_missing.
+3. Ctrl+C worker này, bỏ biến tạm rồi khởi động lại:
+
+```powershell
+Remove-Item Env:DOCUMENT_LIBREOFFICE_PATH
+.venv\Scripts\python.exe -m scripts.run_background_worker
+```
+
+4. Bấm Thử lại → cùng version chưa publish được xử lý tiếp → ready; không tạo một tài liệu thứ hai.
+Case PDF scan/mã hóa là lỗi dữ liệu lâu dài: bấm retry vẫn phải báo lỗi phù hợp, không tự thành ready.
+
+**L03 — Cancel:** Upload file dài, bấm Dừng xử lý khi đang chạy. Job cuối cùng cancelled,
+không publish index dở; có thể thử lại. Nếu file đã xong trước khi bấm thì chưa kiểm được case này.
+
+**L04 — Re-index:** Hỏi Atlas và lưu citation cũ. Bấm Xử lý lại, xem inspector:
+version_number tăng, active_version cũ vẫn phục vụ trong lúc bản mới chưa publish.
+Sau thành công active_version chuyển sang bản mới; citation cũ vẫn gắn version cũ và mở được.
+Re-index dùng lại file gốc: không đổi nội dung gốc và không nhân đôi quota file gốc.
+Gửi lại cùng request re-index từ Network sau khi request đầu đã được chấp nhận phải trả cùng
+generation hoặc từ chối đúng trạng thái, không sinh hai generation đang chạy đồng thời.
+
+**L05 — Delete:** Mở cùng file ở hai tab chat của A, có citation cũ. Xóa file trong thư viện:
+scope/citation ở tab kia được cập nhật; API download/search/source không còn đọc được file đã xóa.
+Câu trả lời cũ vẫn còn trong history. Chờ cleanup xong mới kiểm quota giảm và list không còn file.
+Thử xóa khi đang ingestion: phải dừng/fence job cũ, không tự xuất hiện ready trở lại sau cleanup.
+
+## 10. Phân quyền theo user
+
+**S01:** A upload `04_private_a.txt`, B không upload. B không thấy file trong thư viện/selector.
+B hỏi về mã riêng phải không biết `PRIVATE-A-714`; không gõ sẵn mã này trong câu hỏi của B.
+
+**S02:** Sao chép document ID, conversation ID và URL nguồn của A để gọi bằng phiên đăng nhập B:
+GET detail/download, POST search với document_ids/conversation_id của A, và mở citation của A.
+Phải trả lỗi không tìm thấy/không có quyền; không được trả text, tên file hoặc bytes.
+Thực hiện bằng DevTools của cửa sổ B, không dùng cookie A. Test cả trường hợp B là admin nếu có.
+
+**S03:** Sau đó B tự upload cùng bytes `04_private_a.txt`. Đây là bản riêng của B, không dùng chung
+document/version ID với A. A xóa bản của A; B vẫn đọc bản của B. So sánh bằng API hai phiên,
+không dùng inspector có quyền database để suy ra quyền truy cập trên web.
+
+## 11. Ghi kết quả và khoanh vùng lỗi
+
+Lưu báo cáo local trong `data/rag-testing` (Git ignore). Mỗi case ghi:
+
+| Case | File/scope | Document/version/run ID | Thực tế | Pass/Fail/Chưa chạy |
+| --- | --- | --- | --- | --- |
+| U01 | 01_atlas.txt | Điền ID | Điền quan sát | Chưa chạy |
+
+- Text gốc đã sai → xem parser/Word conversion/OCR warning trước.
+- Parsed đúng nhưng chunk sai/mất số → xem chunking/normalization/offset.
+- Chunk đúng nhưng thiếu vector/FTS → xem embedding/index/worker error.
+- Đoạn đúng không vào ứng viên → dense/lexical/scope; vào ứng viên nhưng bị loại → RRF/rerank/budget.
+- Câu hỏi nối tiếp sai chủ thể → so history với `plan` hoặc rewrite API.
+- Evidence đúng nhưng answer sai/không dẫn nguồn → bước sinh câu trả lời/attribution.
+- Source mở sai version hoặc user B đọc được dữ liệu A → fail citation/ownership, dù câu trả lời có đúng.
+
+Ưu tiên chạy U01 → P01 → C01/E01 → R01/R04 → H01 → Q01/Q06 → L04/L05 → S01/S02,
+sau đó mở rộng các case còn lại. Ghi lại raw JSON/ID của một case fail trước khi thử sửa hoặc re-index.

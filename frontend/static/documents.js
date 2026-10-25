@@ -105,7 +105,7 @@
     return `/api/documents?${params}`;
   }
 
-  function upload(file, conversationId, onProgress) {
+  function upload(file, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/documents");
@@ -131,12 +131,11 @@
       };
       const data = new FormData();
       data.append("file", file);
-      if (conversationId) data.append("conversation_id", conversationId);
       xhr.send(data);
     });
   }
 
-  async function uploadFiles(files, conversationId, progress, status) {
+  async function uploadFiles(files, progress, status) {
     const usage = await request("/api/documents/usage");
     let saved = 0;
     let reused = 0;
@@ -149,7 +148,7 @@
           if (!/\.(pdf|docx?|txt)$/i.test(file.name)) throw new Error("Chỉ hỗ trợ PDF, DOC, DOCX và TXT.");
           if (!file.size) throw new Error("File không có nội dung.");
           if (file.size > usage.max_file_bytes) throw new Error(`Tối đa ${bytes(usage.max_file_bytes)}/file.`);
-          const result = await upload(file, conversationId, (percent) => {
+          const result = await upload(file, (percent) => {
             if (percent === null) progress.removeAttribute("value");
             else progress.value = percent;
             message(status, `${index + 1}/${files.length} · ${file.name} · ${percent === 100 ? "Đang kiểm tra và lưu…" : "Đang tải…"}`);
@@ -310,7 +309,7 @@
       busy = true;
       controls();
       try {
-        await uploadFiles(files, null, find("upload-progress"), find("upload-status"));
+        await uploadFiles(files, find("upload-progress"), find("upload-status"));
         input.value = "";
         offset = 0;
       } catch (error) {
@@ -341,7 +340,6 @@
     const picker = (name) => panel.querySelector(`[data-picker-${name}]`);
     const dialog = panel.querySelector("[data-document-picker]");
     const filters = picker("filters");
-    const fileInput = find("files");
     const status = find("status");
     let conversationId = null;
     let items = [];
@@ -358,10 +356,7 @@
 
     function controls() {
       const disabled = externalDisabled || busy || !conversationId || dialog.open;
-      find("upload").disabled = disabled;
       find("choose").disabled = disabled;
-      find("refresh").disabled = disabled;
-      fileInput.disabled = disabled;
       find("chips").querySelectorAll("button").forEach((element) => { element.disabled = disabled || !scopeKnown; });
       const locked = busy || externalDisabled;
       dialog.querySelectorAll("button, input, select").forEach((element) => { element.disabled = locked; });
@@ -383,7 +378,7 @@
         const chip = node("div", `document-chip status-${item.status}`);
         chip.title = `${item.original_filename} · ${stateLabel(item)}`;
         const name = node("span", "document-chip-name", item.original_filename);
-        const remove = button("×", () => saveSelection(items.filter((other) => other.id !== item.id).map((other) => other.id)), "document-text-button");
+        const remove = button("×", () => saveSelection(items.filter((other) => other.id !== item.id && other.ready_for_qa).map((other) => other.id)), "document-text-button");
         remove.setAttribute("aria-label", `Bỏ chọn ${item.original_filename} khỏi hội thoại`);
         chip.append(name, node("small", "", stateLabel(item)), remove);
         find("chips").append(chip);
@@ -399,7 +394,10 @@
         items = data.items;
         scopeKnown = true;
         render();
-        if (!preserveStatus) message(status, items.length ? "File đã lưu. Các file chưa sẵn sàng sẽ chưa dùng để hỏi đáp." : "Chưa chọn tài liệu. Tải file hoặc chọn lại từ thư viện của bạn.");
+        if (!preserveStatus) message(status, items.some((item) => !item.ready_for_qa)
+          ? "Có lựa chọn cũ chưa sẵn sàng. Mở Chọn từ thư viện và lưu lại để chỉ giữ file sẵn sàng."
+          : items.length ? "Các tài liệu đã chọn sẵn sàng hỏi đáp."
+            : "Chọn tài liệu đã sẵn sàng từ thư viện. Tải file mới tại trang Tài liệu.");
         return true;
       } catch (error) {
         if (current !== generation || id !== conversationId || scopeRequest !== scopeGeneration) return false;
@@ -433,11 +431,16 @@
         scopeKnown = true;
         render();
         if (dialog.open) dialog.close();
-        message(status, items.length ? "Đã lưu lựa chọn. File chưa xử lý xong sẽ chưa thể hỏi đáp." : "Đã bỏ chọn tài liệu; file vẫn được giữ trong thư viện.");
+        message(status, items.length ? "Đã chọn tài liệu sẵn sàng hỏi đáp." : "Đã bỏ chọn tài liệu; file vẫn được giữ trong thư viện.");
       } catch (error) {
         message(dialog.open ? picker("status") : status, error.message, true);
         // A lost response can follow a committed mutation; refresh instead of resending it.
         await loadScope(id, generation, true);
+        if (dialog.open && scopeKnown) {
+          draft = new Set(items.filter((item) => item.ready_for_qa).map((item) => item.id));
+          await loadPicker();
+          message(picker("status"), `${error.message} Đã làm mới lựa chọn; hãy chọn lại tài liệu.`, true);
+        }
       } finally {
         busy = false;
         notify();
@@ -451,7 +454,9 @@
       message(picker("status"), "Đang tải thư viện…");
       controls();
       try {
-        const data = await request(listUrl(filters, offset));
+        const url = new URL(listUrl(filters, offset), window.location.origin);
+        url.searchParams.set("ready_for_qa", "true");
+        const data = await request(url);
         if (current !== pickerGeneration || !dialog.open) return;
         total = data.total;
         if (!data.items.length && offset > 0) {
@@ -459,7 +464,8 @@
           return await loadPicker();
         }
         picker("list").replaceChildren();
-        for (const item of data.items) {
+        const readyItems = data.items.filter((item) => item.ready_for_qa);
+        for (const item of readyItems) {
           const row = node("label", "document-picker-row");
           const checkbox = node("input");
           checkbox.type = "checkbox";
@@ -473,7 +479,7 @@
           row.append(checkbox, documentDescription(item));
           picker("list").append(row);
         }
-        if (!data.items.length) picker("list").append(node("p", "document-empty", "Chưa có tài liệu phù hợp trong thư viện."));
+        if (!readyItems.length) picker("list").append(node("p", "document-empty", "Chưa có tài liệu sẵn sàng phù hợp. Hãy tải file tại trang Tài liệu và đợi xử lý xong."));
         picker("page").textContent = total ? `${offset + 1}–${Math.min(offset + limit, total)} / ${total}` : "0 tài liệu";
         message(picker("status"), "Lựa chọn được giữ khi đổi trang hoặc bộ lọc. Bấm Lưu lựa chọn để áp dụng.");
       } catch (error) {
@@ -497,31 +503,13 @@
       notify();
       try {
         if (!await loadScope(conversationId, generation)) return;
-        draft = new Set(items.map((item) => item.id));
+        draft = new Set(items.filter((item) => item.ready_for_qa).map((item) => item.id));
         offset = 0;
         filters.reset();
         dialog.showModal();
         await loadPicker();
       } finally { busy = false; notify(); }
     });
-    find("upload").addEventListener("click", () => fileInput.click());
-    fileInput.addEventListener("change", async () => {
-      if (!fileInput.files.length || busy || externalDisabled || !conversationId) return;
-      const files = Array.from(fileInput.files);
-      const id = conversationId;
-      ++scopeGeneration;
-      busy = true;
-      notify();
-      try { await uploadFiles(files, id, find("progress"), status); }
-      catch (error) { message(status, error.message, true); }
-      finally {
-        fileInput.value = "";
-        await loadScope(id, generation, true);
-        busy = false;
-        notify();
-      }
-    });
-    find("refresh").addEventListener("click", () => { void refreshScope(); });
     picker("close").addEventListener("click", () => { if (!busy) dialog.close(); });
     dialog.addEventListener("cancel", (event) => { if (busy) event.preventDefault(); });
     dialog.addEventListener("close", () => { ++pickerGeneration; pickerLoading = false; notify(); });

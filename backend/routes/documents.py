@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 from starlette.formparsers import MultiPartException
 from starlette.responses import FileResponse, JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -127,9 +127,8 @@ async def post_document(
     user: CurrentUser,
     response: Response,
     file: Annotated[UploadFile, File()],
-    conversation_id: Annotated[UUID | None, Form()] = None,
 ) -> DocumentResponse:
-    document = await upload_document(session, user.id, file, conversation_id=conversation_id)
+    document = await upload_document(session, user.id, file)
     if document.deduplicated:
         response.status_code = status.HTTP_200_OK
     return document
@@ -143,6 +142,7 @@ async def get_documents(
     file_type: DocumentType | None = None,
     status: DocumentStatus | None = None,
     include_deleting: bool = False,
+    ready_for_qa: bool | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> DocumentListResponse:
@@ -155,6 +155,7 @@ async def get_documents(
         include_deleting=include_deleting,
         limit=limit,
         offset=offset,
+        ready_for_qa=ready_for_qa,
     )
 
 

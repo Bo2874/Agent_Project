@@ -619,3 +619,92 @@
   database/API/browser, test chức năng hoặc race/failure injection. Không cài/tải thêm dependency/model.
   Đánh dấu M3.8 phần code hoàn thành; nghiệm thu tay vẫn để mở. Tiếp theo chuẩn bị runtime,
   áp dụng migration/model cache khi đến bước chạy để người dùng test trực quan và báo lỗi.
+
+## 2026-10-25 — Chuẩn bị runtime M3 trên Windows
+
+- Kiểm tra cấu hình thực tế: PostgreSQL native 17.5, migration còn `20261019_0025`,
+  chưa có extension vector, chưa có worker; Docker engine không chạy. Giữ database native
+  hiện có. Đã sao lưu bằng pg_dump vào `.tools/runtime-setup/pre-m3-20261025.dump` trước migration.
+- Cập nhật `.env` private: V2_ENABLED/V2_ROUTING_ENABLED/V2_RAG_ENABLED=true,
+  ROUTING_MODE=active; giữ nguyên thông tin đăng nhập và API key.
+- Tải LibreOffice 26.8.1 từ nguồn chính thức, xác minh SHA256 và giải nén tại
+  `.tools/libreoffice-26.8.1`; chạy `soffice.com --headless --version` thành công.
+  DOCUMENT_LIBREOFFICE_PATH trỏ tới bản này, chưa thử chuyển tài liệu thật.
+- Clone pgvector tag v0.8.7 từ repo chính thức, biên dịch DLL bằng MSVC x64 cho PostgreSQL 17
+  thành công. Windows từ chối chép vào Program Files do thiếu quyền Administrator;
+  chuẩn bị `.tools/install-pgvector-admin.ps1` để user chạy nâng quyền, chỉ cài file extension.
+  User đã cài thành công; đã đối chiếu hash DLL với bản build, áp dụng migration 0026–0027.
+  Database hiện ở `20261024_0027`, có vector 0.8.7/unaccent, đủ 6 bảng tài liệu và `agent_runs.rag_trace`.
+- `uv sync` gặp WinError 32 khi rename cache; không thay lockfile hoặc tắt bảo vệ Windows.
+  Export dependency dev+ingestion từ `uv.lock`, cài qua pip bằng `--require-hashes --no-deps`
+  và index CPU chính thức của PyTorch. Cài xong torch CPU/Docling/ST/transformers và `pip check`
+  báo không thiếu dependency. Import Docling PDF/Word, sentence-transformers, transformers,
+  torch CPU thành công; không load model để inference hoặc đọc tài liệu thử.
+- Đã tải đủ trọng số/tokenizer F2LLM, Qwen reranker và Docling layout/table vào `data/models`.
+  F2LLM revision `8786315a8711c242ee03ec67c74dd9ad0a61e2cf`, Qwen revision
+  `e61197ed45024b0ed8a2d74b80b4d909f1255473`. Xác nhận cấu hình F2LLM 1.024 chiều/last-token pooling.
+  CDN ngắt nhiều lần nên Qwen dùng helper HTTP Range tiếp tục phần đã tải; kiểm SHA256
+  `27cd75a405b9c1b46b59abfd88aaa209e6fed2a1972cde9b70e7659537c5e65b` khớp metadata chính thức
+  trước khi đưa vào cache Hugging Face. Không tải/bật OCR hoặc gọi dịch vụ LLM trả phí.
+- Restart đúng cây tiến trình uvicorn của project, giữ nguyên terminal/tiến trình khác;
+  web chạy lại ở `http://127.0.0.1:8000`, health live/ready đều 200.
+  Khởi động worker native ở cửa sổ ẩn, có heartbeat mới và không có startup traceback.
+  Log/heartbeat local trong `.tools/runtime-setup/`; không tạo job hay upload tài liệu thử.
+- File tải về, source/compiled extension, helper setup, model cache, backup và cấu hình private
+  nằm trong đường dẫn đã được Git ignore. Chưa thực hiện kiểm thử chức năng/LLM/JEV/browser;
+  nghiệm thu tay M3 vẫn do user thực hiện sau khi runtime sẵn sàng.
+
+## 2026-10-25 — Bộ kịch bản kiểm thử M3 và dữ liệu mẫu local
+
+- Theo yêu cầu mới, bổ sung `docs/rag/MANUAL_M3_CASES.md`: kịch bản theo upload/scope,
+  parse/chuẩn hóa, chunk/provenance, embedding/FTS, dense/lexical/RRF/rerank/budget,
+  history/plan/rewrite, QA/citation/summary, worker/retry/cancel/re-index/delete và ownership.
+  Mỗi case có thao tác, nguồn quan sát và điều kiện đạt; có thứ tự test nhanh và cách ghi case fail.
+- Thêm `scripts/create_rag_fixtures.py`: sinh dữ liệu giả có đáp án cố định bằng Python,
+  python-docx, LibreOffice và Pillow/pypdf; không upload, ghi DB hoặc gọi model.
+  Đã tạo 19 file và answer key tại `data/rag-testing/fixtures` (Git ignore), gồm
+  TXT UTF-8/UTF-16/NFD, tài liệu dài/nhiều mục, Word DOC/DOCX, PDF text/ảnh/trộn/mã hóa,
+  file rỗng/giả PDF/CSV và 21 MiB để kiểm giới hạn. Không ghi đè thư mục mẫu đã có nội dung.
+  Lượt tạo mẫu trong sandbox bị lỗi quyền profile LibreOffice; giữ bản dở tại
+  `.tools/runtime-setup/m3-fixtures-incomplete`, tạo lại thành công với quyền chạy phù hợp.
+- Thêm `scripts/inspect_document_rag.py`: kết nối SQL read-only, yêu cầu email owner và lọc
+  document/version/run theo owner; list ID, đọc parsed artifact, sample chunk, toàn bộ offset/hash,
+  số chiều/norm/số vector/FTS, ingestion stage và rag_trace. Có tùy chọn đếm lại token bằng
+  tokenizer đã cache; không gọi embedding/reranker/LLM, không bổ sung endpoint debug vào web.
+- Hướng dẫn dùng POST /api/documents/search bằng phiên đăng nhập hiện tại để tách dense,
+  lexical và hybrid khỏi sinh câu trả lời; xem RRF candidate membership/reranker profile/budget.
+  Phân biệt rewrite riêng API với bước plan đã rewrite của chat document_qa, tránh hiểu nhầm
+  retrieval rewrite skipped là thiếu history. Kiểm quyền thật bằng hai phiên A/B, không dùng CLI
+  có quyền DB làm bằng chứng isolation API.
+- Xác minh Ruff/CLI help, EXPLAIN 9 SELECT bằng kết nối read-only/UUID không tồn tại,
+  dữ kiện/encoding/bảng, 2 trang PDF/text marker, OLE DOC, scan/mixed PDF và PDF mã hóa.
+  Không tạo hàng test trong database, không gọi LLM/model inference, chưa chạy bộ case trên web;
+  checkbox nghiệm thu M3 vẫn để mở. File code mới chỉ có hai script; sửa thêm PROJECT_PLAN.md
+  và ghi cuối PROJECT_NOTES.md, không thay pipeline hoặc giao diện thực thi.
+
+## 2026-10-25 — Upload chỉ tại thư viện, chat chỉ chọn tài liệu sẵn sàng
+
+- Theo yêu cầu mới, bỏ nút/input/progress upload và nút refresh thủ công trong chat;
+  giữ Chọn từ thư viện, danh sách file đã chọn và cập nhật scope tự động.
+  Trang Tài liệu tiếp tục upload/hiển thị mọi trạng thái xử lý. Upload API/service chỉ lưu
+  vào thư viện, bỏ tham số conversation_id và helper tự gắn file khi upload/deduplicate.
+- Hộp chọn gọi GET /api/documents?ready_for_qa=true. Backend lọc theo document còn tồn tại,
+  trạng thái ready và active version cùng owner còn ready trước khi tính total/phân trang.
+  Không lọc đơn thuần latest version.status=ready: file re-index đang chạy hoặc thất bại
+  vẫn chọn được nếu bản active cũ còn dùng được.
+- PUT lựa chọn kiểm lại quyền và readiness dưới khóa owner/conversation hiện có. File chưa
+  sẵn sàng trả 409/documents_not_ready; file không khả dụng trả 404; lựa chọn cũ chưa bị thay
+  khi kiểm tra thất bại. Frontend làm mới hộp chọn/lựa chọn đã lưu khi gặp lỗi lưu.
+- Hội thoại cũ đã chọn file chưa ready vẫn có thể bỏ chọn. Khi mở hộp chọn/lưu lại, draft chỉ
+  giữ các file ready; không xóa file gốc hoặc sửa history. Không tự thay selection bằng GET.
+- Sửa frontend/templates/chat.html, frontend/static/documents.js, backend/routes/documents.py,
+  backend/services/documents.py; cập nhật PROJECT_PLAN.md và MANUAL_M3_CASES.md (U01/U07,
+  thêm U08/U09 kiểm phân trang/readiness/re-index, chỉnh luồng queue). Không tạo file code mới.
+- Kiểm tra Ruff, Node syntax, render Jinja/selector DOM, OpenAPI upload chỉ có file và query
+  ready_for_qa. Chạy SELECT với CTE dữ liệu giả trên kết nối read-only để xác nhận loại queued/
+  failed/deleted/khác owner, giữ active ready khi re-index và total/pagination; không tạo dữ liệu DB.
+  Kiểm branch lưu lựa chọn bằng mock session: ready/bỏ chọn thành công, 409/404 không commit
+  hoặc thay lựa chọn trước đó. Chưa test giao diện tương tác hoặc gọi LLM/model inference;
+  user tiếp tục nghiệm thu tay theo hướng dẫn cập nhật.
+- Đã khởi động lại web của đúng project để nạp thay đổi, xác nhận HTTP OpenAPI có filter mới
+  và static JavaScript dùng ready_for_qa=true; worker cũ vẫn chạy. Browser cần Ctrl+F5 để tải UI mới.

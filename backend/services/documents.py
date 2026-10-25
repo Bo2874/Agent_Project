@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from starlette.datastructures import UploadFile
 
 from backend.core.config import Settings, get_settings
@@ -115,6 +116,23 @@ def _library_query(owner: UUID):
     )
 
 
+def _ready_for_qa(owner: UUID):
+    active = aliased(DocumentVersion)
+    return (
+        (Document.status == "ready")
+        & Document.deleted_at.is_(None)
+        & select(active.id)
+        .where(
+            active.id == Document.active_version_id,
+            active.document_id == Document.id,
+            active.owner_user_id == owner,
+            active.status == "ready",
+        )
+        .correlate(Document)
+        .exists()
+    )
+
+
 async def _lock_owner(session: AsyncSession, owner: UUID) -> None:
     # All storage-quota mutations share this lock, including cleanup, across app processes.
     found = await session.scalar(select(User.id).where(User.id == owner).with_for_update())
@@ -154,6 +172,7 @@ async def list_documents(
     include_deleting: bool,
     limit: int,
     offset: int,
+    ready_for_qa: bool | None = None,
 ) -> DocumentListResponse:
     from backend.services.document_ingestion import synchronize_terminal_preparations
 
@@ -164,6 +183,9 @@ async def list_documents(
     if query:
         filters.append(Document.title.icontains(query.strip(), autoescape=True))
     statement = _library_query(owner).where(*filters)
+    if ready_for_qa is not None:
+        readiness = _ready_for_qa(owner)
+        statement = statement.where(readiness if ready_for_qa else ~readiness)
     if status == "deleting":
         statement = statement.where(Document.status == "deleting")
     elif status:
@@ -247,21 +269,6 @@ async def get_document(
     return DocumentDetailResponse(**_view(document, version).model_dump(), ingestion=progress)
 
 
-async def _attach(
-    session: AsyncSession, owner: UUID, conversation_id: UUID | None, document_id: UUID
-) -> None:
-    if conversation_id is None:
-        return
-    await _lock_conversation(session, owner, conversation_id)
-    existing = await session.get(ConversationDocument, (conversation_id, document_id))
-    if existing is None:
-        session.add(
-            ConversationDocument(
-                conversation_id=conversation_id, document_id=document_id, owner_user_id=owner
-            )
-        )
-
-
 async def _lock_conversation(session: AsyncSession, owner: UUID, conversation_id: UUID) -> None:
     conversation = await session.scalar(
         select(Conversation.id)
@@ -325,8 +332,8 @@ async def set_conversation_documents(
     await _lock_conversation(session, owner, conversation_id)
     if document_ids:
         available = (
-            await session.scalars(
-                select(Document.id).where(
+            await session.execute(
+                select(Document.id, _ready_for_qa(owner).label("ready_for_qa")).where(
                     Document.id.in_(document_ids),
                     Document.owner_user_id == owner,
                     Document.deleted_at.is_(None),
@@ -334,8 +341,14 @@ async def set_conversation_documents(
                 )
             )
         ).all()
-        if set(available) != set(document_ids):
+        if {row.id for row in available} != set(document_ids):
             raise DocumentServiceError("Một số tài liệu không còn khả dụng.")
+        if any(not row.ready_for_qa for row in available):
+            raise DocumentServiceError(
+                "Chỉ có thể chọn tài liệu đã sẵn sàng hỏi đáp. Hãy làm mới thư viện.",
+                status_code=409,
+                code="documents_not_ready",
+            )
     await session.execute(
         delete(ConversationDocument).where(
             ConversationDocument.conversation_id == conversation_id,
@@ -355,7 +368,7 @@ async def set_conversation_documents(
 
 
 async def upload_document(
-    session: AsyncSession, owner: UUID, upload: UploadFile, *, conversation_id: UUID | None
+    session: AsyncSession, owner: UUID, upload: UploadFile
 ) -> DocumentResponse:
     from backend.services.document_ingestion import enqueue_preparation
 
@@ -392,7 +405,6 @@ async def upload_document(
         ).first()
         if duplicate:
             document, version = duplicate
-            await _attach(session, owner, conversation_id, document.id)
             if version.status == "uploaded":
                 ingestion = await session.scalar(
                     select(DocumentIngestionJob).where(
@@ -435,7 +447,6 @@ async def upload_document(
         )
         session.add(version)
         await session.flush()
-        await _attach(session, owner, conversation_id, document_id)
         await enqueue_preparation(session, document, version)
         commit_started = True
         try:

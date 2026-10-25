@@ -637,7 +637,8 @@ nhưng vẫn benchmark catalog riêng của project.
 
 Phạm vi đầu tiên: tài liệu riêng theo `user_id`, chọn một/nhiều tài liệu trong chat; tìm kiếm tài liệu
 và tìm đoạn văn là hai thao tác UI riêng. File thuộc thư viện user, tồn tại qua nhiều hội thoại;
-upload trong chat đồng thời chọn file cho hội thoại đó. Mở hội thoại mới có thể chọn lại file cũ;
+chỉ upload tại trang Tài liệu. Trong chat chỉ Chọn từ thư viện, chỉ hiện file đã sẵn sàng hỏi đáp.
+Mở hội thoại mới có thể chọn lại file cũ;
 bỏ chọn/xóa hội thoại không xóa file thư viện. Mặc định hỏi trong các file đang chọn.
 Chưa cần tổ chức/team sharing, OCR hay GraphRAG để ra bản đầu.
 
@@ -645,8 +646,9 @@ Thiết kế chốt với user ngày 2026-10-24: parse bằng Docling (PDF/Word)
 Python cho TXT; LlamaIndex cho pipeline RAG, LangGraph điều phối, PostgreSQL + pgvector lưu index.
 Embedding `codefuse-ai/F2LLM-v2-0.6B`, rerank `Qwen/Qwen3-Reranker-0.6B`; model chat hiện có
 thực hiện rewrite và trả lời. Triển khai từng phần nhỏ, dừng sau mỗi phần để user review và tự
-commit/push; chưa tạo/chạy test chức năng, fixture, benchmark hay eval. Kiểm thử trực quan do user
-thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế nghiệm thu chức năng.
+commit/push. Giai đoạn viết code chưa tạo/chạy test chức năng, fixture, benchmark hay eval.
+Ngày 2026-10-25 bổ sung bộ mẫu, công cụ kiểm tra local và [kịch bản test từng bước](docs/rag/MANUAL_M3_CASES.md)
+theo yêu cầu mới. Kiểm thử trực quan do user thực hiện; kiểm tra cú pháp/lint không thay thế nghiệm thu.
 
 **Các phần nhỏ và tiến độ code**
 
@@ -669,6 +671,8 @@ thực hiện sau; kiểm tra cú pháp/lint khi viết code không thay thế n
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy migration/model hoặc nghiệm thu web.
 - [x] M3.8 (code): Hoàn thiện delete/re-index/invalidation và thao tác xử lý lại trên web.
   Code hoàn thành ngày 2026-10-24; kiểm tra tĩnh, chưa chạy model/database hoặc test chức năng.
+- [x] Chuẩn bị kiểm thử M3: kịch bản web/API/local, bộ tài liệu giả có đáp án và CLI đọc index/trace.
+  Đã tạo mẫu local, kiểm nội dung/định dạng và SQL read-only; chưa chạy các case RAG để nghiệm thu.
 - [ ] M3.8 (nghiệm thu): User tự test tay trên web, kiểm tra isolation/citation và sửa theo kết quả.
 
 M3.1 chỉ chuẩn bị schema, không bật RAG hoặc tự tải model. `document_ingestion_jobs` ghi tiến độ,
@@ -679,7 +683,7 @@ Exact search là baseline; chưa tạo HNSW ở phần này. Downgrade chỉ g�
 
 M3.2: tạo `backend/services/document_storage.py`, `backend/services/documents.py`,
 `backend/schemas/document.py`, `backend/routes/documents.py`; API có auth ở `/api/documents`.
-Upload multipart nhận `file`, tùy chọn `conversation_id` cùng owner; trả 201 khi mới, 200 nếu trùng
+Upload multipart nhận `file` vào thư viện, không tự chọn cho hội thoại; trả 201 khi mới, 200 nếu trùng
 checksum/type với bản mới nhất của tài liệu còn tồn tại trong cùng thư viện. Quota mặc định 20 MiB/file,
 200 MiB/user, tối đa 1.000 tài liệu; khóa user khi thay đổi quota, tính cả dữ liệu chờ dọn.
 Private storage dùng UUID owner/document/version, không đưa đường dẫn vào API; kiểm tra tên, MIME,
@@ -698,12 +702,14 @@ M3.3: thêm `frontend/templates/documents.html`, `frontend/static/documents.js` 
 có đăng nhập; liên kết từ dashboard/chat. Thư viện có upload nhiều file lần lượt, tiến độ truyền file,
 quota, lọc tên/type/status, phân trang, tải xuống và xóa. Xóa trả trạng thái đang dọn; dung lượng
 chỉ giảm sau khi worker cleanup hoàn tất. File upload hiện còn `uploaded`, chưa sẵn sàng hỏi đáp.
-Trong chat có upload đồng thời gắn file, chọn lại file cũ qua hộp chọn có lọc/phân trang, bỏ chọn
-và làm mới. Lựa chọn lưu trong `conversation_documents`, được đọc lại khi chuyển/mở hội thoại;
+Theo cập nhật ngày 2026-10-25, chat bỏ upload, chỉ chọn file cũ đã ready_for_qa qua hộp chọn
+có lọc/phân trang và bỏ chọn; danh sách tự làm mới. Lựa chọn lưu trong `conversation_documents`, được đọc lại khi chuyển/mở hội thoại;
 không xóa file thư viện khi bỏ chọn hoặc xóa hội thoại. Bổ sung GET/PUT
 `/api/conversations/{conversation_id}/documents`, kiểm tra owner của hội thoại và toàn bộ file
 trước khi thay đổi danh sách trong một transaction. Chặn đổi lựa chọn khi có AgentRun đang hoạt động;
-UI khóa gửi/chuyển/xóa hội thoại trong lúc upload/lưu lựa chọn hoặc mở hộp chọn.
+Backend lọc ready_for_qa trước phân trang và kiểm lại readiness khi lưu lựa chọn;
+file re-index vẫn dùng được nếu active version cũ còn ready.
+UI khóa gửi/chuyển/xóa hội thoại trong lúc lưu lựa chọn hoặc mở hộp chọn.
 Không dùng dòng nhắc cố định dưới ô chat để hiển thị trạng thái tài liệu. Chưa nối scope vào JEV,
 retrieval hoặc prompt: việc nối nhánh document_qa làm ở M3.7. Chỉ kiểm tra cú pháp Python/JS/Jinja,
 lint/format, import/OpenAPI và biên dịch SQL offline; chưa gọi API/DB, áp dụng migration hoặc test UI.
@@ -856,6 +862,18 @@ Khi nhận delete event, tab chat đóng dialog nguồn đang mở, hủy respon
 nút citation của file đó; API nguồn luôn kiểm lại quyền kể cả browser không hỗ trợ BroadcastChannel.
 Chưa benchmark, test race/failure hoặc nghiệm thu web. Phần code M3 đã có đủ đường đi; bước kế
 tiếp là chuẩn bị runtime/migration/model cache để user tự test, rồi sửa theo kết quả trước khi chốt M3.
+
+Runtime Windows ngày 2026-10-25: database ban đầu ở `20261019_0025`; đã sao lưu
+vào `.tools/runtime-setup/pre-m3-20261025.dump`. Đã bật các cờ V2/RAG, đặt JEV `active`
+trong `.env` private và cấu hình LibreOffice 26.8.1 đã giải nén tại `.tools/`.
+pgvector 0.8.7 đã biên dịch cho PostgreSQL 17 và user đã chạy script local
+`.tools/install-pgvector-admin.ps1` bằng quyền Administrator để cài vào `Program Files`.
+Đã áp dụng migration lên `20261024_0027`, xác nhận 6 bảng tài liệu/cột `rag_trace`,
+extension vector/unaccent và `pip check` thành công. Web đã restart, health live/ready trả 200.
+Dependency ingestion đã cài theo bản export có hash từ `uv.lock`. Worker đã chạy và cập nhật
+heartbeat; cache F2LLM, Qwen reranker và Docling layout/table đã tải xong trong `data/models`.
+Qwen đã đối chiếu SHA256 chính thức; import các thư viện PDF/Word/embedding/reranker thành công.
+Runtime đã chuẩn bị xong; nghiệm thu hỏi đáp/citation/isolation trên web vẫn để user tự thực hiện.
 
 **Upload và ingestion**
 
