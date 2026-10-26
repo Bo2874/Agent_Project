@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from backend.schemas.document import DocumentCitationResponse
+from backend.schemas.document import DocumentCitationResponse, RagSearchMode
 
 
 class ConversationCreate(BaseModel):
@@ -29,6 +29,7 @@ class ConversationResponse(BaseModel):
 
 class MessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=12000)
+    rag_search_mode: RagSearchMode = "fast"
 
     @field_validator("content")
     @classmethod
@@ -119,3 +120,4 @@ class AgentRunTimelineResponse(BaseModel):
     steps: list[RunStepTimelineResponse]
     progress: list[dict[str, object]] = Field(default_factory=list)
     started_at: datetime | None = None
+    rag_search_mode: RagSearchMode | None = None

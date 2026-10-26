@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_core.context_budget import TOKEN_ESTIMATOR_NAME, estimate_tokens
 from agent_core.llm.types import ChatModel, TokenUsage
+from agent_core.rag.qa import PLAN_VERSION
 from agent_core.rag.reranking import QwenRerankerClient, RerankingError
 from agent_core.rag.retrieval import (
     FUSION_RECIPE,
@@ -253,8 +254,14 @@ async def retrieve_document_evidence(
     current_message_id: UUID | None = None,
     on_rewrite: Callable[[DocumentRewriteTrace, str], Awaitable[None]] | None = None,
     on_progress: Callable[..., Awaitable[None]] | None = None,
+    query_is_planned: bool = False,
+    candidates_only: bool = False,
 ) -> DocumentSearchResponse:
-    """No answer generation; on_rewrite observes calls but must not charge their tokens again."""
+    """Retrieve once. QA defers final selection until every query has its top ten.
+
+    A query already produced by the QA planner must not call the rewrite model again.
+    Standalone search keeps its history-aware rewrite and selects at most five sources.
+    """
     settings = get_settings()
 
     async def progress(stage, state, **metadata):
@@ -267,24 +274,34 @@ async def retrieve_document_evidence(
         version.id: (version.pipeline_hash, version.pipeline_config.get("embedding_profile"))
         for version in versions
     }
-    files = (
-        await session.execute(
-            select(Document.id, Document.title)
-            .where(
-                Document.id.in_([version.document_id for version in versions]),
-                Document.owner_user_id == owner,
-                Document.deleted_at.is_(None),
+    if query_is_planned:
+        rewrite = DocumentRewriteTrace(query=request.query, prompt_version=PLAN_VERSION)
+        await session.rollback()
+    else:
+        files = (
+            await session.execute(
+                select(Document.id, Document.title)
+                .where(
+                    Document.id.in_([version.document_id for version in versions]),
+                    Document.owner_user_id == owner,
+                    Document.deleted_at.is_(None),
+                )
+                .order_by(Document.id)
             )
-            .order_by(Document.id)
+        ).all()
+        history, trimmed = await _recent_history(
+            session, owner, request.conversation_id, current_message_id
         )
-    ).all()
-    history, trimmed = await _recent_history(
-        session, owner, request.conversation_id, current_message_id
-    )
-    await session.rollback()
-    rewrite = await _rewrite(
-        request.query, history, files, owner, trimmed=trimmed, model=model, on_rewrite=on_rewrite
-    )
+        await session.rollback()
+        rewrite = await _rewrite(
+            request.query,
+            history,
+            files,
+            owner,
+            trimmed=trimmed,
+            model=model,
+            on_rewrite=on_rewrite,
+        )
 
     async def revalidate():
         current = await _scope(session, owner, request)
@@ -315,7 +332,7 @@ async def retrieve_document_evidence(
     fused = reciprocal_rank_fusion(dense.items, lexical.items)
     await progress("fusion", "completed", count=len(fused))
     texts = {}
-    if fused:
+    if fused and request.search_mode == "deep":
         rows = (
             await session.execute(
                 scoped_chunks(owner, list(snapshot)).where(
@@ -329,8 +346,8 @@ async def retrieve_document_evidence(
                 "Nguồn tài liệu đã thay đổi.", status_code=409, code="document_scope_changed"
             )
     await session.rollback()
-    profile, rerank_ms, ranked = None, 0, []
-    if fused:
+    profile, rerank_ms, ranked = None, 0, fused
+    if fused and request.search_mode == "deep":
         rerank_started = perf_counter()
         await progress("rerank", "running", count=len(fused))
 
@@ -349,39 +366,46 @@ async def retrieve_document_evidence(
                 str(exc), status_code=422 if exc.code.endswith("limit") else 503, code=exc.code
             ) from None
         profile = reranked.profile
-        fused_order = {hit.chunk_id: index for index, hit in enumerate(fused)}
         ranked = sorted(
             [
                 hit.model_copy(update={"score": score, "score_kind": "rerank"})
                 for hit, score in zip(fused, reranked.scores, strict=True)
             ],
-            key=lambda hit: (-hit.score, fused_order[hit.chunk_id], str(hit.chunk_id)),
+            # Equal reranker scores use stable identity, never the previous RRF rank.
+            key=lambda hit: (-hit.score, str(hit.chunk_id)),
         )
         rerank_ms = round((perf_counter() - rerank_started) * 1000)
         await progress("rerank", "completed", count=len(fused))
     await revalidate()
     config = {
         "fusion": FUSION_RECIPE,
-        "packing": PACKING_RECIPE,
+        "packing": "deferred" if candidates_only else PACKING_RECIPE,
+        "search_mode": request.search_mode,
         "reranker": profile,
         "embedding": [
             value[1] for _, value in sorted(snapshot.items(), key=lambda item: str(item[0]))
         ],
         "rewrite": rewrite.prompt_version,
-        "rewrite_prompt_hash": hashlib.sha256(REWRITE_PROMPT.encode()).hexdigest(),
+        "rewrite_prompt_hash": (
+            None if query_is_planned else hashlib.sha256(REWRITE_PROMPT.encode()).hexdigest()
+        ),
         "lexical": LEXICAL_CONFIG,
         "estimator": TOKEN_ESTIMATOR_NAME,
-        "token_budget": settings.context_rag_token_budget,
+        "token_budget": None if candidates_only else min(4000, settings.context_rag_token_budget),
     }
     fingerprint = (
-        "hybrid-v1-"
+        "hybrid-v2-"
         + hashlib.sha256(
             json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()[:32]
     )
     ranked = [hit.model_copy(update={"retrieval_config_version": fingerprint}) for hit in ranked]
-    packed = pack_evidence(ranked, token_budget=settings.context_rag_token_budget)
-    if ranked and not packed.items:
+    packed = (
+        None
+        if candidates_only
+        else pack_evidence(ranked, token_budget=settings.context_rag_token_budget)
+    )
+    if packed is not None and ranked and not packed.items:
         raise DocumentServiceError(
             "Budget context không chứa được đoạn nguồn nào.",
             status_code=422,
@@ -390,13 +414,16 @@ async def retrieve_document_evidence(
     return DocumentSearchResponse(
         query=request.query,
         mode="hybrid",
-        items=packed.items,
+        search_mode=request.search_mode,
+        items=ranked if packed is None else packed.items,
         retrieval_config_version=fingerprint,
         rewrite=rewrite,
         reranker_profile=profile,
-        evidence_estimated_tokens=packed.estimated_tokens,
-        evidence_token_budget=settings.context_rag_token_budget,
-        budget_skipped_chunks=packed.budget_skipped,
+        evidence_estimated_tokens=0 if packed is None else packed.estimated_tokens,
+        evidence_token_budget=None
+        if packed is None
+        else min(4000, settings.context_rag_token_budget),
+        budget_skipped_chunks=0 if packed is None else packed.budget_skipped,
         retrieval_metadata={
             "dense_count": len(dense.items),
             "lexical_count": len(lexical.items),
@@ -405,6 +432,9 @@ async def retrieve_document_evidence(
             "latency_ms": round((perf_counter() - started) * 1000),
             "fusion_recipe": FUSION_RECIPE,
             "packing_recipe": PACKING_RECIPE,
+            "selection_deferred": candidates_only,
+            "query_is_planned": query_is_planned,
+            "rerank_pair_count": len(fused) if request.search_mode == "deep" else 0,
             "token_estimator": TOKEN_ESTIMATOR_NAME,
         },
     )

@@ -45,7 +45,7 @@ from agent_core.rag.qa import (
     build_document_qa_graph,
     parse_json,
 )
-from agent_core.rag.retrieval import evidence_block, pack_evidence
+from agent_core.rag.retrieval import PACKING_RECIPE, evidence_block, select_ranked_evidence
 from backend.core.config import get_settings
 from backend.database import SessionFactory
 from backend.models import (
@@ -57,7 +57,7 @@ from backend.models import (
     DocumentCitation,
     User,
 )
-from backend.schemas.document import DocumentSearchRequest
+from backend.schemas.document import DocumentSearchRequest, RagSearchMode
 from backend.services.document_query import _recent_history, retrieve_document_evidence
 from backend.services.document_retrieval import _hit, _scope, scoped_chunks
 from backend.services.documents import DocumentServiceError
@@ -125,6 +125,7 @@ async def stream_document_qa(
     limits: AgentLimits,
     context_budget: ContextTokenBudget,
     result: DocumentQAResult,
+    search_mode: RagSearchMode = "fast",
 ) -> AsyncIterator[LLMChunk | AgentLoopEvent]:
     limits = replace(limits, max_duration_seconds=get_settings().document_qa_timeout_seconds)
     request = DocumentSearchRequest(query=query[:4000], conversation_id=conversation_id)
@@ -133,6 +134,7 @@ async def stream_document_qa(
     initial_progress = result.trace.get("progress", [])
     result.trace = {
         "version": ANSWER_VERSION,
+        "search_mode": search_mode,
         "original_query": query[:4000],
         "calls": [],
         "retrievals": [],
@@ -172,6 +174,12 @@ async def stream_document_qa(
                 "started_at", datetime.now(UTC).isoformat()
             ),
         }
+        if stage.startswith("query."):
+            index = int(stage.split(".")[1])
+            total = len(result.trace["plan"]["queries"])
+            row["label"] += f" · truy vấn {index}/{total}"
+        elif stage == "scope":
+            row["label"] += f" · {search_mode.title()}"
         if metadata and isinstance(metadata.get("count"), int):
             row["count"] = metadata["count"]
         progress_rows[stage] = row
@@ -459,33 +467,50 @@ async def stream_document_qa(
                         session,
                         owner,
                         DocumentSearchRequest(
-                            query=subquery, document_ids=result.document_ids, mode="hybrid"
+                            query=subquery,
+                            document_ids=result.document_ids,
+                            mode="hybrid",
+                            search_mode=search_mode,
                         ),
                         on_progress=on_progress,
+                        query_is_planned=True,
+                        candidates_only=True,
                     )
                 rankings.append(response.items)
                 trace = response.model_dump(mode="json", exclude={"items"})
+                trace["candidates"] = [
+                    hit.model_dump(mode="json", exclude={"text"}) for hit in response.items
+                ]
                 result.trace["retrievals"].append(trace)
                 await _save_trace(run_id, owner, result.trace)
             await progress("evidence")
-            seen = set()
-            # Interleave subquestions so the first query cannot consume the entire context.
-            for rank in range(max((len(items) for items in rankings), default=0)):
-                for items in rankings:
-                    if rank < len(items) and items[rank].chunk_id not in seen:
-                        seen.add(items[rank].chunk_id)
-                        evidence.append(items[rank])
-            evidence = pack_evidence(evidence[:20], token_budget=context_budget.rag_tokens).items
+            packed = select_ranked_evidence(rankings, token_budget=context_budget.rag_tokens)
+            evidence = packed.items
+            result.trace["selection"] = {
+                "recipe": PACKING_RECIPE,
+                "token_budget": min(4000, context_budget.rag_tokens),
+                "estimated_tokens": packed.estimated_tokens,
+                "budget_skipped": packed.budget_skipped,
+                "duplicate_skipped": packed.duplicate_skipped,
+                "content_duplicate_skipped": packed.content_duplicate_skipped,
+                "query_contributions": packed.query_contributions,
+                "chunk_queries": {str(k): v for k, v in packed.chunk_queries.items()},
+                "max_chunks_per_query": 5,
+                "max_chunks": 15,
+            }
             result.trace["coverage"] = {
                 "mode": "retrieved_passages",
                 "queries": [
                     {
                         "query": q,
-                        "selected_chunks": len(
+                        "selected_chunks": count,
+                        "matched_selected_chunks": len(
                             {h.chunk_id for h in items} & {h.chunk_id for h in evidence}
                         ),
                     }
-                    for q, items in zip(plan.queries, rankings, strict=True)
+                    for q, items, count in zip(
+                        plan.queries, rankings, packed.query_contributions, strict=True
+                    )
                 ],
             }
         result.evidence = [

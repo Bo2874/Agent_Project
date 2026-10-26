@@ -98,11 +98,11 @@ Muốn lưu báo cáo, đặt `--output` trước tên subcommand; file đã t�
 Sau khi đăng nhập A, mở DevTools → Console trên trang web của project, khai báo:
 
 ```javascript
-async function searchRag(query, scope, mode = "hybrid") {
+async function searchRag(query, scope, mode = "hybrid", search_mode = "fast") {
   const response = await fetch("/api/documents/search", {
     method: "POST", credentials: "same-origin", cache: "no-store",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, ...scope, mode, limit: 20 })
+    body: JSON.stringify({ query, ...scope, mode, search_mode, limit: 20 })
   });
   const data = await response.json();
   if (!response.ok) throw new Error(JSON.stringify({ status: response.status, data }));
@@ -211,13 +211,18 @@ Chỉ chọn Atlas/Boreal khi case yêu cầu; dùng API helper để xem kết 
 | R01 | `await searchRag("ATLAS-XQ-7319", scope, "lexical")` | Có đoạn chứa mã chính xác; `score_kind=lexical`; không cần chạy model |
 | R02 | `await searchRag("bao hanh", scope, "lexical")` | Tìm được text “bảo hành”; dấu tiếng Việt không làm mất kết quả |
 | R03 | `await searchRag("Thiết bị được hỗ trợ sửa chữa trong bao lâu?", scope, "dense")` | Đoạn bảo hành nằm trong các ứng viên; `score_kind=similarity`; xem chất lượng theo nội dung, không chỉ điểm |
-| R04 | Hybrid với câu “Atlas bị ngâm nước có được đổi trả không?” | Evidence có điều khoản phủ định; `reranker_profile.model` là Qwen, score_kind=rerank; không làm mất chữ “không” |
+| R04 | `await searchRag("Atlas bị ngâm nước có được đổi trả không?", scope, "hybrid", "deep")` | Evidence có điều khoản phủ định; `reranker_profile.model` là Qwen, score_kind=rerank; không làm mất chữ “không” |
 | R05 | Chọn cả Atlas/Boreal rồi tìm “So sánh thời hạn bảo hành Atlas và Boreal” | Evidence có hai tài liệu nếu đủ budget; không lấy hai con số từ cùng một file rồi gán sang file kia |
-| R06 | Chọn file dài, tìm “Thời hạn xử lý hồ sơ trong sổ tay” | Các item nguyên chunk, tối đa 8, không lặp chunk; estimated_tokens không vượt evidence_token_budget |
+| R06 | Chọn file dài, tìm “Thời hạn xử lý hồ sơ trong sổ tay” | API một query trả tối đa 5 item nguyên chunk, không lặp chunk; estimated_tokens không vượt evidence_token_budget và 4.000 |
+| R07 | Gọi hybrid với `search_mode="fast"` (mặc định) | `score_kind=fusion`, điểm RRF giảm dần; reranker_profile=null, rerank_pair_count=0, không có phase rerank |
+| R08 | Gọi cùng câu hỏi với `search_mode="deep"` | RRF giữ tối đa 10; rerank_pair_count <= 10; item theo điểm reranker giảm dần, RRF không được ưu tiên hơn reranker |
 
 Với request `document_ids`, không có history nên `rewrite.status=skipped` là bình thường.
-Hybrid có tối đa 20 dense + 20 lexical → RRF top 20 → rerank → mục tiêu 6 evidence, tối đa 8.
-Ít ứng viên hơn thì không cần đủ 6. Các con số là giới hạn cấu trúc, không bảo đảm recall/chất lượng.
+Mỗi query: 20 dense + 20 lexical → RRF top 10. Fast giữ thứ tự RRF và bỏ reranker;
+Deep rerank tối đa 10 cặp query–chunk, chỉ lấy thứ tự điểm reranker (đồng điểm dùng chunk ID).
+Chat giữ riêng đủ danh sách Top 10 của từng query rồi mới chọn nguồn chung; API search chỉ có
+một query nên trả tối đa 5 nguồn. Không ép lấy đủ số lượng hoặc tự retrieval/rerank lại để bù.
+Các con số là giới hạn cấu trúc, không bảo đảm recall/chất lượng; chưa có threshold liên quan đã hiệu chỉnh.
 
 Để kiểm tra riêng hợp nhất ứng viên RRF, dùng cùng câu hỏi, cùng scope, limit=20, giữ nguyên file:
 
@@ -238,7 +243,7 @@ for (const ranking of [dense.items, lexical.items]) {
   });
 }
 const fused = [...merged.values()]
-  .sort((a, b) => b.score - a.score || a.key.localeCompare(b.key)).slice(0, 20);
+  .sort((a, b) => b.score - a.score || a.key.localeCompare(b.key)).slice(0, 10);
 console.table(fused);
 const hybrid = await searchRag(query, scope, "hybrid");
 console.assert(hybrid.retrieval_metadata.fused_count === fused.length, "Sai số ứng viên RRF");
@@ -247,7 +252,7 @@ console.assert(hybrid.items.every(hit => fused.some(row =>
 ```
 
 Hai nhánh cùng trả một chunk thì RRF cộng hai đóng góp nhưng giữ một bản chunk.
-Điểm cuối hybrid là điểm reranker, không phải điểm RRF. Thứ tự sau rerank có thể giữ nguyên;
+Điểm cuối Fast là RRF, Deep là reranker. Thứ tự sau rerank có thể giữ nguyên;
 không dùng “thứ tự phải đổi” làm điều kiện pass. Dùng Network/JSON kiểm tra điểm giảm dần và đúng evidence.
 
 ## 7. History, rewrite và lập kế hoạch câu hỏi
@@ -299,6 +304,30 @@ Tạo chat mới rỗng để đối chứng: không yêu cầu tự biết ch�
 **H03:** Chọn Atlas + Boreal, hỏi “So sánh bảo hành, đổi trả và thời gian giao hàng của hai sản phẩm.”
 `plan.queries` có 1–3 truy vấn bao phủ cả ba ý; câu trả lời đủ 24/12 tháng, 14/7 ngày, 3/5 ngày.
 Không bắt buộc phải tách thành đúng 3 truy vấn nếu một câu đã bao phủ đủ.
+
+### Fast/Deep và chọn nguồn cuối bằng Ranked Round-Robin
+
+Trên chat, chọn **Tìm kiếm tài liệu → Fast / Deep** trước khi gửi; mặc định Fast.
+Lựa chọn được lưu theo từng run, đổi chế độ cho câu tiếp theo không sửa run cũ. Không cần
+upload/re-index lại file hoặc đổi .env. Fast/Deep áp dụng cho hỏi đáp truy xuất; nhánh tóm tắt
+toàn tài liệu vẫn đọc toàn bộ scope trong giới hạn 64 chunk và chia batch khi cần.
+
+| ID | Thao tác | Điều kiện đạt |
+| --- | --- | --- |
+| F01 | Chọn Fast, hỏi một thông tin trong file | Hiện Fast; dense/lexical/RRF chạy một lần/query; không rerank/nạp reranker; tối đa 5 chunk |
+| F02 | Đổi Deep, gửi lại câu hỏi | Hiện Deep; một phase rerank/query, tối đa 10 cặp; thứ tự candidates theo reranker giảm dần |
+| F03 | Hỏi nhiều ý như H03; kiểm plan.queries và trace bằng inspector | 1–3 danh sách retrievals[].candidates, mỗi danh sách <=10; phase ghi truy vấn i/N; Fast score_kind=fusion, Deep=rerank |
+| F04 | Dùng câu hỏi con gần nhau để có nguồn chung | Final không trùng chunk_id; gặp trùng phải xét tiếp trong cùng lượt query; selection.chunk_queries ghi các query tìm thấy nguồn; không khẳng định một nguồn chung được tính nhiều quota |
+| F05 | Đọc selection và coverage của F03 | query_contributions mỗi query <=5, tổng bằng số evidence <=15; estimated_tokens <= token_budget <=4000; mỗi vòng ưu tiên một nguồn/query còn hợp lệ |
+| F06 | Dùng file dài có chunk lớn | Có thể chỉ lấy ít chunk vì budget; không cắt giữa chunk, không bắt buộc đủ 5/query; budget_skipped ghi số ứng viên không vừa |
+| F07 | Mở lại hội thoại, đổi chế độ rồi hỏi tiếp “Còn đổi trả thì sao?” | Run cũ giữ chế độ cũ, run mới theo lựa chọn; history vẫn giải nghĩa đúng; không lặp rewrite cho từng query |
+
+Global dedup dùng chunk_id. Nội dung giống hoàn toàn trong cùng version/section cũng chỉ giữ
+một bản (chỉ chuẩn hóa CRLF/LF, giữ khoảng trắng/indent code). Overlap một phần hoặc trùng text
+ở file/version khác được giữ
+để không làm mất thông tin và nguồn. Không so sánh điểm trực tiếp giữa các query. Giới hạn
+4.000 dùng bộ ước lượng context hiện có (utf8_bytes_v1), gồm metadata và label nguồn; không
+phải phép đếm chính xác bằng tokenizer của LLM. Nhãn cuối S1… được tính ngay khi chọn nguồn.
 
 ## 8. Trả lời, citation và tóm tắt
 
@@ -416,8 +445,8 @@ của parse/chunk file. Giá trị `.env` nếu đã đặt riêng được ưu 
 | Case | Thao tác | Điều kiện đạt |
 | --- | --- | --- |
 | T01 | Gửi câu hỏi về file đã chọn | Timer xuất hiện ngay khi gửi, tăng mỗi giây dù backend đang yên lặng; dừng khi hoàn thành |
-| T02 | Hỏi lần đầu sau khi restart web | Có mốc nhận/phân loại, kiểm tra phạm vi, phân tích câu hỏi, embedding, dense/lexical, gộp, rerank, chọn nguồn, tổng hợp, kiểm citation; chỉ có dòng nạp model nếu thực sự phải nạp |
-| T03 | Xem công đoạn rerank | Hiển thị số ứng viên thật khi đã biết, chẳng hạn 20 đoạn; không có phần trăm hoặc ETA giả. Thời gian công đoạn cha bao gồm các bước con được thụt vào |
+| T02 | Hỏi lần đầu sau khi restart web | Có mốc nhận/phân loại, kiểm tra phạm vi, phân tích câu hỏi, embedding, dense/lexical, gộp, chọn nguồn, tổng hợp, kiểm citation; chỉ Deep có rerank, chỉ có dòng nạp model nếu thực sự phải nạp; từng phase tìm kiếm ghi truy vấn i/N |
+| T03 | Xem công đoạn rerank trong Deep | Hiển thị số ứng viên thật, tối đa 10 đoạn/query; không có phần trăm hoặc ETA giả. Thời gian công đoạn cha bao gồm các bước con được thụt vào |
 | T04 | Mở lại hội thoại đã hoàn tất hoặc lỗi | Giữ thời gian tổng theo timestamps và tiến trình đã lưu; timer không tự chạy lại. Model plan được gọi là phân tích câu hỏi, không phải hoàn thiện đáp án |
 | T05 | Mất kết nối khi đang gửi/stream | Timer dừng, báo lỗi; không giữ bước đang chạy quay mãi. EOF trước done/error phải được báo là kết nối chưa hoàn tất |
 | T06 | Mở lại run còn running | Timer phản ánh thời gian đã trôi qua, API được kiểm lại mỗi 3 giây tới terminal; đổi hội thoại hoặc đóng DOM phải dừng timer/poll. Lỗi mạng khi poll dừng clock, báo mất kết nối và thử cập nhật lại |

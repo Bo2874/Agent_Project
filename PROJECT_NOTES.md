@@ -1023,3 +1023,44 @@
   ngay quanh lựa chọn/resolve shortlist thật theo step, qua event handler/recorder hiện có;
   không phát lại lựa chọn đã commit khi resume. Không đổi choice, quyền tool hay approval.
   Thêm 50 test shortlist/status SSE đạt, nâng tổng kiểm hiện có trong bước này lên 75.
+
+## 2026-10-27 — Fast/Deep và Ranked Round-Robin cho hỏi đáp tài liệu
+
+- User duyệt thiết kế trước khi làm: từng query dense20 + lexical20 → RRF Top10; Fast bỏ hẳn
+  reranker, Deep rerank tối đa10 cặp/query và chỉ sắp theo reranker giảm dần. Nếu đồng điểm
+  dùng chunk ID ổn định, không dùng lại thứ hạng RRF. Không tự đặt ngưỡng liên quan chưa hiệu chỉnh.
+- agent_core/rag/retrieval.py đổi fingerprint RRF/selection recipe. Final nhận 1–3 danh sách
+  riêng, Ranked Round-Robin theo query, tối đa5 đóng góp/query,15 chunk tổng,4000 token theo
+  estimator utf8_bytes_v1 hiện có (gồm metadata/wrapper). Cùng chunk_id chỉ cấp vào context một lần;
+  gặp trùng/quá dài xét tiếp ngay trong lượt đó. Không ép đủ số lượng, không cắt text để vừa budget.
+- Khử trùng text hoàn toàn chỉ trong cùng version/section, chỉ chuẩn hóa CRLF/LF, giữ indent code;
+  giữ nguyên các đoạn overlap một phần và text ở file/version khác để bảo toàn thông tin/nguồn. Không thêm
+  thuật toán similarity hoặc threshold có thể làm mất nguồn mà chưa được hiệu chỉnh.
+- backend/services/document_query.py có đường trả candidates_only cho QA: giữ đủ Top10 chưa
+  đóng budget. query_is_planned bỏ rewrite lặp, vẫn revalidate owner/scope/version sau inference.
+  Search API độc lập vẫn rewrite có history và chọn tối đa5 nguồn, mặc định Fast; Deep lỗi trả lỗi,
+  không fallback Fast. API giữ citation ID opaque đúng contract; QA tính budget với label S1… cuối.
+- backend/services/document_qa.py gọi retrieval đúng một lần/subquery rồi chọn chung; không so
+  score giữa query. Trace lưu candidates theo query không có text, selection budget/estimated_tokens,
+  query_contributions, chunk_queries và số ứng viên trùng/vượt budget. coverage tách số đóng góp
+  với số nguồn chung được tìm thấy. Phase ghi truy vấn i/N và chế độ, không còn hai dòng giống hệt
+  khiến user không biết đang xử lý query nào. Output repair vẫn chỉ sửa câu trả lời trên evidence cũ.
+- schemas/chat.py, schemas/document.py thêm chế độ được validate Fast/Deep. Routes chat truyền
+  MessageCreate.rag_search_mode (mặc định fast) xuống QA; services/agent_runs.py lưu trong JSONB
+  trace hiện có và trả qua API timeline; resume lấy chế độ từ run, không từ lựa chọn mới trên web.
+- frontend/templates/chat.html, static/chat.js/styles.css thêm chọn Fast/Deep cùng mô tả ở ô nhập,
+  khóa khi đang gửi, gửi theo từng message; timeline hiển thị chế độ đã lưu cả khi mở lại. Không
+  đổi footer AI có thể mắc lỗi, tool approval hoặc routing. Không sửa .env, ingestion/model/index,
+  dependency/schema DB; không cần upload/re-index lại. Nhánh tóm tắt toàn scope giữ giới hạn64 chunk.
+- Kiểm local không gọi provider/model/DB: selector đạt 15 nguồn/[5,5,5] với chunk ngắn, đúng thứ tự
+  vòng, dedup không mất lượt, chunk lớn bị skip, biên budget/nhãn cuối, text trùng và overlap;
+  hybrid Fast không gọi client reranker, Deep tối đa10 và score/tie không phụ thuộc RRF, API max5.
+  Graph thật với model/retrieval/persistence giả kiểm 3 query, chỉ 2 call plan+answer, repair không
+  lặp retrieval và lỗi retrieval không tự retry; route nhận/truyền/lưu đúng cả hai mode. Helper
+  .tools/runtime-setup/check_rag_modes.py nằm Git ignore, không thêm test/code tracked.
+- 13 test hiện có về recorder/timeline/streaming/status đạt; DOM host timer/poll/SSE cũ và kiểm
+  gửi Fast/Deep theo message, khôi phục chế độ timeline đạt. Ruff check/format 7 file Python,
+  JS syntax, Jinja compile và git diff --check đạt.
+  MANUAL_M3_CASES.md cập nhật R04/R06–R08, RRF Top10 và F01–F07 cho user test web; PROJECT_PLAN.md
+  ghi cấu hình mới. Chưa chạy benchmark LLM/model thật hoặc kiểm trực quan browser của bản Fast/Deep,
+  không dùng số đo CPU cũ làm bằng chứng tốc độ mới. User restart web không --reload rồi Ctrl+F5.

@@ -6,6 +6,7 @@ if (chatApp) {
   const messageForm = chatApp.querySelector("[data-message-form]");
   const textarea = messageForm.querySelector("textarea");
   const sendButton = messageForm.querySelector("button");
+  const ragSearchMode = chatApp.querySelector("[data-rag-search-mode]");
   const title = chatApp.querySelector("[data-chat-title]");
   const status = chatApp.querySelector("[data-chat-status]");
   let activeConversationId = null;
@@ -18,6 +19,7 @@ if (chatApp) {
     const disabled = streamInProgress || conversationMutationPending || documentMutationPending;
     textarea.disabled = disabled;
     sendButton.disabled = disabled;
+    if (ragSearchMode) ragSearchMode.disabled = disabled;
     chatApp.querySelector("[data-new-chat]").disabled = disabled;
     conversationList.querySelectorAll("button").forEach((button) => {
       button.disabled = disabled;
@@ -287,11 +289,14 @@ if (chatApp) {
     progressList.className = "pipeline-progress";
     progressList.setAttribute("role", "list");
     progressList.setAttribute("aria-label", "Các công đoạn xử lý");
-    root.append(summary, statusBlock, progressList, list);
+    const searchMode = document.createElement("p");
+    searchMode.className = "timeline-search-mode";
+    searchMode.hidden = true;
+    root.append(summary, searchMode, statusBlock, progressList, list);
     assistantBubble.before(root);
 
     const timeline = {
-      root, titleText, count, timer, statusBlock, list, progressList,
+      root, titleText, count, timer, statusBlock, list, progressList, searchMode,
       items: new Map(), progressItems: new Map(), clock: null, poll: null, terminal: false,
     };
     if (expanded) startTimelineClock(timeline);
@@ -302,6 +307,12 @@ if (chatApp) {
     const seconds = Math.max(0, Math.floor(milliseconds / 1000));
     const minutes = Math.floor(seconds / 60);
     return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function updateTimelineSearchMode(timeline, mode) {
+    timeline.searchMode.hidden = !["fast", "deep"].includes(mode);
+    timeline.searchMode.textContent = mode === "deep"
+      ? "Tìm kiếm tài liệu: Deep" : "Tìm kiếm tài liệu: Fast";
   }
 
   function tickTimelineClock(timeline) {
@@ -601,6 +612,7 @@ if (chatApp) {
   }
 
   function updateStoredTimeline(timeline, run) {
+    updateTimelineSearchMode(timeline, run.rag_search_mode);
     const startedAt = Date.parse(run.started_at || run.created_at);
     const finishedAt = run.finished_at ? Date.parse(run.finished_at) : Date.now();
     const elapsed = Number.isFinite(startedAt) ? Math.max(0, finishedAt - startedAt) : 0;
@@ -789,6 +801,7 @@ if (chatApp) {
           if (parsed.event === "start") {
             runId = parsed.data.run_id;
             timeline.root.dataset.runId = runId;
+            updateTimelineSearchMode(timeline, parsed.data.rag_search_mode);
           }
           if (parsed.event === "progress") {
             updatePipelineProgress(timeline, parsed.data);
@@ -866,7 +879,7 @@ if (chatApp) {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, rag_search_mode: ragSearchMode?.value || "fast" }),
     });
   }
 

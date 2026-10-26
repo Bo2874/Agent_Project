@@ -19,6 +19,7 @@ DocumentStatus = Literal[
     "deleting",
 ]
 DocumentType = Literal["pdf", "doc", "docx", "txt"]
+RagSearchMode = Literal["fast", "deep"]
 
 
 class DocumentResponse(BaseModel):
@@ -116,13 +117,12 @@ class DocumentSearchRequest(BaseModel):
     document_ids: list[UUID] = Field(default_factory=list, max_length=1000)
     conversation_id: UUID | None = None
     mode: Literal["dense", "lexical", "hybrid"] = "hybrid"
+    search_mode: RagSearchMode = "fast"
     limit: int = Field(
         default=20,
         ge=1,
         le=50,
-        description=(
-            "Top-k for dense/lexical only; hybrid uses fixed 20+20 candidates and evidence budget."
-        ),
+        description=("Top-k for dense/lexical only; hybrid uses 20+20, RRF top 10, final max 5."),
     )
 
     @model_validator(mode="after")
@@ -152,6 +152,7 @@ class DocumentRewriteTrace(BaseModel):
 class DocumentSearchResponse(BaseModel):
     query: str
     mode: Literal["dense", "lexical", "hybrid"]
+    search_mode: RagSearchMode | None = None
     items: list[RetrievalResult]
     retrieval_config_version: str
     rewrite: DocumentRewriteTrace | None = None

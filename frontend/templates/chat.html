@@ -83,6 +83,14 @@
                 <textarea name="content" rows="1" maxlength="12000" placeholder="Nhắn cho Personal Agent…" required></textarea>
                 <button type="submit" aria-label="Gửi tin nhắn">↑</button>
             </form>
+            <label class="rag-search-control">
+                <span>Tìm kiếm tài liệu</span>
+                <select data-rag-search-mode aria-describedby="rag-search-hint">
+                    <option value="fast">Fast — Nhanh</option>
+                    <option value="deep">Deep — Chuyên sâu</option>
+                </select>
+                <span id="rag-search-hint">Fast tìm trực tiếp; Deep xếp hạng lại nguồn và có thể mất nhiều thời gian hơn.</span>
+            </label>
             <p class="composer-note">AI có thể mắc lỗi. Hãy kiểm tra thông tin quan trọng.</p>
         </div>
     </section>

@@ -55,6 +55,7 @@ from backend.schemas.document import (
     ConversationDocumentsResponse,
     DocumentCitationResponse,
     DocumentCitationSourceResponse,
+    RagSearchMode,
 )
 from backend.services.agent_runs import (
     AgentRunRecorder,
@@ -248,6 +249,7 @@ async def stream_assistant_response(
     decision_provider: DecisionProvider | None = None,
     query_messages: Sequence[dict[str, str]] | None = None,
     run_created_at: datetime | None = None,
+    rag_search_mode: RagSearchMode = "fast",
 ) -> AsyncIterator[str]:
     recorder = AgentRunRecorder(
         agent_run_id=agent_run_id,
@@ -262,6 +264,7 @@ async def stream_assistant_response(
             "model": model.model,
             "run_id": str(agent_run_id),
             "started_at": run_created_at.isoformat() if run_created_at else None,
+            "rag_search_mode": rag_search_mode,
         },
     )
     parts: list[str] = []
@@ -331,6 +334,7 @@ async def stream_assistant_response(
             limits=limits,
             context_budget=context_budget,
             result=document_result,
+            search_mode=rag_search_mode,
         ):
             yield item
 
@@ -810,6 +814,7 @@ async def resume_agent_run(
             history_summary_context=(),
             graph_checkpointer=graph_checkpointer,
             resume=True,
+            rag_search_mode=(agent_run.rag_trace or {}).get("search_mode", "fast"),
             decision_provider=decision_provider,
         ),
         media_type="text/event-stream",
@@ -883,6 +888,7 @@ async def post_message(
         session,
         conversation_id=conversation.id,
         user_message_id=user_message.id,
+        rag_search_mode=data.rag_search_mode,
     )
     tool_context = ToolContext(
         user_id=user.id,
@@ -939,6 +945,7 @@ async def post_message(
             ],
             graph_checkpointer=get_langgraph_checkpointer(),
             decision_provider=decision_provider,
+            rag_search_mode=data.rag_search_mode,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},

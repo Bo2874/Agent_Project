@@ -19,6 +19,7 @@ from backend.models import (
     RunStep,
     ToolCall,
 )
+from backend.schemas.document import RagSearchMode
 
 
 class AgentRunResumeError(RuntimeError):
@@ -83,6 +84,7 @@ class AgentRunTimeline:
     steps: list[RunStepTimeline]
     progress: list[dict[str, object]] = field(default_factory=list)
     started_at: datetime | None = None
+    rag_search_mode: RagSearchMode | None = None
 
 
 async def create_agent_run(
@@ -90,11 +92,13 @@ async def create_agent_run(
     *,
     conversation_id: UUID,
     user_message_id: UUID,
+    rag_search_mode: RagSearchMode | None = None,
 ) -> AgentRun:
     agent_run = AgentRun(
         conversation_id=conversation_id,
         user_message_id=user_message_id,
         status="running",
+        rag_trace={"search_mode": rag_search_mode} if rag_search_mode else None,
     )
     session.add(agent_run)
     await session.commit()
@@ -690,6 +694,7 @@ async def list_agent_run_timelines(
                     for row in (run.rag_trace or {}).get("progress", [])
                 ],
                 started_at=run.last_resumed_at or run.created_at,
+                rag_search_mode=(run.rag_trace or {}).get("search_mode"),
             )
         )
     return timelines
