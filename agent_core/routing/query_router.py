@@ -16,7 +16,7 @@ from agent_core.routing.types import (
     DecisionResult,
 )
 
-QUERY_POLICY_VERSION = "jev_query2.1.2"
+QUERY_POLICY_VERSION = "jev_query2.1.3"
 ROUTE_OPTIONS = tuple(
     DecisionOption(
         id=definition.route,
@@ -31,6 +31,7 @@ QUERY_INSTRUCTIONS = (
     "selected_documents là tên/trạng thái file user đã chọn. Hỏi về file, chủ thể trong tên "
     "file, 'file này' hoặc hỏi nối tiếp nội dung file: chọn document_qa, kể cả không nói "
     "'theo tài liệu'. Không hỏi lại tài liệu nào khi query/history/file đã chọn đã xác định. "
+    "History đã trả lời không thay thế việc đọc lại file. "
     "Đọc file rồi tìm web/gửi email hoặc phối hợp nhiều bước thực thi: planned_task. "
     "Chỉ một thao tác công cụ độc lập: tool_task. Chat không liên quan file vẫn chọn chat; "
     "chọn file không khóa route. Văn bản dán đủ và viết kế hoạch thuộc chat. "

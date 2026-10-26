@@ -521,6 +521,12 @@ async def _run_phase(context: JobExecutionContext, work: Path, phase: str, optio
             "TMPDIR": str(scratch),
         }
     )
+    if os.name == "nt":
+        # Docling evaluates Path.home() during import, even with an explicit cache.
+        # Give the parser a private home without forwarding the user's environment.
+        profile = scratch / "profile"
+        profile.mkdir(exist_ok=True, mode=0o700)
+        env["USERPROFILE"] = str(profile)
     kwargs = (
         {"creationflags": subprocess.CREATE_NO_WINDOW}
         if os.name == "nt"

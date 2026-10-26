@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from langgraph.config import get_stream_writer
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from agent_core.context_budget import (
@@ -24,7 +25,12 @@ from agent_core.context_budget import (
 from agent_core.context_middleware import ContextAssemblyMiddleware
 from agent_core.contracts.retrieval import RetrievalResult
 from agent_core.graph import AgentLimits, AgentLoopEvent
-from agent_core.llm.deepseek import to_langchain_messages, to_model_messages
+from agent_core.llm.deepseek import (
+    LLMConfigurationError,
+    LLMProviderError,
+    to_langchain_messages,
+    to_model_messages,
+)
 from agent_core.llm.types import ChatModel, LLMChunk, TokenUsage
 from agent_core.rag.qa import (
     ANSWER_PROMPT,
@@ -32,6 +38,7 @@ from agent_core.rag.qa import (
     PLAN_PROMPT,
     PLAN_VERSION,
     SUMMARY_PROMPT,
+    DocumentOutputError,
     GroundedAnswer,
     QueryPlan,
     build_document_qa_graph,
@@ -86,6 +93,23 @@ async def _save_trace(run_id, owner, trace):
         await session.commit()
 
 
+async def _with_output_repair(invoke):
+    """Retry output validation once; provider, scope and budget failures propagate."""
+    reason = None
+    for attempt in (1, 2):
+        try:
+            return await invoke(attempt, reason)
+        except DocumentOutputError as exc:
+            reason = exc.code
+            if attempt == 2:
+                raise DocumentServiceError(
+                    "Model chưa tạo được câu trả lời và citation hợp lệ sau một lần sửa. "
+                    "Hãy thử lại.",
+                    status_code=503,
+                    code="document_qa_invalid_output",
+                ) from None
+
+
 async def stream_document_qa(
     *,
     model: ChatModel,
@@ -121,7 +145,16 @@ async def stream_document_qa(
                     code="document_scope_changed",
                 )
 
-    async def call_model(prompt, payload, *, blocks=(), version=ANSWER_VERSION, allowed=None):
+    async def call_model_once(
+        prompt,
+        payload,
+        *,
+        blocks=(),
+        version=ANSWER_VERSION,
+        allowed=None,
+        attempt=1,
+        repair_reason=None,
+    ):
         nonlocal calls, total_usage
         if calls >= limits.max_steps or total_usage.total_tokens >= limits.max_total_tokens:
             raise DocumentServiceError(
@@ -132,6 +165,15 @@ async def stream_document_qa(
         await quota_guard.before_execution("model")
         await revalidate()
         calls += 1
+        if repair_reason:
+            prompt += (
+                " The previous attempt failed output validation. Regenerate using the SAME "
+                "reference data and question. Return only the required JSON object without "
+                "Markdown fences. Never invent evidence or links."
+            )
+            if allowed is not None:
+                prompt += " Use only allowed_sources; inline labels must match sources."
+            payload = {**payload, "output_validation_error": repair_reason}
         prepared = ContextAssemblyMiddleware(
             context_budget, rag=blocks, tool_selection_mode="document_qa"
         ).prepare(
@@ -147,6 +189,7 @@ async def stream_document_qa(
         await recorder(event)
         get_stream_writer()(event)
         usage, parts, size, status, error = TokenUsage(), [], 0, "failed", None
+        error_code = None
         clock = perf_counter()
         try:
             async with aclosing(
@@ -171,11 +214,26 @@ async def stream_document_qa(
             )
             status = "completed"
             return value
+        except DocumentOutputError as exc:
+            error_code = exc.code
+            error = "Đầu ra JSON/citation chưa hợp lệ."
+            raise
+        except ValidationError as exc:
+            error_code = "invalid_schema"
+            error = "Đầu ra chưa đúng schema hỏi đáp tài liệu."
+            raise DocumentOutputError(error_code) from exc
+        except (LLMConfigurationError, LLMProviderError) as exc:
+            error_code = "provider_error"
+            error = "Không nhận được phản hồi từ model hỏi đáp tài liệu. Hãy thử lại."
+            raise DocumentServiceError(
+                error, status_code=503, code="document_qa_provider_error"
+            ) from exc
         except asyncio.CancelledError:
             status = "cancelled"
             error = "Đã hủy hỏi đáp tài liệu."
             raise
         except Exception as exc:
+            error_code = "model_error"
             error = "Model chưa tạo được câu trả lời và citation hợp lệ. Hãy thử lại."
             raise DocumentServiceError(
                 error, status_code=503, code="document_qa_model_failed"
@@ -203,6 +261,9 @@ async def stream_document_qa(
                     "step": calls,
                     "prompt_version": version,
                     "status": status,
+                    "attempt": attempt,
+                    "repair_reason": repair_reason,
+                    "error_code": error_code,
                     "usage": asdict(usage),
                     "latency_ms": duration,
                     "provider": model.provider,
@@ -210,6 +271,19 @@ async def stream_document_qa(
                 }
             )
             await _save_trace(run_id, owner, result.trace)
+
+    async def call_model(prompt, payload, *, blocks=(), version=ANSWER_VERSION, allowed=None):
+        return await _with_output_repair(
+            lambda attempt, reason: call_model_once(
+                prompt,
+                payload,
+                blocks=blocks,
+                version=version,
+                allowed=allowed,
+                attempt=attempt,
+                repair_reason=reason,
+            )
+        )
 
     async def prepare(_):
         if len(query) > 4000:

@@ -413,8 +413,12 @@ async def upload_document(
                     )
                 )
                 await enqueue_preparation(session, document, version, ingestion)
+            await session.flush()
+            await session.refresh(document)
+            await session.refresh(version)
+            response = _view(document, version, deduplicated=True)
             await session.commit()
-            return _view(document, version, deduplicated=True)
+            return response
         usage = await document_usage(session, owner)
         if usage.used_bytes + stored.size > usage.max_user_bytes:
             raise DocumentServiceError(
@@ -448,6 +452,10 @@ async def upload_document(
         session.add(version)
         await session.flush()
         await enqueue_preparation(session, document, version)
+        await session.flush()
+        await session.refresh(document)
+        await session.refresh(version)
+        response = _view(document, version)
         commit_started = True
         try:
             await session.commit()
@@ -456,7 +464,7 @@ async def upload_document(
             commit_started = False
             raise
         keep_file = True
-        return _view(document, version)
+        return response
     except BaseException:
         await session.rollback()
         raise

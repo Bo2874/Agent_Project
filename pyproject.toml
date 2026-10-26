@@ -49,6 +49,7 @@ embedding = [
 ]
 ingestion = [
     "docling-slim[convert-core,format-docx,format-pdf,models-local]>=2.142.1,<2.143",
+    "opencv-python-headless>=4.10,<5",
     "pypdf>=6.1,<7",
     "sentence-transformers>=5.1,<6",
     "torch>=2.2.2,<3",

@@ -899,6 +899,41 @@ Kiểm đường truyền đủ qua ManagedDecisionProvider/privacy/adapter bằ
 dispatch QA và SELECT read-only scope/chunk hiện có; không gọi JEV/LLM thật.
 MANUAL_M3_CASES.md bổ sung I01–I06 để user nghiệm thu lại trên web.
 
+Sửa hướng dẫn Windows ngày 2026-10-26: run đã vào document_qa và hoàn tất plan, sau đó
+embedding_unavailable vì Uvicorn --reload chọn SelectorEventLoop không hỗ trợ subprocess.
+Tái hiện cùng cấu hình loop: reload báo NotImplementedError, một worker không reload chạy được.
+LocalModelClient chuyển lỗi này thành embedding_event_loop/reranker_event_loop với hướng dẫn
+chạy đúng, không retry lỗi cấu hình. Manual/README Windows dùng một web worker không --reload.
+Hybrid retrieval thật trên Atlas với ProactorEventLoop đã qua F2LLM + FTS + RRF + Qwen rerank,
+trả một evidence chứa 24 tháng, mất khoảng 68 giây khi nạp model; không gọi JEV/DeepSeek.
+Web do user chạy ở terminal cần Ctrl+C rồi khởi động lại bằng lệnh mới; không mở web nền khác.
+
+Kiểm thử thật phần 5/6/7 ngày 2026-10-26 theo yêu cầu user: đăng ký/đăng nhập tài khoản
+test riêng qua HTTP, upload 5 fixture, gọi API search/chat SSE thật với JEV/DeepSeek/F2LLM/Qwen,
+không mock hoặc bypass auth. Phần 5: 6/7 đạt, C04 bị chặn vì DOCX/PDF failed ở parsing.
+Phần 6: R01–R06 đều đạt; sổ tay có 19 chunk, retrieval R06 giữ 5 đoạn/3921 trên 4000 token.
+Phần 7: 8/9 đạt, I03 lần đầu document_qa_model_failed dù retrieval đủ; thử lại một lần đạt,
+ghi nhận không ổn định. H01 đủ 3 lượt history thật, H02 rewrite 6 message bằng DeepSeek,
+H03 trả đúng 3 tiêu chí/2 nguồn. Mở 9 citation qua API đều khớp nguồn.
+Ngoài ra 5 upload trả HTTP 500 nhưng đã lưu file/job; không coi bước upload là pass.
+Báo cáo từng case/run/trace tại data/rag-testing/live-20261026-a8f29c71/REPORT.md (Git ignore),
+tổng 20/22 đạt, 1 blocked, 1 flaky; chưa chốt nghiệm thu M3, chưa sửa các lỗi mới phát hiện.
+
+Sửa và kiểm lại ngày 2026-10-26: upload flush/refresh server fields rồi dựng DTO trước commit,
+tránh lazy-load updated_at; 5 upload mới HTTP 201, dedup HTTP 200/cùng ID/version và chỉ một
+job Atlas. Parser Windows có USERPROFILE riêng trong scratch; thêm opencv-python-headless
+vào ingestion (lock 4.14.0.94) vì PDF TableFormer cần cv2. DOCX/PDF mới đều ready với 4 chunk/
+vector/FTS; retry hai file lỗi cũ cũng ready, giữ ID/version. Citation cho phép nhiều nhãn cạnh
+nhau nhưng chặn URL/reference link/nguồn ngoài evidence; answer v2, repair JSON/schema/citation
+tối đa 1 lần qua guard quota/scope/budget hiện có, trace ghi attempt/repair_reason/error_code.
+3/3 so sánh nhiều nguồn và cả hai câu hỏi bảng phí qua LLM thật đạt; mở 14 nguồn citation đúng.
+Regression phát hiện JEV đôi lúc coi câu hỏi tiếp về file là chat vì history đã có đáp án;
+chỉnh taxonomy 2.0.1/query jev_query2.1.3 (970 ký tự), kiểm lại 2 câu hỏi tiếp đều document_qa,
+chat không liên quan và planned_task vẫn đúng. Giữ run sai trước chỉnh policy làm bằng chứng.
+Báo cáo sau sửa: data/rag-testing/fix-20261026-b71c9a04/REPORT.md (Git ignore), 12 kiểm tra
+chat live đạt. Nhánh repair không phát sinh trong live; đã kiểm giới hạn bằng callback riêng.
+Chưa chạy lại toàn bộ bộ M3; không thay các checkbox nghiệm thu tổng thể chỉ từ các case này.
+
 **Upload và ingestion**
 
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;

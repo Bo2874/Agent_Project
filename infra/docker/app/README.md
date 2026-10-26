@@ -124,6 +124,17 @@ Các giá trị quota/timeout/bộ nhớ/page/chunk và cache model có trong `.
 DB/mail/provider vào tiến trình parser. Parser chạy tách process, bị dừng khi timeout/vượt RSS/hủy;
 đây không phải sandbox hệ điều hành để thực thi tài liệu tùy ý. OCR tắt.
 
+Web native Windows chạy một worker, không dùng `--reload`:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+Uvicorn chọn SelectorEventLoop trên Windows khi reload/nhiều worker, không hỗ trợ asyncio
+subprocess mà embedding/reranker cần. Chế độ một worker không reload dùng ProactorEventLoop.
+Khi sửa code, Ctrl+C rồi chạy lại web; worker tài liệu là tiến trình riêng. Quy tắc này dành
+cho Windows native, không thay cấu hình Docker/Linux.
+
 ## Kiểm tra startup offline
 
 Sau khi `up --wait` thành công:

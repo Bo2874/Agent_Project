@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from agent_core.contracts.routing import RouteName
 
-TAXONOMY_VERSION = "2.0.0"
+TAXONOMY_VERSION = "2.0.1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,11 +22,13 @@ ROUTE_TAXONOMY: tuple[RouteDefinition, ...] = (
         "chat",
         "Trả lời hoặc hỏi rõ",
         "Respond or clarify",
-        "Trò chuyện, giải thích, soạn thảo, xử lý nội dung đã có hoặc hỏi lại khi thiếu "
-        "dữ kiện thiết yếu/tham chiếu chưa rõ sau khi xét history.",
+        "Trò chuyện, giải thích, soạn thảo, xử lý văn bản user dán trực tiếp hoặc hỏi lại "
+        "khi thiếu dữ kiện thiết yếu/tham chiếu chưa rõ sau khi xét history.",
         "Respond using supplied content, or ask for essential missing information.",
         "Ask for missing information before choosing an execution path. "
-        "Do not ask again for facts already in history. Writing a plan is chat.",
+        "Do not ask again for facts already in history. Writing a plan is chat. "
+        "Previous document answers are not pasted user text: follow-up questions about "
+        "selected files require document_qa even when history already contains the answer.",
     ),
     RouteDefinition(
         "tool_task",
@@ -41,9 +43,12 @@ ROUTE_TAXONOMY: tuple[RouteDefinition, ...] = (
         "document_qa",
         "Hỏi đáp theo tài liệu",
         "Document-grounded question",
-        "Tìm, hỏi đáp, tóm tắt hoặc so sánh dựa trên tài liệu đã được xác định và được phép đọc.",
+        "Tìm, hỏi đáp, tóm tắt hoặc so sánh dựa trên tài liệu đã được xác định và được phép đọc. "
+        "Bao gồm hỏi nối tiếp, giải thích hoặc xác nhận về file đã chọn "
+        "dù history đã có câu trả lời.",
         "Retrieve, answer, summarize or compare using resolved, accessible documents as evidence.",
-        "Several documents alone do not imply planning. Pasted text can be answered as chat.",
+        "Several documents alone do not imply planning. Prior assistant answers do not replace "
+        "retrieval from selected files. Text pasted directly by the user can be answered as chat.",
     ),
     RouteDefinition(
         "planned_task",

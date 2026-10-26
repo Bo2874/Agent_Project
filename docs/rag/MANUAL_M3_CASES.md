@@ -10,12 +10,16 @@ Web, worker, migration `20261024_0027`, các cờ V2/RAG và model cache đã đ
 Nếu đã khởi động lại máy, chạy web và worker trong hai terminal riêng:
 
 ```powershell
-.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
+.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
 ```powershell
 .venv\Scripts\python.exe -m scripts.run_background_worker
 ```
+
+Trên Windows, dùng một web worker và không thêm `--reload`: Uvicorn dùng SelectorEventLoop
+khi reload/nhiều worker, không hỗ trợ subprocess cho embedding/reranker. Sau khi sửa code,
+Ctrl+C rồi chạy lại lệnh web. Worker xử lý tài liệu ở terminal riêng vẫn chạy bình thường.
 
 Nếu dịch vụ vẫn đang chạy nền thì dùng dịch vụ đó, tránh mở thêm worker để thử dừng/retry.
 Tạo hai tài khoản thử nghiệm A/B qua web; có thể dùng cửa sổ thường và cửa sổ ẩn danh.
@@ -135,7 +139,7 @@ xem event `routing` với `route`/`probabilities`; giao diện chat không in b�
 | ID | Thao tác | Kết quả mong đợi |
 | --- | --- | --- |
 | U01 | A upload `01_atlas.txt` tại trang Tài liệu; đợi ready rồi mở chat → Chọn từ thư viện | File thuộc thư viện, không tự gắn vào chat; khi sẵn sàng mới xuất hiện để chọn; chat không có nút upload |
-| U02 | Upload lại đúng file trong thư viện A | Deduplicate, không tăng số tài liệu/dung lượng gốc; Network thường trả 200 thay vì 201 |
+| U02 | Upload lại đúng file trong thư viện A | Deduplicate, không tăng số tài liệu/dung lượng gốc; Network trả 200 thay vì 201; cùng document/version, không thêm job nếu đã được xếp hàng/xử lý |
 | U03 | Mở chat mới của A | File vẫn trong thư viện; chọn lại để hỏi, không mặc định mọi file đều nằm trong scope |
 | U04 | Bỏ chọn file hoặc xóa hội thoại test | File thư viện vẫn tồn tại; chat khác vẫn chọn được |
 | U05 | Upload lần lượt file rỗng, giả PDF, CSV | Bị từ chối, không báo sẵn sàng và không tạo index dùng được |
@@ -165,6 +169,10 @@ Không bắt buộc nhìn thấy mọi trạng thái trung gian trên web: file 
 
 Sau P04–P06, chỉ chọn từng file rồi hỏi: “Phí ngoại thành là bao nhiêu và giao trong mấy ngày?”
 Đáp án: **45.000 đồng, 4 ngày**. Nếu sai, xem parsed text trước khi kiểm tra model trả lời.
+
+Worker Windows cấp profile riêng cho parser để Docling khởi động được trong môi trường đã lọc.
+File từng failed do lỗi môi trường có thể dùng Thử lại sau khi worker đã nạp bản sửa;
+không cần upload lại hoặc tạo version mới chỉ để chạy lại parsing chưa thành công.
 
 ## 5. Chunking, embedding và index
 
@@ -237,6 +245,8 @@ không dùng “thứ tự phải đổi” làm điều kiện pass. Dùng Netw
 
 Đợi file ready rồi chọn đúng scope qua Chọn từ thư viện. Các case độc lập dùng chat mới;
 I02 giữ hội thoại/câu trả lời thật của I01. Chọn file không khóa cứng mọi câu hỏi vào document_qa.
+Với câu hỏi vẫn liên quan file, history đã chứa câu trả lời không thay thế việc đọc lại tài liệu
+và tạo citation cho câu trả lời mới; không được chỉ chép lại [S1] từ message cũ mà thiếu binding nguồn.
 
 | ID | File đã chọn và câu hỏi | Kết quả mong đợi |
 | --- | --- | --- |
@@ -249,6 +259,8 @@ I02 giữ hội thoại/câu trả lời thật của I01. Chọn file không kh
 
 I05/I06 chỉ nghiệm thu nhận ý định và thông báo giới hạn hiện tại, chưa phải nghiệm thu workflow
 tài liệu + tool. Với I01–I03, câu trả lời đúng số nhưng không có trace/citation phù hợp vẫn chưa đạt.
+Với I03, lặp lại trong ít nhất 3 hội thoại mới để kiểm độ ổn định sau sửa validator; giữ cả run lỗi
+nếu có, không chỉ ghi lần thành công cuối cùng. Citation hợp lệ có thể đứng cạnh nhau như [S1] [S2].
 Nếu metadata đã được truyền mà JEV vẫn chọn sai, lưu câu hỏi, history, scope, run ID và event routing
 để chỉnh tiếp tiêu chí; không tự sửa điểm/xuất kết quả giả hoặc ép mọi query có file sang document_qa.
 
@@ -296,6 +308,14 @@ Nguồn đúng định dạng chưa đủ: đọc đoạn trích để xác nh�
 DOCX/DOC/TXT có thể dẫn mục/offset thay vì số trang; không yêu cầu số trang được suy đoán.
 Trong `summary`, pipeline dùng all-chunks/map-reduce, không dùng top-6 semantic như QA thông thường.
 Tóm tắt dài vẫn có thể dừng bởi budget thời gian/token/call; nếu dừng, phải báo rõ thay vì tuyên bố hoàn tất.
+
+Nếu model trả JSON/schema/citation sai, mỗi bước model được sửa lại tối đa một lần trên cùng
+evidence; không chạy lại JEV/retrieval chỉ để sửa output. Xem `rag_trace.calls[].attempt`,
+`repair_reason`, `error_code` và `usage`: attempt=2 là lượt sửa, cả hai lượt đều tính budget/quota.
+Hết budget hoặc lỗi provider/phạm vi tài liệu thì không sửa lại. Nếu lượt sửa vẫn sai, trả
+`document_qa_invalid_output`; lỗi provider là `document_qa_provider_error`. Không lưu raw output
+LLM vào trace. Đúng hai nhãn [S1] [S2] không bị coi là liên kết; nhãn ngoài evidence/URL tự tạo
+vẫn phải bị từ chối. Không cần ép model trả sai bằng chat để chạy các case thông thường.
 
 ## 9. Worker, retry, cancel, re-index và delete
 
@@ -364,6 +384,7 @@ Lưu báo cáo local trong `data/rag-testing` (Git ignore). Mỗi case ghi:
 - Text gốc đã sai → xem parser/Word conversion/OCR warning trước.
 - Parsed đúng nhưng chunk sai/mất số → xem chunking/normalization/offset.
 - Chunk đúng nhưng thiếu vector/FTS → xem embedding/index/worker error.
+- Lỗi embedding_event_loop/reranker_event_loop trên Windows → bỏ --reload/nhiều web worker rồi khởi động lại web.
 - Không có rag_trace và route=chat dù hỏi file đã chọn → kiểm selection và metadata sau bộ lọc privacy trước.
 - Đoạn đúng không vào ứng viên → dense/lexical/scope; vào ứng viên nhưng bị loại → RRF/rerank/budget.
 - Câu hỏi nối tiếp sai chủ thể → so history với `plan` hoặc rewrite API.

@@ -4,7 +4,8 @@ JEV chọn một trong `chat`, `tool_task`, `document_qa`, `planned_task`.
 Việc cần hỏi rõ được gộp vào `chat`, không còn Choice `clarify`.
 Người dùng đã nghiệm thu phân loại; phần in route/xác suất và cờ preview đã được gỡ.
 Hiện quyết định JEV nối vào luồng thực tế: chat dùng model hiện có, tool_task dùng
-selector/agent hiện có; document_qa/planned_task trả thông báo chưa có lõi thực thi.
+selector/agent hiện có; document_qa dùng pipeline M3 khi bật V2_RAG_ENABLED và chọn file ready;
+planned_task còn trả thông báo chưa có lõi workflow.
 Các yêu cầu tool trong bảng dưới có thể thực sự gọi tool, theo quyền và approval hiện có.
 
 ## Cách chạy
@@ -13,7 +14,8 @@ Các yêu cầu tool trong bảng dưới có thể thực sự gọi tool, theo
    `ROUTING_MODE=active` và cấu hình `OPENROUTER_API_KEY` cùng model chat.
    Cờ preview đã bỏ; ngưỡng chọn tool hiện có giữ nguyên.
 2. Restart backend, ví dụ:
-   `.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload`.
+   `.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000`.
+   Windows dùng một web worker, không thêm --reload để hỗ trợ tiến trình model cục bộ.
 3. Đăng nhập web và kiểm tra các kịch bản nhiều lượt ở cuối tài liệu: mỗi kịch bản dùng
    một hội thoại, gửi các lượt liên tiếp để kiểm tra history. Với bảng 30 case độc lập,
    mở hội thoại mới khi cần đúng điều kiện “chưa có context”; case L1/L2 gửi cùng hội thoại.
@@ -27,6 +29,8 @@ Các yêu cầu tool trong bảng dưới có thể thực sự gọi tool, theo
 Đầu vào là tối đa `CHAT_HISTORY_LIMIT` message gần nhất (mặc định 20), bao gồm query
 mới nhất. Query được tách khỏi history, giữ nguyên role user/assistant và thứ tự;
 system prompt, memory, tool schema/output không được đưa vào state phân loại.
+Khi bật RAG, metadata tên/trạng thái file đang chọn được gửi qua bộ lọc privacy cùng số file;
+không gửi nội dung/đường dẫn file cho JEV chỉ để phân route.
 Các báo cáo preview cũ đã lưu vẫn là chẩn đoán trong history; không tự xóa dữ liệu đó.
 Nên mở hội thoại mới khi chuyển sang dùng luồng thực tế để có history gồm câu trả lời thật.
 
@@ -34,9 +38,13 @@ Nên mở hội thoại mới khi chuyển sang dùng luồng thực tế để 
 
 - Một Choice gồm bốn lựa chọn; nội dung chuẩn nằm trong
   `agent_core/routing/taxonomy.py`, chỉ dẫn nằm trong `query_router.py`.
-- `chat` gồm trò chuyện, giải thích, soạn thảo, xử lý nội dung sẵn có và hỏi lại khi
+- `chat` gồm trò chuyện, giải thích, soạn thảo, xử lý văn bản user dán trực tiếp và hỏi lại khi
   thiếu dữ kiện thiết yếu/tham chiếu chưa rõ sau khi đã xét history. Không hỏi lại
   dữ kiện đã có. Nhánh chat dùng model hiện có để trả lời hoặc hỏi rõ.
+- Hỏi nối tiếp, giải thích hoặc xác nhận thông tin trong file đã chọn là document_qa, kể cả
+  câu trả lời đã có trong history. Câu trả lời tài liệu trước đó không được coi là văn bản user
+  dán trực tiếp để chuyển sang chat. Câu hỏi không liên quan file vẫn có thể chọn chat/tool_task;
+  yêu cầu kết hợp tài liệu với web/mail/phối hợp bước là planned_task.
 - Chọn xác suất cao nhất, kể cả khi thấp; không dùng confidence floor hoặc margin.
 - Hai hay nhiều lựa chọn **bằng nhau chính xác** ở xác suất cao nhất → `chat` để hỏi rõ.
   Trace vẫn giữ xác suất gốc; không sửa xác suất của `chat` thành 1.

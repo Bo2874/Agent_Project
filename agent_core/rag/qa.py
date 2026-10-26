@@ -9,7 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 PLAN_VERSION = "document-qa-plan-v1"
-ANSWER_VERSION = "document-qa-answer-v1"
+ANSWER_VERSION = "document-qa-answer-v2"
 PLAN_PROMPT = (
     'Return ONLY JSON: {"query":"standalone question","mode":"qa or summary",'
     '"queries":["one to three standalone retrieval questions"]}. '
@@ -44,6 +44,14 @@ SUMMARY_PROMPT = (
 )
 
 
+class DocumentOutputError(ValueError):
+    """Machine-readable output failures; never includes model text or document content."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
 class QueryPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     query: str = Field(min_length=1, max_length=4000)
@@ -69,8 +77,10 @@ class GroundedAnswer(BaseModel):
 
     def validate_sources(self, allowed: set[str]) -> "GroundedAnswer":
         cited = set(re.findall(r"\[(S\d+)\]", self.answer))
-        if re.search(r"\[S\d+\]\s*[\(\[]", self.answer):
-            raise ValueError("Source labels must not link to model-generated URLs")
+        if re.search(r"\[S\d+\]\s*(?:\(|\[(?!S\d+\]))", self.answer) or re.search(
+            r"^\s{0,3}\[S\d+\]:", self.answer, re.MULTILINE
+        ):
+            raise DocumentOutputError("citation_link")
         if (
             not self.answer.strip()
             or len(set(self.sources)) != len(self.sources)
@@ -79,12 +89,12 @@ class GroundedAnswer(BaseModel):
             or (self.answerable and not cited)
             or (not self.answerable and (cited or self.sources))
         ):
-            raise ValueError("Invalid source attribution")
+            raise DocumentOutputError("citation_sources")
         if re.search(r"\[(?:source\.|S[^\]\s]*)[^\]]*\]", self.answer):
             # The recognized [S<number>] tokens above are the only source-label syntax.
             leftovers = re.sub(r"\[S\d+\]", "", self.answer)
             if re.search(r"\[(?:source\.|S[^\]\s]*)[^\]]*\]", leftovers):
-                raise ValueError("Unknown source syntax")
+                raise DocumentOutputError("citation_syntax")
         return self
 
 
@@ -97,9 +107,12 @@ class QAState(TypedDict, total=False):
 
 
 def parse_json(content: str) -> dict:
-    value = json.loads(content)
+    try:
+        value = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise DocumentOutputError("invalid_json") from exc
     if not isinstance(value, dict):
-        raise ValueError("Expected a JSON object")
+        raise DocumentOutputError("invalid_schema")
     return value
 
 

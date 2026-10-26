@@ -195,6 +195,12 @@ class LocalModelClient:
             self._process = await spawn
             await self._stop()
             raise
+        except NotImplementedError:
+            raise self.error_type(
+                f"{self.error_prefix}_event_loop",
+                "Event loop hiện tại không hỗ trợ tiến trình model. "
+                "Trên Windows, chạy Uvicorn không có --reload và chỉ dùng một worker.",
+            ) from None
         result = await self._exchange(
             {
                 "operation": "load",

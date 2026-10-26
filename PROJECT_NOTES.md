@@ -784,3 +784,143 @@
 - Ruff check/format và git diff --check đạt. Khởi động lại đúng web của workspace để nạp code;
   health live/ready 200. Không restart worker hoặc đổi dữ liệu/index. User tiếp tục Ctrl+F5,
   chọn Atlas và gửi lại câu hỏi để nghiệm thu phân loại thật, retrieval và citation trên web.
+
+## 2026-10-26 — Chạy RAG Windows với event loop hỗ trợ subprocess
+
+- Run Atlas mới có rag_trace/plan đúng, DeepSeek hoàn tất bước lập câu hỏi; lỗi sau đó là
+  embedding_unavailable. Đọc source Uvicorn đã cài: Windows với --reload/nhiều worker dùng
+  SelectorEventLoop, không hỗ trợ asyncio.create_subprocess_exec cho tiến trình model.
+  Model cache/file/index không phải nguyên nhân của lần lỗi này.
+- Tái hiện bằng chính loop factory của Uvicorn: reload sinh NotImplementedError khi mở
+  tiến trình Python in số; bỏ reload dùng ProactorEventLoop, mở/đọc tiến trình thành công.
+  Tài liệu Python xác nhận giới hạn subprocess trên Windows:
+  https://docs.python.org/3.11/library/asyncio-platforms.html#windows
+- Sửa agent_core/rag/local_models.py: bắt NotImplementedError tại spawn, trả mã riêng
+  embedding_event_loop/reranker_event_loop, không retry, kèm chỉ dẫn chạy Uvicorn một worker
+  không reload. Không đổi sang subprocess không giới hạn hoặc bỏ giới hạn RSS/timeout/IPC.
+- Cập nhật docs/rag/MANUAL_M3_CASES.md và infra/docker/app/README.md: lệnh web Windows
+  bỏ --reload, dùng host 127.0.0.1/cổng 8000; sửa code thì Ctrl+C và khởi động lại thủ công.
+  Worker tài liệu vẫn là terminal/tiến trình riêng; không thay runtime Docker/Linux.
+- Kiểm LocalModelClient trên Selector loop trả đúng mã embedding_event_loop và retryable=false.
+  Chạy search_documents hybrid thật bằng loop factory tương ứng một worker không reload,
+  trên đúng Atlas đã upload: F2LLM query embedding, dense/FTS mỗi nhánh 1 ứng viên, RRF gộp 1,
+  Qwen rerank và đóng gói trả 1 evidence đúng document chứa 24 tháng, score_kind=rerank.
+  Lượt nạp model và retrieval mất 67,64 giây (rerank khoảng 36,28 giây); đã đóng các model client
+  thử sau khi xong. Request dùng document_ids, không có history nên rewrite skipped; không
+  gọi JEV/DeepSeek, tạo chat/run/citation mới hay thay file/index trong database.
+- Ruff check/format và git diff --check đạt. Sửa thêm PROJECT_PLAN.md, ghi cuối PROJECT_NOTES.md;
+  tổng cộng 5 file, không tạo file test mới. Giữ web/worker user đang chạy, không mở web nền
+  hoặc chiếm thêm cổng; user cần dừng web --reload trong terminal rồi chạy lệnh đã sửa.
+  Chưa nghiệm thu sinh câu trả lời/citation trên web; user tiếp tục test tay.
+
+## 2026-10-26 — Chạy thật bộ case M3 phần 5, 6, 7
+
+- Theo yêu cầu mới của user, chạy API HTTP/SSE thật trên web local một worker không reload.
+  Tạo tài khoản test riêng m3-live-a8f29c71@example.com bằng register/login cookie thật;
+  không tạo JWT thay user, override dependency hoặc mock JEV/DeepSeek/embedding/reranker.
+  Upload 5 fixture qua API: Atlas, Boreal, sổ tay dài, DOCX bảng và PDF chữ. Không thay
+  history/selection/file của tài khoản user đang sử dụng; giữ dữ liệu test để đối chiếu.
+- Viết helper local tại .tools/runtime-setup/m3_live_probe.py và summarize_m3_live.py,
+  lưu request/response/SSE/trace/inspect/citation và báo cáo trong
+  data/rag-testing/live-20261026-a8f29c71 (đều Git ignore). credentials.json chỉ chứa tài khoản
+  test mới, không in password/cookie/provider key vào report. Ghi environment.json với git HEAD,
+  danh sách file đang sửa, version package, config không bí mật và SHA256 fixture.
+- Phát hiện setup: cả 5 upload trả HTTP 500 nhưng file/job đã commit và tiếp tục được worker
+  xử lý. Ba TXT ready; DOCX/PDF failed tại parsing/document_processing_failed, 0 chunk.
+  Ghi rõ upload không pass; không gửi lại upload để che lỗi hoặc giả trạng thái ready.
+  Chưa xác định exception parser/vendor chi tiết, chưa sửa sản phẩm trong đợt chạy test này.
+- Dừng đúng worker nền cũ do assistant mở (root 24964, worker 15704) sau khi xác nhận không
+  có job running thuộc worker đó. Giữ worker user, tránh hai model ingestion trùng trong RAM;
+  không stop/restart web đang được user chạy ở terminal. Inspector đọc artifact bằng quyền
+  thực thi phù hợp vì sandbox Windows chặn ACL; dùng transaction SQL read-only và lọc owner.
+- Phần 5: C01/C02/C03/E01/E02/E03 đạt. Sổ tay dài có 19 chunk, 30–475 token, đếm lại
+  tokenizer/offset/hash đều 0 mismatch; 12 cặp overlap trong mục, không overlap xuyên mục.
+  19/19 vector và FTS, 1024 chiều, norm 0,9999999617–1,0000000965; profile F2LLM đúng.
+  C04 BLOCKED vì chưa qua parse DOCX/PDF; không suy ra chunking bảng đã đúng hoặc sai.
+- Phần 6: R01–R06 đạt qua API search thật. Mã chính xác/không dấu/diễn đạt lại tìm đúng
+  đoạn Atlas; R04 đối chiếu dense/lexical và tính lại RRF=2/61, Qwen rerank giữ phủ định.
+  R05 đủ hai file/24 và 12 tháng; R06 có 19 ứng viên, đóng 5 whole chunk không trùng,
+  3921/4000 token evidence. Thời gian R01/R02 0,16/0,06 giây; R03 15,20; R04 29,16;
+  R05 8,97; R06 95,38 giây. Đây là số đo một đợt máy CPU, không phải benchmark tổng quát.
+- Phần 7: I01/I02/I04/I05/I06/H01/H02/H03 đạt. Atlas 24 tháng có citation (8,64 giây),
+  nối tiếp đổi trả 14 ngày (13,30 giây). Câu Python không liên quan vẫn route chat.
+  Hai yêu cầu file + web/mail route planned_task và báo chưa sẵn sàng, không gọi tool ghi;
+  đây chỉ là kiểm ý định, không nghiệm thu lõi workflow. Không gửi email trong phép thử.
+- I03 FLAKY: lần đầu route document_qa đúng và 3 retrieval có đủ Atlas/Boreal, nhưng step
+  trả lời báo document_qa_model_failed (26,84 giây). Thử lại đúng 1 lần ở chat test mới:
+  12/24 tháng, 2 citation, 21,91 giây. Giữ cả hai run, không đổi lỗi lần đầu thành pass;
+  chưa biết điều kiện output/validation lỗi cụ thể vì raw LLM output không được lưu.
+- H01 dùng 3 lượt hỏi/câu trả lời thật: history=0/2/4, plan giải nghĩa Atlas và ngâm nước,
+  trả đúng phủ định; retrieval rewrite skipped đúng vì plan đã rewrite. H02 API dùng 6 message,
+  DeepSeek rewrite thành Chính sách đổi trả của Atlas là gì? (499 token); chat rỗng đối chứng
+  history=0/rewrite skipped. H03 chia 3 truy vấn, trả đủ 24/12 tháng, 14/7 ngày, 3/5 ngày
+  và hai nguồn (27,36 giây). Mở 9 citation qua endpoint nguồn đều HTTP 200, đúng document/
+  version/chunk và có text; đối chiếu dữ kiện với fixture, không chỉ kiểm nhãn nguồn.
+- REPORT.md/results.json ghi đủ 22 case: 20 PASS, 1 BLOCKED (C04), 1 FLAKY (I03),
+  cùng thời gian, conversation/run ID và artifact. Chưa test click/render browser hoặc chất
+  lượng trên corpus lớn; chưa sửa 3 lỗi mới (upload HTTP 500, parser Word/PDF, I03 không ổn định).
+  Cập nhật PROJECT_PLAN.md và ghi cuối PROJECT_NOTES.md, không thêm file code/test tracked.
+
+## 2026-10-26 — Sửa upload, parser Windows/PDF, citation và kiểm lại model thật
+
+- Theo user duyệt sửa các lỗi ở báo cáo phần 5/6/7. Giữ các thay đổi chưa commit từ bước
+  event-loop trước, không reset/stage/commit thay user. Sửa thêm các file hiện có, không thêm
+  file code/test tracked; helper/báo cáo mới ở .tools/runtime-setup và data/rag-testing (Git ignore).
+- backend/services/documents.py: upload mới và dedup đều flush/refresh Document/Version,
+  dựng response DTO khi fields đã nạp rõ ràng rồi chỉ trả sau commit thành công. Khắc phục
+  updated_at server-generated bị expire gây MissingGreenlet khi _view đọc ngầm. Giữ điều kiện
+  cleanup file khi transaction lỗi/commit chưa chắc chắn và giữ atomic enqueue hiện có.
+- backend/services/document_ingestion.py: Windows cấp USERPROFILE riêng dưới scratch/profile,
+  không chuyển toàn bộ env hoặc credential DB/mail/provider vào parser. Tái hiện trước sửa:
+  Docling import Path.home() lỗi Could not determine home directory trong env đã lọc; cùng
+  DOCX đọc được khi có profile. Parser mới đã qua Word, sau đó PDF lộ dependency cv2 thiếu.
+- pyproject.toml/uv.lock: thêm opencv-python-headless>=4.10,<5 vào extra ingestion cho
+  Docling TableFormer, lock 4.14.0.94; resolver chỉ thêm một package, không đổi phiên bản cũ.
+  Cài đúng wheel đã kiểm hash trong lock bằng uv pip --no-deps/--require-hashes; uv pip check
+  và uv lock --check --offline đạt. Không bật OCR hoặc thay model/layout pipeline để né bảng.
+- agent_core/rag/qa.py: answer version document-qa-answer-v2; DocumentOutputError có mã cố
+  định cho invalid_json/invalid_schema/citation_link/citation_sources/citation_syntax. Cho phép
+  [S1] [S2] và [S1][S2]; vẫn từ chối link inline/reference, định nghĩa link mang nhãn nguồn,
+  nguồn ngoài allowed, source trùng/mismatch và cú pháp nguồn lạ. Lỗi validator tái hiện được;
+  không kết luận tuyệt đối đó là exception của I03 cũ vì lần cũ không lưu raw output.
+- backend/services/document_qa.py: tách mỗi attempt và wrapper sửa output tối đa một lần.
+  Giữ nguyên question/evidence, chỉ thêm chỉ dẫn sửa cùng mã lỗi đã lọc; không gửi lại output
+  lỗi nguyên văn hoặc chạy lại routing/retrieval. Mỗi attempt đi qua guard budget/quota/scope
+  và dùng chung timeout graph; finally ghi usage của cả attempt lỗi, recorder và trace với
+  attempt/repair_reason/error_code. Provider/configuration/scope/budget/cancel không bị retry;
+  hết hai attempt trả document_qa_invalid_output, provider trả document_qa_provider_error.
+- Kiểm callback điều khiển riêng: tối đa hai lần gọi, reason chính xác, lỗi provider/scope/
+  budget không lặp; hết budget trước lượt sửa vẫn dừng. Kiểm JSON/schema, nhãn nguồn cạnh
+  nhau, URL/Markdown reference/nguồn lạ. Đây là kiểm giới hạn, không tính là lượt LLM thật.
+- Khởi động lại đúng service project để nạp code. Guard ban đầu gặp một marker run running;
+  kiểm read-only xác nhận là run ngày 01/10, 0 step, chưa resume, tồn tại trước service hiện
+  tại và không có job/run thực mới. Giữ nguyên bản ghi cũ. Đã dọn helper mở trùng trong lúc
+  kiểm tra, sau đó giữ đúng một web và một worker chạy nền. Không dùng --reload trên Windows.
+- Đợt live sau sửa dùng tài khoản test mới m3-live-b71c9a04@example.com qua register/login
+  cookie và API HTTP/SSE thật, JEV/DeepSeek/F2LLM/Qwen thật. 5 file mới đều HTTP 201 và ready;
+  duplicate Atlas HTTP 200, cùng document/version, tổng 5 file. SELECT read-only xác nhận
+  chỉ 1 prepare job cho version Atlas. Ba TXT vẫn khớp token/offset/hash và đủ vector/FTS.
+- DOCX/PDF mỗi file có 4 chunk/vector/FTS, offset/hash không lệch; PDF 2 trang. Nội dung bảng
+  giữ đúng nội thành 25.000/2 ngày, ngoại thành 45.000/4 ngày. Cả hai câu hỏi qua chat thật
+  trả đúng 45.000 đồng và 4 ngày kèm citation (21,12/24,70 giây). Retry DOCX/PDF của tài
+  khoản test trước qua API đều ready/cùng document/version; không upload bản mới để che lỗi.
+- I03 lặp 3 hội thoại mới đều hoàn thành, đủ 12/24 tháng và 2 nguồn, model thực sự trả các
+  citation liền nhau và validator chấp nhận. Thời gian 99,27/24,58/23,49 giây (lượt đầu sau
+  restart model). H03 đủ ba tiêu chí/2 nguồn trong 34,12 giây. Atlas 24 tháng và history đổi
+  trả 14 ngày cũng đạt. Không thấy attempt=2 phát sinh trong các lượt live, ghi rõ giới hạn này.
+- Regression thêm phát hiện Negation-fixed route chat=0,68 và lặp [S1] từ history nhưng
+  không có citation binding mới. Không đánh dấu pass hoặc xóa run này. Chỉnh taxonomy.py
+  lên 2.0.1: chat xử lý văn bản user dán trực tiếp, không coi câu trả lời tài liệu trước là
+  pasted text; câu hỏi nối tiếp/xác nhận file vẫn document_qa dù history đã có đáp án.
+  Query policy jev_query2.1.3, instructions 970 ký tự, giữ 4 choices/argmax/tie về chat.
+- Kiểm lại đúng history thật: câu ngâm nước từng sai và câu hỏi lại đều document_qa (0,80/
+  0,91), trả không đổi và có nguồn mới (79,20/12,14 giây). Đối chứng Python không liên quan
+  vẫn chat=0,98; file + web vẫn planned_task=0,75 và báo chưa sẵn sàng. Không gọi tool ghi.
+- Cập nhật MANUAL_M3_CASES.md và MANUAL_JEV_CASES.md với retry/output trace, hỏi nối tiếp
+  cần citation mới, lõi document_qa đã có, lệnh Windows không reload. Cập nhật PROJECT_PLAN.md.
+  Báo cáo data/rag-testing/fix-20261026-b71c9a04/REPORT.md/results.json lưu 12 kiểm tra chat
+  live đạt cùng run/answer/trace, baseline sai route được giữ riêng; mở 14 citation qua API
+  đều đúng document/version/chunk và có text. Giữ báo cáo trước sửa để đối chiếu.
+- Ruff check/format, git diff --check, lock check và dependency check đạt. Chưa chạy lại toàn
+  bộ 22 case/bộ M3, không khẳng định độ đúng JEV/LLM tuyệt đối từ số mẫu hữu hạn. Web/worker
+  hiện đã nạp bản sửa, chạy nền một bản mỗi service tại cổng 8000 để user tiếp tục kiểm thử.
