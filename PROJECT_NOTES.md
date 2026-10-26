@@ -708,3 +708,47 @@
   user tiếp tục nghiệm thu tay theo hướng dẫn cập nhật.
 - Đã khởi động lại web của đúng project để nạp thay đổi, xác nhận HTTP OpenAPI có filter mới
   và static JavaScript dùng ready_for_qa=true; worker cũ vẫn chạy. Browser cần Ctrl+F5 để tải UI mới.
+
+## 2026-10-26 — Sửa kiểm tra pooling khi khởi động F2LLM
+
+- User test `01_atlas.txt`: parse/chunk đã có 1 đoạn nhưng embedding thất bại sau 3 lần thử,
+  mã `embedding_model_unavailable`. Tải trực tiếp từ cache thành công, xác định nguyên nhân
+  là SentenceTransformers 5.7 chuyển boolean `pooling_mode_lasttoken` sang
+  `pooling_mode="lasttoken"`; code kiểm tra thuộc tính cũ nên từ chối model hợp lệ.
+- Sửa `scripts/run_embedding_model.py` để nhận cấu hình mới và vẫn hỗ trợ thuộc tính cũ.
+  Giữ nguyên model/revision, last-token pooling, số chiều, chuẩn hóa, giới hạn tài nguyên
+  và recipe; không cần tải lại weights hoặc thay schema database.
+- Chạy thật qua F2EmbeddingClient/subprocess cho nội dung Atlas và một query: đều trả
+  1 vector đủ 1.024 chiều, norm 1. Chạy subprocess bằng quyền thực thi phù hợp vì sandbox
+  cản tạo tiến trình IPC. Ruff check/format check đều đạt; không tạo file kiểm thử mới.
+- Gọi retry_preparation cho đúng file Atlas đã upload qua service hiện có, không sửa trạng
+  thái/vector bằng SQL hoặc upload bản mới. Worker xử lý thành công ngay lần 1; SELECT xác
+  nhận document/version ready, active version đã publish, ingestion/job succeeded,
+  1 chunk có vector 1.024 chiều (norm khoảng 1) và search_tsv không rỗng, error_code đã xóa.
+  Worker đang chạy khởi tạo subprocess từ script đã sửa nên không cần restart web/worker.
+- Cập nhật PROJECT_PLAN.md và ghi cuối PROJECT_NOTES.md. Không gọi LLM/dịch vụ trả phí;
+  user tiếp tục chọn Atlas từ thư viện và nghiệm thu hỏi đáp/citation trên web.
+
+## 2026-10-26 — Sửa giới hạn instructions của JEV và nút resume khi chưa có checkpoint
+
+- Đọc đúng run lỗi của câu hỏi Atlas: stop_reason=llm_error, error_message là validation
+  error của DecisionRequest.instructions vượt ShortText 1.000 ký tự. Chưa phân route,
+  chưa gọi DeepSeek, chưa chạy LangGraph; thông báo lỗi DeepSeek trên UI gây hiểu nhầm.
+- Rút QUERY_INSTRUCTIONS trong agent_core/routing/query_router.py còn 844 ký tự, giữ
+  4 route, history, selected_documents và ranh giới chat/document_qa/planned_task cùng
+  hướng dẫn coi input là dữ liệu không đáng tin. Tăng QUERY_POLICY_VERSION lên jev_query2.1.1;
+  không tăng giới hạn schema hay cắt chuỗi tùy ý khi gửi request.
+- frontend/static/chat.js dùng cùng điều kiện canResumeRun cho timeline lưu và lỗi SSE.
+  Ngay sau lỗi, lấy timeline từ API hiện có và chỉ thêm nút resume cho đúng run failed
+  có checkpoint_revision dạng số nguyên không âm. Thiếu checkpoint, sai run hoặc lỗi
+  truy vấn API thì không hiện nút chưa xác minh; giữ backend guard resume hiện có.
+- backend/routes/chat.py ghi exception qua logger có redaction hiện có; lỗi ngoài các
+  nhánh đã biết trả thông báo chung Không thể hoàn tất yêu cầu thay vì đổ lỗi DeepSeek.
+  Giữ nguyên nhánh lỗi provider/authorization/quota và không sửa dữ liệu run lỗi cũ.
+- Kiểm request thật qua schema với 0/1/20 metadata file, đủ 4 options và giữ query/history;
+  kiểm adapter/route bằng phản hồi JEV giả, không gọi endpoint JEV/DeepSeek. Kiểm JavaScript
+  với Node cho thiếu checkpoint, run khác, checkpoint hợp lệ (kể cả revision 0), thiếu run ID
+  và lỗi mạng. Ruff check/format, Node syntax và git diff --check đạt; không tạo file test mới.
+- Dừng hai cây uvicorn của đúng workspace đang chạy song song, khởi động một web server
+  local ẩn để nạp code mới, không đổi worker/database/model cache. User tải lại trình duyệt
+  và gửi lại câu hỏi Atlas; run chưa có checkpoint không thể dùng nút tiếp tục để khôi phục.

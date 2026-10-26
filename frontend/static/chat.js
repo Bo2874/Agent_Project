@@ -474,6 +474,23 @@ if (chatApp) {
     });
   }
 
+  function canResumeRun(run) {
+    return run?.status === "failed" && Number.isInteger(run.checkpoint_revision)
+      && run.checkpoint_revision >= 0;
+  }
+
+  async function addAvailableResumeButton(timeline, runId) {
+    if (!runId) return;
+    try {
+      const runs = await requestJson(`/api/conversations/${activeConversationId}/runs`);
+      if (canResumeRun(runs.find((run) => run.id === runId))) {
+        addResumeButton(timeline, runId);
+      }
+    } catch {
+      // A failed availability check must not offer an unverified resume action.
+    }
+  }
+
   function renderStoredTimeline(assistantBubble, run) {
     const timeline = createAgentTimeline(assistantBubble, false);
     for (const step of run.steps) {
@@ -505,7 +522,7 @@ if (chatApp) {
     if (run.available_tool_count !== null && run.loaded_tool_count !== null) {
       timeline.count.textContent += ` · tools ${run.loaded_tool_count}/${run.available_tool_count}`;
     }
-    if (run.status === "failed" && run.checkpoint_revision !== null) {
+    if (canResumeRun(run)) {
       addResumeButton(timeline, run.id);
     }
   }
@@ -641,7 +658,7 @@ if (chatApp) {
         }
         if (parsed.event === "error") {
           finishTimeline(timeline, "failed");
-          if (parsed.data.resumable !== false) addResumeButton(timeline, runId);
+          if (parsed.data.resumable !== false) await addAvailableResumeButton(timeline, runId);
           if (!assistantMarkdown) {
             assistantMarkdown = parsed.data.message;
             window.renderMarkdown(assistantBubble, assistantMarkdown);

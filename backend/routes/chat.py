@@ -473,6 +473,7 @@ async def stream_assistant_response(
         await fail_agent_run(agent_run_id, "failed", content, stop_reason=exc.code)
         yield sse_event("error", {"message": content, "code": exc.code})
     except Exception as exc:
+        logger.exception("Agent run không hoàn tất")
         await fail_agent_run(
             agent_run_id,
             "failed",
@@ -482,7 +483,7 @@ async def stream_assistant_response(
         yield sse_event(
             "error",
             {
-                "message": "Không thể nhận phản hồi từ DeepSeek. Vui lòng thử lại.",
+                "message": "Không thể hoàn tất yêu cầu. Vui lòng thử lại.",
                 "code": "llm_error",
             },
         )

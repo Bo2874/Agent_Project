@@ -875,6 +875,19 @@ heartbeat; cache F2LLM, Qwen reranker và Docling layout/table đã tải xong t
 Qwen đã đối chiếu SHA256 chính thức; import các thư viện PDF/Word/embedding/reranker thành công.
 Runtime đã chuẩn bị xong; nghiệm thu hỏi đáp/citation/isolation trên web vẫn để user tự thực hiện.
 
+Sửa runtime ngày 2026-10-26: SentenceTransformers 5.7 dùng `pooling_mode="lasttoken"`
+thay thuộc tính boolean cũ, khiến bước kiểm tra F2LLM báo `embedding_model_unavailable`
+dù weights đã tải được. Đã hỗ trợ thuộc tính mới và giữ kiểm tra cũ; chạy embedding thật
+cho document/query đều trả vector 1.024 chiều, norm 1. Retry file `01_atlas.txt` đã upload
+qua service hiện có thành công ngay lần đầu: version active/ready, 1 chunk/vector và FTS.
+Chưa gọi LLM hoặc nghiệm thu hỏi đáp trên web.
+
+Sửa routing ngày 2026-10-26: lượt hỏi Atlas dừng trước LangGraph do QUERY_INSTRUCTIONS
+vượt giới hạn ShortText 1.000 ký tự, chưa gọi DeepSeek và chưa có checkpoint. Rút còn
+844 ký tự, giữ tiêu chí 4 route/history/metadata tài liệu, tăng policy `jev_query2.1.1`.
+Chat kiểm checkpoint từ API trước khi hiện nút resume ngay sau lỗi; lỗi nội bộ không còn
+bị gán thông báo lỗi DeepSeek. User cần gửi lại câu hỏi cho lượt lỗi chưa có checkpoint.
+
 **Upload và ingestion**
 
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;

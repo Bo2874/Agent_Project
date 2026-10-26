@@ -38,7 +38,12 @@ def main():
                 model.eval()
                 if model.get_sentence_embedding_dimension() != DIMENSIONS:
                     raise ValueError("Unexpected embedding dimension")
-                if not any(getattr(module, "pooling_mode_lasttoken", False) for module in model):
+                # SentenceTransformers 5.7 replaces the legacy boolean with pooling_mode.
+                if not any(
+                    getattr(module, "pooling_mode", None) == "lasttoken"
+                    or getattr(module, "pooling_mode_lasttoken", False)
+                    for module in model
+                ):
                     raise ValueError("F2LLM requires last-token pooling")
                 profile = {
                     "model": MODEL,
