@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -216,7 +217,13 @@ class LocalModelClient:
     def _validate_profile(self, profile: dict, revision: str) -> None:
         raise NotImplementedError
 
-    async def request(self, *, revision: str, payload: dict | None = None) -> dict:
+    async def request(
+        self,
+        *,
+        revision: str,
+        payload: dict | None = None,
+        on_load: Callable[[str], Awaitable[None]] | None = None,
+    ) -> dict:
         if self._users >= 8:
             raise self.error_type(
                 f"{self.error_prefix}_busy", "Model đang bận. Hãy thử lại.", retryable=True
@@ -225,7 +232,16 @@ class LocalModelClient:
         try:
             async with self._lock:
                 try:
+                    loading = not (
+                        self._process is not None
+                        and self._process.returncode is None
+                        and self._revision == revision
+                    )
+                    if loading and on_load:
+                        await on_load("running")
                     await self._start(revision)
+                    if loading and on_load:
+                        await on_load("completed")
                     result = await self._exchange(payload) if payload else {}
                     return {**result, "profile": dict(self._profile)}
                 except asyncio.CancelledError:

@@ -924,3 +924,102 @@
 - Ruff check/format, git diff --check, lock check và dependency check đạt. Chưa chạy lại toàn
   bộ 22 case/bộ M3, không khẳng định độ đúng JEV/LLM tuyệt đối từ số mẫu hữu hạn. Web/worker
   hiện đã nạp bản sửa, chạy nền một bản mỗi service tại cổng 8000 để user tiếp tục kiểm thử.
+
+## 2026-10-26 — Giảm RAM parser PDF cho tài liệu dài
+
+- User duyệt giảm batch/queue và đo lại PDF Hiểu sâu về AI Agent.pdf (11 MiB, 421 trang).
+  Kiểm read-only job lỗi: stage parsing, document_memory_limit, limit 4096 MiB, dừng sau
+  khoảng 68 giây; chưa có parsed artifact/chunk. Đây là guard theo RSS cây tiến trình,
+  không phải bằng chứng toàn máy đã hết RAM. Không thay đổi trạng thái tài liệu của user.
+- agent_core/rag/parsing.py: PDF recipe v2 đặt layout/table/OCR batch 1 (OCR vẫn tắt),
+  queue_max_size=2 mỗi công đoạn; thêm ThreadedDoclingParseBackendOptions với parser_threads=2,
+  max_concurrent_results=2 để chặn cả bộ đệm decode/render native bên dưới pipeline.
+  Giữ phân tích bảng và recipe DOC/DOCX v1, CPU 2 threads, không thêm dependency/migration.
+- Phép đo đầu chỉ giảm batch/queue, dùng đúng subprocess/guard sản phẩm: peak 1825,12 MiB,
+  không gặp memory limit nhưng dừng document_timeout sau 600,62 giây. Không gọi lần này là
+  parse thành công. Phép đo tiếp có cả native bound, timeout riêng 1800 giây và wrapper đếm
+  progress qua callback chính thức; callback chỉ lưu số trang/phase, không lưu nội dung/log vendor.
+- backend/core/config.py và .env.example: timeout parse/chunk mặc định 600 -> 1800 giây
+  để PDF dài có thời gian xử lý với batch nhỏ trên CPU; vẫn cấu hình được (30–3600 giây),
+  giá trị .env có ưu tiên. Không tăng DOCUMENT_PROCESS_MEMORY_MB=4096 hoặc sửa .env riêng.
+- PDF mẫu 13_text.pdf qua parser thật trong 30,89 giây, peak 1047,84 MiB: 2 trang, 245 ký tự,
+  5 block; marker/trang đúng, hai hàng phí và ngưỡng 900.000 đồng còn nguyên. Qua chunking thật
+  thành 4 chunk, lớn nhất 52 token; _load_artifacts xác nhận offset/hash và nguồn trang 1–2.
+- Không thêm file test/code tracked. Helper đo nằm .tools/runtime-setup; artifact/report ở
+  data/rag-testing/memory-20261026 (Git ignore). Giữ nguyên chỉnh sửa PROJECT_PLAN.md có sẵn
+  của user, chỉ thêm phần điều chỉnh PDF; không stage/commit/push thay user.
+- Kiểm môi trường thấy hai worker root: bản nền cũ do agent tạo PID 18936 và bản terminal
+  user PID 26164. Xác minh create_time/module/CWD, queue không có job queued/running rồi
+  dừng riêng cây worker cũ (kể cả model/helper con); giữ worker terminal và web đang chạy.
+  Không dừng parser đo RAM độc lập, không sửa marker agent run cũ trong DB.
+- Kết quả cuối PDF 421 trang: parse SUCCESS trong 1170,27 giây (19 phút 30 giây), peak RSS
+  1573,17 MiB = 1,54 GiB, dưới limit 4096 MiB. 1.308.288 ký tự, 4.640 block; callback đủ
+  421 page_completed success, cả 421 trang có text ngoài header/footer, ParsedDocument kiểm
+  offset/page hợp lệ. Có warning 827 header/footer và 111 ảnh chưa OCR; không coi nội dung
+  trong ảnh là đã đọc. Không cần thêm chia nhóm trang vì cấu hình bounded đã qua toàn bộ PDF.
+- Báo cáo REPORT.md/results.json trong data/rag-testing/memory-20261026 lưu kết quả cả lần
+  timeout và lần thành công. Các kiểm độ phủ trang/RAM/bảng/source đều đạt; chúng không thay
+  thế nghiệm thu chất lượng mọi chữ/bảng, embedding hay hỏi đáp toàn bộ sách. Không gọi LLM,
+  không ghi DB hoặc chuyển artifact local vào tài liệu của user. Web/worker trong terminal
+  user được giữ nguyên; user cần restart để nạp timeout mới rồi Thử lại file cũ trên web.
+- Ruff check/format hai file Python và git diff --check đạt. Các file tracked sửa trong bước:
+  agent_core/rag/parsing.py, backend/core/config.py, .env.example, docs/rag/MANUAL_M3_CASES.md,
+  PROJECT_PLAN.md, PROJECT_NOTES.md. Không thêm file tracked, không đổi dependency/schema.
+
+## 2026-10-26 — Timer trả lời, tiến trình RAG và timeout riêng
+
+- User duyệt hướng làm trước khi sửa. Giữ toàn bộ thay đổi chưa commit của phần RAM PDF,
+  không khôi phục đoạn PROJECT_PLAN.md user đã xóa; không stage/commit/push thay user.
+- Đối chiếu run lỗi 731e06f4-d4f6-477a-952a-1c72ed5d29e3 theo owner user@personalagent.vn:
+  hết document_qa_timeout sau khoảng 120 giây; model plan 1963 ms/349 token đã xong, nhưng
+  retrieval chưa trả kết quả. Trace cũ chưa đủ để kết luận chính xác bước con nào bị chậm.
+- backend/core/config.py/.env.example: thêm DOCUMENT_QA_TIMEOUT_SECONDS=600 (5–3600 giây).
+  document_qa.py thay time budget của graph RAG, giữ nguyên AgentLimits chat/tool 120 giây
+  và timeout parse/chunk 1800 giây. Không thay .env riêng, dependency, model hoặc schema DB.
+- agent_core/graph/runtime.py: thêm event pipeline_progress và payload metadata. Routes chat
+  phát start có timestamp, progress nhận/phân loại và chuyển các event công đoạn thành SSE
+  riêng. Nhãn model plan giờ là phân tích câu hỏi; completed event RAG giữ prompt context
+  để mô tả đúng công việc vừa xong, không gọi plan là hoàn thiện đáp án.
+- document_qa.py, document_query.py, document_retrieval.py phát mốc scope/plan/embedding/
+  dense/lexical/fusion/rerank/evidence/answer/citation và sửa output nếu phát sinh. Metadata
+  số đoạn dùng giá trị thật, không đoán phần trăm/ETA. local_models.py và hai adapter hiện có
+  embeddings.py/reranking.py thêm callback on_load để chỉ hiện nạp model khi phải khởi động
+  tiến trình/revision mới. Callbacks mặc định None giữ đường gọi ingestion/search cũ.
+- Ghi snapshot vào AgentRun.rag_trace.progress, không thêm bảng/migration. agent_runs.py và
+  schemas/chat.py trả progress whitelist cùng started_at; phase RAG ghi trace tại các mốc,
+  phase routing dùng recorder. Timeout ghi failed_stage, đóng mọi phase running, lưu latency
+  cả khi lỗi; fail_agent_run cũng đóng phase còn chạy khi lỗi/hủy ở lớp ngoài. Không trả raw
+  reasoning, đoạn tài liệu, tham số tool hay credential qua field progress.
+- frontend/static/chat.js/styles.css: tạo timer ngay trước fetch, dùng performance clock,
+  cập nhật mỗi giây; dừng khi done/error/network/EOF hoặc DOM bị tháo. Các công đoạn có trạng
+  thái, duration/số đoạn, bước nạp model/citation thụt vào; summary bố trí timer và metadata
+  riêng, công đoạn trên màn nhỏ xuống dòng. Mở lại run terminal hiển thị timestamps đã lưu;
+  run active poll 3 giây tới terminal, lỗi mạng poll dừng clock/báo trạng thái rồi thử lại.
+  Không đổi luồng phê duyệt tool hoặc dòng nhắc AI có thể mắc lỗi.
+- Kiểm 25 test hiện có về recorder, graph runtime/streaming và timeline schema đạt. Node
+  chạy functions JS sản phẩm với DOM host kiểm clock live/stopped/stored/detached, phase
+  count/state, fetch lỗi, SSE done/error, EOF sớm, polling active->terminal/offline/detach.
+  Đây là kiểm logic DOM, không phải kiểm ảnh giao diện browser. Browser inventory rỗng và
+  IAB unavailable nên chưa nghiệm thu trực quan layout/mobile; user cần restart web/Ctrl+F5.
+- Kiểm RAG service + LangGraph/DB/DeepSeek/F2/Qwen thật, dùng đúng PDF đã ready thuộc user,
+  tạo hội thoại mới Kiểm tra tiến trình RAG (Codex), không giả JWT/đổi ownership/copy index.
+  Run 65bafe27-de67-49ce-b9f0-1895d8cb773b hoàn thành 170,74 giây/4267 token, trả đúng
+  256–1024 token và 10%–20%; mở S1 qua source service đúng owner xác nhận trang 117.
+  Đo plan 2,784 s; embedding 39,280 s gồm load 38,619 s; dense 83 ms; lexical 156 ms;
+  rerank 125,210 s gồm load 31,437 s; answer 2,808 s. Đây là bằng chứng lần kiểm mới cần
+  hơn 120 giây, không giả định trace cũ đã xác định chính xác rerank là bước lỗi.
+- Kiểm timeout điều khiển riêng trong tài khoản test: model/retrieval giả, graph và DB thật,
+  deadline 1 giây chỉ trong tiến trình kiểm. Lỗi chỉ đúng Nạp model embedding, failed_stage
+  query.1.embedding_model, mọi phase terminal, giữ routing/latency/timestamps sau mở lại.
+- Mở web thử riêng cổng 8011, tài khoản test có sẵn và Atlas ready qua HTTP/SSE thật:
+  JEV chọn document_qa=1.0, DeepSeek/F2/Qwen thật, hoàn thành 81,48 giây; 26 progress event,
+  API /runs trả 13 phase completed, nhãn model plan đúng. Không đổi web 8000/worker user;
+  đã dừng riêng cây web thử PID 18856 và mọi model/helper con sau khi kiểm xong.
+- Báo cáo, source/checkpoint metadata và raw event ở data/rag-testing/progress-20261026-3446c11e
+  (Git ignore); helper dưới .tools/runtime-setup. Không thêm file code/test tracked. Cập nhật
+  PROJECT_PLAN.md và MANUAL_M3_CASES.md với T01–T07; Ruff/format, JS syntax, diff checks đạt.
+  Chưa chạy full suite/M3 hoặc mọi query, không khẳng định model/JEV đúng tuyệt đối.
+- Rà soát tool_task bổ sung agent_core/graph/runner.py: publish progress bắt đầu/kết thúc
+  ngay quanh lựa chọn/resolve shortlist thật theo step, qua event handler/recorder hiện có;
+  không phát lại lựa chọn đã commit khi resume. Không đổi choice, quyền tool hay approval.
+  Thêm 50 test shortlist/status SSE đạt, nâng tổng kiểm hiện có trong bước này lên 75.

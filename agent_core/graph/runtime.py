@@ -95,6 +95,7 @@ class ToolCallRequest:
 
 
 AgentEventKind = Literal[
+    "pipeline_progress",
     "model_started",
     "model_completed",
     "model_failed",
@@ -119,6 +120,7 @@ class AgentLoopEvent:
     approved: bool | None = None
     context_usage: ContextTokenUsage | None = None
     status_block: AgentStatusBlock | None = None
+    progress: dict[str, object] | None = None
 
 
 AgentEventHandler = Callable[[AgentLoopEvent], Awaitable[None]]

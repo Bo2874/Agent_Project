@@ -8,6 +8,7 @@ import re
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -45,6 +46,7 @@ from agent_core.rag.qa import (
     parse_json,
 )
 from agent_core.rag.retrieval import evidence_block, pack_evidence
+from backend.core.config import get_settings
 from backend.database import SessionFactory
 from backend.models import (
     AgentRun,
@@ -124,16 +126,67 @@ async def stream_document_qa(
     context_budget: ContextTokenBudget,
     result: DocumentQAResult,
 ) -> AsyncIterator[LLMChunk | AgentLoopEvent]:
+    limits = replace(limits, max_duration_seconds=get_settings().document_qa_timeout_seconds)
     request = DocumentSearchRequest(query=query[:4000], conversation_id=conversation_id)
     total_usage, calls = TokenUsage(), 0
     started = perf_counter()
+    initial_progress = result.trace.get("progress", [])
     result.trace = {
         "version": ANSWER_VERSION,
         "original_query": query[:4000],
         "calls": [],
         "retrievals": [],
         "coverage": {},
+        "timeout_seconds": limits.max_duration_seconds,
+        "progress": initial_progress,
     }
+    progress_rows = {row["id"]: row for row in initial_progress}
+    progress_clocks = {}
+    stage_labels = {
+        "scope": "Kiểm tra tài liệu và ngữ cảnh",
+        "plan": "Phân tích câu hỏi và ngữ cảnh",
+        "embedding": "Tạo embedding câu hỏi",
+        "embedding_model": "Nạp model embedding",
+        "dense": "Tìm kiếm ngữ nghĩa trong tài liệu",
+        "lexical": "Tìm kiếm từ khóa trong tài liệu",
+        "fusion": "Gộp kết quả tìm kiếm",
+        "rerank": "Xếp hạng lại các đoạn ứng viên",
+        "reranker_model": "Nạp model reranker",
+        "evidence": "Chọn các đoạn nguồn cho câu trả lời",
+        "answer": "Tổng hợp câu trả lời",
+        "citations": "Kiểm tra trích dẫn",
+        "repair": "Sửa định dạng kết quả của model",
+    }
+
+    async def record_progress(stage, state, metadata=None):
+        now = perf_counter()
+        if stage not in progress_rows:
+            progress_clocks[stage] = now
+        row = {
+            "id": stage,
+            "label": stage_labels[stage.split(".")[-1]],
+            "state": state,
+            "elapsed_ms": round((now - started) * 1000),
+            "duration_ms": round((now - progress_clocks[stage]) * 1000),
+            "started_at": progress_rows.get(stage, {}).get(
+                "started_at", datetime.now(UTC).isoformat()
+            ),
+        }
+        if metadata and isinstance(metadata.get("count"), int):
+            row["count"] = metadata["count"]
+        progress_rows[stage] = row
+        result.trace["progress"] = list(progress_rows.values())
+        await _save_trace(run_id, owner, result.trace)
+        return AgentLoopEvent(kind="pipeline_progress", step_number=calls, progress=row)
+
+    async def progress(stage, state="running", metadata=None):
+        event = await record_progress(stage, state, metadata)
+        get_stream_writer()(event)
+
+    async def terminal_progress(state):
+        for row in list(progress_rows.values()):
+            if row["state"] == "running":
+                yield await record_progress(row["id"], state, row)
 
     async def revalidate():
         async with SessionFactory() as session:
@@ -166,6 +219,7 @@ async def stream_document_qa(
         await revalidate()
         calls += 1
         if repair_reason:
+            await progress(f"model.{calls}.repair")
             prompt += (
                 " The previous attempt failed output validation. Regenerate using the SAME "
                 "reference data and question. Return only the required JSON object without "
@@ -207,11 +261,16 @@ async def stream_document_qa(
                     if chunk.finish_reason not in (None, "stop"):
                         raise ValueError("Incomplete model response")
             parsed = parse_json("".join(parts))
-            value = (
-                QueryPlan.model_validate(parsed)
-                if allowed is None
-                else GroundedAnswer.model_validate(parsed).validate_sources(set(allowed))
-            )
+            if allowed is None:
+                value = QueryPlan.model_validate(parsed)
+            else:
+                await progress(f"model.{calls}.citations")
+                try:
+                    value = GroundedAnswer.model_validate(parsed).validate_sources(set(allowed))
+                except (ValidationError, DocumentOutputError):
+                    await progress(f"model.{calls}.citations", "failed")
+                    raise
+                await progress(f"model.{calls}.citations", "completed")
             status = "completed"
             return value
         except DocumentOutputError as exc:
@@ -253,6 +312,7 @@ async def stream_document_qa(
                 if status == "cancelled"
                 else None,
                 error_message=error,
+                context_usage=usage_context,
             )
             await recorder(event)
             get_stream_writer()(event)
@@ -271,6 +331,8 @@ async def stream_document_qa(
                 }
             )
             await _save_trace(run_id, owner, result.trace)
+            if repair_reason:
+                await progress(f"model.{calls}.repair", status)
 
     async def call_model(prompt, payload, *, blocks=(), version=ANSWER_VERSION, allowed=None):
         return await _with_output_repair(
@@ -286,6 +348,7 @@ async def stream_document_qa(
         )
 
     async def prepare(_):
+        await progress("scope")
         if len(query) > 4000:
             raise DocumentServiceError(
                 "Câu hỏi tài liệu tối đa 4.000 ký tự. Hãy rút gọn yêu cầu.",
@@ -305,6 +368,7 @@ async def stream_document_qa(
                     "Hãy kiểm tra trạng thái file rồi hỏi lại."
                 )
                 result.trace["availability"] = exc.code
+                await progress("scope", "completed")
                 await _save_trace(run_id, owner, result.trace)
                 return {
                     "terminal": True,
@@ -329,6 +393,8 @@ async def stream_document_qa(
             history_messages=len(history),
             history_trimmed=trimmed,
         )
+        await progress("scope", "completed")
+        await progress("plan")
         plan = await call_model(
             PLAN_PROMPT,
             {
@@ -344,6 +410,7 @@ async def stream_document_qa(
         if not history:
             plan.query = query
         result.trace["plan"] = plan.model_dump()
+        await progress("plan", "completed")
         await _save_trace(run_id, owner, result.trace)
         return {"plan": plan.model_dump()}
 
@@ -351,6 +418,7 @@ async def stream_document_qa(
         plan = QueryPlan.model_validate(state["plan"])
         evidence = []
         if plan.mode == "summary":
+            await progress("evidence")
             async with SessionFactory() as session:
                 rows = (
                     await session.execute(
@@ -380,7 +448,11 @@ async def stream_document_qa(
             }
         else:
             rankings = []
-            for subquery in plan.queries:
+            for query_index, subquery in enumerate(plan.queries, 1):
+
+                async def on_progress(stage, state, metadata, index=query_index):
+                    await progress(f"query.{index}.{stage}", state, metadata)
+
                 await revalidate()
                 async with SessionFactory() as session:
                     response = await retrieve_document_evidence(
@@ -389,11 +461,13 @@ async def stream_document_qa(
                         DocumentSearchRequest(
                             query=subquery, document_ids=result.document_ids, mode="hybrid"
                         ),
+                        on_progress=on_progress,
                     )
                 rankings.append(response.items)
                 trace = response.model_dump(mode="json", exclude={"items"})
                 result.trace["retrievals"].append(trace)
                 await _save_trace(run_id, owner, result.trace)
+            await progress("evidence")
             seen = set()
             # Interleave subquestions so the first query cannot consume the entire context.
             for rank in range(max((len(items) for items in rankings), default=0)):
@@ -423,6 +497,7 @@ async def stream_document_qa(
         ]
         await revalidate()
         await _save_trace(run_id, owner, result.trace)
+        await progress("evidence", "completed", {"count": len(result.evidence)})
         return {"evidence": [hit.model_dump(mode="json") for hit in result.evidence]}
 
     def batches(blocks):
@@ -450,10 +525,12 @@ async def stream_document_qa(
         return groups
 
     async def answer(state):
+        await progress("answer")
         plan = QueryPlan.model_validate(state["plan"])
         allowed = {hit.citation_id for hit in result.evidence}
         blocks = [evidence_block(hit) for hit in result.evidence]
         if not blocks:
+            await progress("answer", "completed")
             return {
                 "answer": {
                     "answer": "Tôi chưa tìm thấy thông tin phù hợp trong các tài liệu đã chọn.",
@@ -535,6 +612,7 @@ async def stream_document_qa(
         result.trace["answerable"] = output.answerable
         result.trace["cited_sources"] = output.sources
         await _save_trace(run_id, owner, result.trace)
+        await progress("answer", "completed")
         return {"answer": output.model_dump()}
 
     graph = build_document_qa_graph(prepare=prepare, retrieve=retrieve, answer=answer)
@@ -552,19 +630,36 @@ async def stream_document_qa(
             )
         yield LLMChunk(content=final["answer"]["answer"], usage=total_usage)
     except TimeoutError:
+        active = [row for row in progress_rows.values() if row["state"] == "running"]
+        label = active[-1]["label"] if active else "xử lý tài liệu"
+        result.trace["failed_stage"] = active[-1]["id"] if active else None
+        async for event in terminal_progress("failed"):
+            yield event
         raise DocumentServiceError(
-            "Hỏi đáp tài liệu vượt giới hạn thời gian. Hãy thử lại hoặc thu hẹp phạm vi.",
+            f"Hỏi đáp tài liệu vượt giới hạn thời gian tại bước: {label}. "
+            "Hãy thử lại hoặc thu hẹp phạm vi.",
             status_code=503,
             code="document_qa_timeout",
         ) from None
     except ContextBudgetError:
+        async for event in terminal_progress("failed"):
+            yield event
         raise DocumentServiceError(
             "Nội dung vượt budget context hỏi đáp tài liệu. Hãy thu hẹp yêu cầu.",
             status_code=422,
             code="document_context_budget",
         ) from None
+    except asyncio.CancelledError:
+        async for _event in terminal_progress("cancelled"):
+            pass
+        raise
+    except Exception:
+        async for event in terminal_progress("failed"):
+            yield event
+        raise
     finally:
         result.trace["latency_ms"] = round((perf_counter() - started) * 1000)
+        await _save_trace(run_id, owner, result.trace)
 
 
 async def lock_document_answer_scope(session, *, conversation_id, owner, result):

@@ -2,6 +2,7 @@
 
 import math
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from agent_core.rag.local_models import LocalModelClient, LocalModelError
@@ -44,7 +45,14 @@ class QwenRerankerClient(LocalModelClient):
         ):
             raise RerankingError("reranker_profile", "Cấu hình reranker không khớp.")
 
-    async def score(self, query: str, passages: list[str], *, revision: str) -> RerankingBatch:
+    async def score(
+        self,
+        query: str,
+        passages: list[str],
+        *,
+        revision: str,
+        on_load: Callable[[str], Awaitable[None]] | None = None,
+    ) -> RerankingBatch:
         if (
             not 1 <= len(passages) <= 20
             or not query.strip()
@@ -55,6 +63,7 @@ class QwenRerankerClient(LocalModelClient):
             raise RerankingError("reranker_input_limit", "Đầu vào reranker không hợp lệ.")
         result = await self.request(
             revision=revision,
+            on_load=on_load,
             payload={
                 "operation": "score",
                 "query": query,

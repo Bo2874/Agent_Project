@@ -1,5 +1,5 @@
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -81,6 +81,8 @@ class AgentRunTimeline:
     created_at: datetime
     finished_at: datetime | None
     steps: list[RunStepTimeline]
+    progress: list[dict[str, object]] = field(default_factory=list)
+    started_at: datetime | None = None
 
 
 async def create_agent_run(
@@ -123,6 +125,26 @@ class AgentRunRecorder:
     async def __call__(self, event: AgentLoopEvent) -> None:
         handler = getattr(self, f"_record_{event.kind}")
         await handler(event)
+
+    async def _record_pipeline_progress(self, event: AgentLoopEvent) -> None:
+        if not event.progress:
+            return
+        async with SessionFactory() as session:
+            run = await session.scalar(
+                select(AgentRun).where(
+                    AgentRun.id == self.agent_run_id,
+                    AgentRun.conversation_id == self.conversation_id,
+                    AgentRun.status == "running",
+                )
+            )
+            if run is None:
+                return
+            trace = dict(run.rag_trace or {})
+            rows = list(trace.get("progress", []))
+            rows = [row for row in rows if row.get("id") != event.progress["id"]]
+            trace["progress"] = [*rows, dict(event.progress)]
+            run.rag_trace = trace
+            await session.commit()
 
     async def _record_model_started(self, event: AgentLoopEvent) -> None:
         step_id = uuid.uuid4()
@@ -430,6 +452,32 @@ async def fail_agent_run(
         agent_run.error_message = safe_message
         agent_run.finished_at = now
 
+        trace = dict(agent_run.rag_trace or {})
+        if trace.get("progress"):
+            rows = []
+            for entry in trace["progress"]:
+                row = dict(entry)
+                if row.get("state") == "running":
+                    row["state"] = "cancelled" if status == "cancelled" else "failed"
+                    try:
+                        started_at = datetime.fromisoformat(row["started_at"])
+                        row["duration_ms"] = max(
+                            0, round((now - started_at).total_seconds() * 1000)
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        row["duration_ms"] = max(
+                            row.get("duration_ms", 0),
+                            round(
+                                (
+                                    now - (agent_run.last_resumed_at or agent_run.created_at)
+                                ).total_seconds()
+                                * 1000
+                            ),
+                        )
+                rows.append(row)
+            trace["progress"] = rows
+            agent_run.rag_trace = trace
+
         running_steps = list(
             (
                 await session.scalars(
@@ -625,6 +673,23 @@ async def list_agent_run_timelines(
                 created_at=run.created_at,
                 finished_at=run.finished_at,
                 steps=step_timelines,
+                progress=[
+                    {
+                        key: row[key]
+                        for key in (
+                            "id",
+                            "label",
+                            "state",
+                            "elapsed_ms",
+                            "duration_ms",
+                            "count",
+                            "started_at",
+                        )
+                        if key in row
+                    }
+                    for row in (run.rag_trace or {}).get("progress", [])
+                ],
+                started_at=run.last_resumed_at or run.created_at,
             )
         )
     return timelines

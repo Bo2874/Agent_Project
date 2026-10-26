@@ -2,6 +2,7 @@
 
 import re
 import unicodedata
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from sqlalchemy import func, literal_column, select
@@ -169,11 +170,21 @@ def _hit(chunk, title, score, kind):
     )
 
 
-async def search_documents(session: AsyncSession, owner: UUID, request: DocumentSearchRequest):
+async def search_documents(
+    session: AsyncSession,
+    owner: UUID,
+    request: DocumentSearchRequest,
+    *,
+    on_progress: Callable[..., Awaitable[None]] | None = None,
+):
+    async def progress(stage, state, **metadata):
+        if on_progress:
+            await on_progress(stage, state, metadata)
+
     if request.mode == "hybrid":
         from backend.services.document_query import retrieve_document_evidence
 
-        return await retrieve_document_evidence(session, owner, request)
+        return await retrieve_document_evidence(session, owner, request, on_progress=on_progress)
     versions = await _scope(session, owner, request)
     version_ids = sorted((version.id for version in versions), key=str)
     query = normalize_text(request.query)
@@ -195,8 +206,18 @@ async def search_documents(session: AsyncSession, owner: UUID, request: Document
         revision = profile["revision"]
         # Release the connection during model download/inference; revalidate scope afterwards.
         await session.rollback()
+        await progress("embedding", "running")
+
+        async def on_load(state):
+            await progress("embedding_model", state)
+
         try:
-            encoded = await get_embedding_client().encode([query], revision=revision, query=True)
+            encoded = await get_embedding_client().encode(
+                [query],
+                revision=revision,
+                query=True,
+                **({"on_load": on_load} if on_progress else {}),
+            )
         except EmbeddingError as exc:
             raise DocumentServiceError(
                 str(exc),
@@ -220,6 +241,8 @@ async def search_documents(session: AsyncSession, owner: UUID, request: Document
             raise DocumentServiceError(
                 "Cấu hình tài liệu đã thay đổi.", status_code=409, code="document_scope_changed"
             )
+        await progress("embedding", "completed")
+        await progress("dense", "running")
         distance = DocumentChunk.embedding.cosine_distance(encoded.vectors[0])
         statement = (
             scoped_chunks(owner, version_ids)
@@ -236,6 +259,7 @@ async def search_documents(session: AsyncSession, owner: UUID, request: Document
             for chunk, title, score in rows
         ]
     else:
+        await progress("lexical", "running")
         terms = lexical_terms(query)
         hits = []
         if terms:
@@ -256,6 +280,7 @@ async def search_documents(session: AsyncSession, owner: UUID, request: Document
             )
             rows = (await session.execute(statement)).all()
             hits = [_hit(chunk, title, score, "lexical") for chunk, title, score in rows]
+    await progress("dense" if request.mode == "dense" else "lexical", "completed", count=len(hits))
     return DocumentSearchResponse(
         query=request.query,
         mode=request.mode,

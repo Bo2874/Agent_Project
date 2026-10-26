@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
 from datetime import datetime
 from decimal import Decimal
+from time import perf_counter
 from typing import Any
 from uuid import UUID
 
@@ -165,6 +166,22 @@ def agent_status_payload(event: AgentLoopEvent) -> dict[str, object]:
         }
     if event.context_usage is not None:
         context_usage = event.context_usage
+        if context_usage.prompt_version == "document-qa-plan-v1":
+            payload["message"] = (
+                "Đang phân tích câu hỏi và ngữ cảnh."
+                if event.kind == "model_started"
+                else "Đã phân tích câu hỏi và ngữ cảnh."
+                if event.kind == "model_completed"
+                else "Không hoàn tất phân tích câu hỏi."
+            )
+        elif (context_usage.prompt_version or "").startswith("document-"):
+            payload["message"] = (
+                "Đang tổng hợp nội dung dựa trên tài liệu."
+                if event.kind == "model_started"
+                else "Đã tạo kết quả từ tài liệu."
+                if event.kind == "model_completed"
+                else "Không hoàn tất kết quả từ tài liệu."
+            )
         payload["context"] = {
             "estimator": context_usage.estimator,
             "system_tokens": context_usage.system_tokens,
@@ -200,6 +217,8 @@ def agent_status_payload(event: AgentLoopEvent) -> dict[str, object]:
 def agent_stream_sse(item: AgentStreamItem) -> str | None:
     """Map the stable agent stream contract to the existing browser SSE protocol."""
     if isinstance(item, AgentLoopEvent):
+        if item.kind == "pipeline_progress":
+            return sse_event("progress", item.progress or {})
         return sse_event("agent_status", agent_status_payload(item))
     if item.content:
         return sse_event("delta", {"content": item.content})
@@ -228,6 +247,7 @@ async def stream_assistant_response(
     resume: bool = False,
     decision_provider: DecisionProvider | None = None,
     query_messages: Sequence[dict[str, str]] | None = None,
+    run_created_at: datetime | None = None,
 ) -> AsyncIterator[str]:
     recorder = AgentRunRecorder(
         agent_run_id=agent_run_id,
@@ -236,7 +256,14 @@ async def stream_assistant_response(
         provider=model.provider,
         model_name=model.model,
     )
-    yield sse_event("start", {"model": model.model, "run_id": str(agent_run_id)})
+    yield sse_event(
+        "start",
+        {
+            "model": model.model,
+            "run_id": str(agent_run_id),
+            "started_at": run_created_at.isoformat() if run_created_at else None,
+        },
+    )
     parts: list[str] = []
     usage = TokenUsage()
     settings = get_settings()
@@ -274,6 +301,20 @@ async def stream_assistant_response(
     plugin_stack = AsyncExitStack()
     document_result = DocumentQAResult()
     used_document_qa = False
+    routing_started = perf_counter()
+
+    async def routing_progress(state):
+        row = {
+            "id": "routing",
+            "label": "Nhận và phân loại yêu cầu",
+            "state": state,
+            "duration_ms": round((perf_counter() - routing_started) * 1000),
+            "elapsed_ms": round((perf_counter() - routing_started) * 1000),
+        }
+        document_result.trace["progress"] = [row]
+        event = AgentLoopEvent(kind="pipeline_progress", step_number=0, progress=row)
+        await recorder(event)
+        return agent_stream_sse(event)
 
     async def document_qa_handler():
         nonlocal used_document_qa
@@ -294,6 +335,7 @@ async def stream_assistant_response(
             yield item
 
     try:
+        yield await routing_progress("running")
         if decision_provider is not None and hasattr(decision_provider, "bind_run"):
             try:
                 await decision_provider.bind_run(
@@ -331,6 +373,7 @@ async def stream_assistant_response(
         runtime = await plugin_stack.enter_async_context(
             plugin_runtime(registry, skill_registry, tool_context)
         )
+        yield await routing_progress("completed")
         if not routing_flags.is_enabled("routing"):
             await extract_memories()
         memory_store = ScopedUserMemoryStore(
@@ -750,6 +793,7 @@ async def resume_agent_run(
         stream_assistant_response(
             agent_run_id=agent_run.id,
             conversation_id=conversation.id,
+            run_created_at=agent_run.last_resumed_at or agent_run.created_at,
             user_message_id=user_message.id,
             user_id=user.id,
             user_message_content=user_message.content,
@@ -874,6 +918,7 @@ async def post_message(
         stream_assistant_response(
             agent_run_id=agent_run.id,
             conversation_id=conversation.id,
+            run_created_at=agent_run.last_resumed_at or agent_run.created_at,
             user_message_id=user_message.id,
             user_id=user.id,
             user_message_content=user_message.content,

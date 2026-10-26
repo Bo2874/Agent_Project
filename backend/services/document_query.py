@@ -252,9 +252,15 @@ async def retrieve_document_evidence(
     model: ChatModel | None = None,
     current_message_id: UUID | None = None,
     on_rewrite: Callable[[DocumentRewriteTrace, str], Awaitable[None]] | None = None,
+    on_progress: Callable[..., Awaitable[None]] | None = None,
 ) -> DocumentSearchResponse:
     """No answer generation; on_rewrite observes calls but must not charge their tokens again."""
     settings = get_settings()
+
+    async def progress(stage, state, **metadata):
+        if on_progress:
+            await on_progress(stage, state, metadata)
+
     started = perf_counter()
     versions = await _scope(session, owner, request)
     snapshot = {
@@ -297,12 +303,17 @@ async def retrieve_document_evidence(
     query_request = request.model_copy(update={"query": rewrite.query, "limit": 20})
     # Independent rankings, sequential SQL on one AsyncSession. Neither list filters the other.
     dense = await search_documents(
-        session, owner, query_request.model_copy(update={"mode": "dense"})
+        session, owner, query_request.model_copy(update={"mode": "dense"}), on_progress=on_progress
     )
     lexical = await search_documents(
-        session, owner, query_request.model_copy(update={"mode": "lexical"})
+        session,
+        owner,
+        query_request.model_copy(update={"mode": "lexical"}),
+        on_progress=on_progress,
     )
+    await progress("fusion", "running")
     fused = reciprocal_rank_fusion(dense.items, lexical.items)
+    await progress("fusion", "completed", count=len(fused))
     texts = {}
     if fused:
         rows = (
@@ -321,11 +332,17 @@ async def retrieve_document_evidence(
     profile, rerank_ms, ranked = None, 0, []
     if fused:
         rerank_started = perf_counter()
+        await progress("rerank", "running", count=len(fused))
+
+        async def on_load(state):
+            await progress("reranker_model", state)
+
         try:
             reranked = await get_reranker_client().score(
                 rewrite.query,
                 [texts[(hit.version_id, hit.chunk_id)] for hit in fused],
                 revision=settings.document_reranker_revision,
+                **({"on_load": on_load} if on_progress else {}),
             )
         except RerankingError as exc:
             raise DocumentServiceError(
@@ -341,6 +358,7 @@ async def retrieve_document_evidence(
             key=lambda hit: (-hit.score, fused_order[hit.chunk_id], str(hit.chunk_id)),
         )
         rerank_ms = round((perf_counter() - rerank_started) * 1000)
+        await progress("rerank", "completed", count=len(fused))
     await revalidate()
     config = {
         "fusion": FUSION_RECIPE,

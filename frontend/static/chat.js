@@ -271,7 +271,11 @@ if (chatApp) {
     const count = document.createElement("span");
     count.className = "timeline-count";
     count.textContent = "Đang bắt đầu";
-    summary.append(indicator, titleText, count);
+    const timer = document.createElement("span");
+    timer.className = "timeline-timer";
+    timer.textContent = "00:00";
+    timer.setAttribute("aria-label", "Thời gian xử lý");
+    summary.append(indicator, titleText, timer, count);
 
     const list = document.createElement("div");
     list.className = "timeline-list";
@@ -279,10 +283,89 @@ if (chatApp) {
     const statusBlock = document.createElement("section");
     statusBlock.className = "agent-status-block";
     statusBlock.hidden = true;
-    root.append(summary, statusBlock, list);
+    const progressList = document.createElement("div");
+    progressList.className = "pipeline-progress";
+    progressList.setAttribute("role", "list");
+    progressList.setAttribute("aria-label", "Các công đoạn xử lý");
+    root.append(summary, statusBlock, progressList, list);
     assistantBubble.before(root);
 
-    return { root, titleText, count, statusBlock, list, items: new Map() };
+    const timeline = {
+      root, titleText, count, timer, statusBlock, list, progressList,
+      items: new Map(), progressItems: new Map(), clock: null, poll: null, terminal: false,
+    };
+    if (expanded) startTimelineClock(timeline);
+    return timeline;
+  }
+
+  function formatElapsed(milliseconds) {
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+    const minutes = Math.floor(seconds / 60);
+    return `${String(minutes).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function tickTimelineClock(timeline) {
+    const elapsed = timeline.elapsedBase + performance.now() - timeline.clockStarted;
+    timeline.timer.textContent = formatElapsed(elapsed);
+    for (const row of timeline.progressItems.values()) {
+      if (row.state === "running") {
+        row.time.textContent = `${formatElapsed(performance.now() - row.clockStarted)} · Đang chạy`;
+      }
+    }
+  }
+
+  function startTimelineClock(timeline, elapsed = 0) {
+    stopTimelineClock(timeline);
+    timeline.elapsedBase = Math.max(0, elapsed);
+    timeline.clockStarted = performance.now();
+    timeline.clock = window.setInterval(() => {
+      if (!timeline.root.isConnected) return stopTimelineClock(timeline);
+      tickTimelineClock(timeline);
+    }, 1000);
+    tickTimelineClock(timeline);
+  }
+
+  function stopTimelineClock(timeline) {
+    if (timeline.clock !== null) {
+      tickTimelineClock(timeline);
+      window.clearInterval(timeline.clock);
+      timeline.clock = null;
+    }
+  }
+
+  function updatePipelineProgress(timeline, data) {
+    if (!data?.id || !["running", "completed", "failed", "cancelled"].includes(data.state)) return;
+    let row = timeline.progressItems.get(data.id);
+    if (!row) {
+      const root = document.createElement("div");
+      root.className = "pipeline-stage";
+      root.setAttribute("role", "listitem");
+      const icon = document.createElement("span");
+      icon.className = "pipeline-stage-icon";
+      icon.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span");
+      label.className = "pipeline-stage-label";
+      const time = document.createElement("span");
+      time.className = "pipeline-stage-time";
+      root.append(icon, label, time);
+      timeline.progressList.append(root);
+      row = { root, icon, label, time };
+      timeline.progressItems.set(data.id, row);
+    }
+    row.state = data.state;
+    row.root.classList.toggle("is-substage", data.id.endsWith("_model") || data.id.endsWith(".citations"));
+    row.clockStarted = performance.now() - (data.duration_ms || 0);
+    row.root.dataset.state = data.state;
+    row.icon.textContent = { running: "●", completed: "✓", failed: "×", cancelled: "–" }[data.state];
+    const count = Number.isInteger(data.count) ? ` · ${data.count} đoạn` : "";
+    row.label.textContent = `${data.label}${count}`;
+    const duration = data.state === "running"
+      ? formatElapsed(data.duration_ms || 0) : formatDuration(data.duration_ms || 0);
+    row.time.textContent = `${duration}${
+      data.state === "running" ? " · Đang chạy" : data.state === "failed" ? " · Lỗi"
+        : data.state === "cancelled" ? " · Đã dừng" : ""
+    }`;
+    if (data.state === "running") timeline.titleText.textContent = data.label;
   }
 
   function formatDuration(durationMs) {
@@ -383,10 +466,30 @@ if (chatApp) {
   }
 
   function finishTimeline(timeline, statusValue, totalTokens = 0, cacheHitRate = null) {
+    stopTimelineClock(timeline);
+    if (timeline.poll !== null) {
+      window.clearTimeout(timeline.poll);
+      timeline.poll = null;
+    }
+    timeline.terminal = true;
+    if (statusValue !== "completed") {
+      for (const item of timeline.items.values()) {
+        if (item.classList.contains("is-running")) setTimelineItemState(item, "failed");
+      }
+      for (const [id, row] of timeline.progressItems) {
+        if (row.state === "running") {
+          updatePipelineProgress(timeline, {
+            id, label: row.label.textContent, state: statusValue === "cancelled" ? "cancelled" : "failed",
+            duration_ms: performance.now() - row.clockStarted,
+          });
+        }
+      }
+    }
     timeline.root.classList.remove("is-running");
     timeline.root.classList.add(statusValue === "completed" ? "is-completed" : "is-failed");
     timeline.titleText.textContent =
-      statusValue === "completed" ? "Agent đã hoàn thành" : "Agent đã dừng do lỗi";
+      statusValue === "completed" ? "Agent đã hoàn thành"
+        : statusValue === "cancelled" ? "Agent đã dừng" : "Agent đã dừng do lỗi";
     const parts = [`${timeline.items.size} hoạt động`];
     if (totalTokens) parts.push(`${totalTokens} token`);
     if (cacheHitRate !== null) parts.push(`cache ${(cacheHitRate * 100).toFixed(1)}%`);
@@ -493,13 +596,29 @@ if (chatApp) {
 
   function renderStoredTimeline(assistantBubble, run) {
     const timeline = createAgentTimeline(assistantBubble, false);
+    updateStoredTimeline(timeline, run);
+    if (!timeline.terminal) pollStoredTimeline(timeline, activeConversationId, run.id);
+  }
+
+  function updateStoredTimeline(timeline, run) {
+    const startedAt = Date.parse(run.started_at || run.created_at);
+    const finishedAt = run.finished_at ? Date.parse(run.finished_at) : Date.now();
+    const elapsed = Number.isFinite(startedAt) ? Math.max(0, finishedAt - startedAt) : 0;
+    timeline.timer.textContent = formatElapsed(elapsed);
+    for (const data of run.progress || []) {
+      const runningElapsed = data.state === "running" && data.started_at
+        ? Date.now() - Date.parse(data.started_at) : data.duration_ms;
+      updatePipelineProgress(timeline, { ...data, duration_ms: Math.max(0, runningElapsed || 0) });
+    }
     for (const step of run.steps) {
       upsertTimelineItem(timeline, `model-${step.step_number}-${step.attempt_number}`, {
         kind: "model",
         name:
           `Step ${step.step_number} · ${step.model_name || "Model"}` +
           (step.attempt_number > 1 ? ` · lần thử ${step.attempt_number}` : ""),
-        description: step.summary || "Model đã xử lý bước này.",
+        description: step.prompt_version === "document-qa-plan-v1"
+          ? (step.status === "completed" ? "Đã phân tích câu hỏi và ngữ cảnh." : "Không hoàn tất phân tích câu hỏi.")
+          : step.summary || "Model đã xử lý bước này.",
         state: step.status === "completed" ? "completed" : "failed",
         durationMs: step.duration_ms,
         totalTokens: step.total_tokens,
@@ -518,13 +637,41 @@ if (chatApp) {
         });
       }
     }
-    finishTimeline(timeline, run.status, run.total_tokens, run.prompt_cache_hit_rate);
+    if (["running", "queued", "waiting_approval"].includes(run.status)) {
+      startTimelineClock(timeline, elapsed);
+      timeline.titleText.textContent = run.status === "waiting_approval"
+        ? "Đang chờ bạn phê duyệt" : "Agent đang xử lý";
+    } else {
+      finishTimeline(timeline, run.status, run.total_tokens, run.prompt_cache_hit_rate);
+    }
     if (run.available_tool_count !== null && run.loaded_tool_count !== null) {
       timeline.count.textContent += ` · tools ${run.loaded_tool_count}/${run.available_tool_count}`;
     }
     if (canResumeRun(run)) {
       addResumeButton(timeline, run.id);
     }
+  }
+
+  function pollStoredTimeline(timeline, conversationId, runId) {
+    if (timeline.terminal || !timeline.root.isConnected || conversationId !== activeConversationId) return;
+    timeline.poll = window.setTimeout(async () => {
+      timeline.poll = null;
+      if (!timeline.root.isConnected || conversationId !== activeConversationId) return;
+      try {
+        const runs = await requestJson(`/api/conversations/${conversationId}/runs`);
+        const run = runs.find((item) => item.id === runId);
+        if (!run) {
+          stopTimelineClock(timeline);
+          timeline.titleText.textContent = "Không tìm thấy lần chạy";
+          return;
+        }
+        updateStoredTimeline(timeline, run);
+      } catch {
+        stopTimelineClock(timeline);
+        timeline.titleText.textContent = "Mất kết nối cập nhật tiến trình";
+      }
+      pollStoredTimeline(timeline, conversationId, runId);
+    }, 3000);
   }
 
   async function loadConversations(preferredId = null) {
@@ -617,91 +764,117 @@ if (chatApp) {
     return { event, data: JSON.parse(dataLines.join("\n")) };
   }
 
-  async function consumeAgentStream(response) {
+  async function consumeAgentStream(response, { assistantBubble, timeline }) {
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.detail || "Không thể bắt đầu agent run.");
     }
     if (!response.body) throw new Error("Trình duyệt không hỗ trợ streaming.");
 
-    const assistantBubble = addMessage("assistant");
-    const timeline = createAgentTimeline(assistantBubble);
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let runId = null;
     let assistantMarkdown = "";
 
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const blocks = buffer.split("\n\n");
-      buffer = blocks.pop() || "";
-      for (const block of blocks) {
-        const parsed = parseSseBlock(block);
-        if (!parsed) continue;
-        if (parsed.event === "start") {
-          runId = parsed.data.run_id;
-          timeline.root.dataset.runId = runId;
-        }
-        if (parsed.event === "delta") {
-          assistantMarkdown += parsed.data.content;
-          window.renderMarkdown(assistantBubble, assistantMarkdown);
-          messageList.scrollTop = messageList.scrollHeight;
-        }
-        if (parsed.event === "agent_status") {
-          status.textContent = parsed.data.message;
-          updateTimelineFromEvent(timeline, parsed.data);
-          if (parsed.data.status === "tool_approval_required") {
-            await requestToolApproval(timeline, parsed.data, runId);
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          if (parsed.event === "start") {
+            runId = parsed.data.run_id;
+            timeline.root.dataset.runId = runId;
           }
-        }
-        if (parsed.event === "error") {
-          finishTimeline(timeline, "failed");
-          if (parsed.data.resumable !== false) await addAvailableResumeButton(timeline, runId);
-          if (!assistantMarkdown) {
-            assistantMarkdown = parsed.data.message;
+          if (parsed.event === "progress") {
+            updatePipelineProgress(timeline, parsed.data);
+            messageList.scrollTop = messageList.scrollHeight;
+          }
+          if (parsed.event === "delta") {
+            assistantMarkdown += parsed.data.content;
             window.renderMarkdown(assistantBubble, assistantMarkdown);
+            messageList.scrollTop = messageList.scrollHeight;
           }
-          assistantBubble.classList.add("is-error");
-          throw new Error(parsed.data.message);
+          if (parsed.event === "agent_status") {
+            status.textContent = parsed.data.message;
+            updateTimelineFromEvent(timeline, parsed.data);
+            if (parsed.data.status === "tool_approval_required") {
+              await requestToolApproval(timeline, parsed.data, runId);
+            }
+          }
+          if (parsed.event === "error") {
+            finishTimeline(timeline, "failed");
+            if (parsed.data.resumable !== false) await addAvailableResumeButton(timeline, runId);
+            if (!assistantMarkdown) {
+              assistantMarkdown = parsed.data.message;
+              window.renderMarkdown(assistantBubble, assistantMarkdown);
+            }
+            assistantBubble.classList.add("is-error");
+            throw new Error(parsed.data.message);
+          }
+          if (parsed.event === "done") {
+            renderCitations(assistantBubble, parsed.data.citations, parsed.data.message_id, activeConversationId);
+            const usage = parsed.data.usage || {};
+            finishTimeline(
+              timeline,
+              "completed",
+              usage.total_tokens || 0,
+              usage.prompt_cache_hit_rate,
+            );
+            const cacheText =
+              usage.prompt_cache_hit_rate === null
+                ? ""
+                : ` · cache ${(usage.prompt_cache_hit_rate * 100).toFixed(1)}%`;
+            status.textContent = `Đã trả lời · ${usage.total_tokens || 0} token${cacheText}`;
+          }
         }
-        if (parsed.event === "done") {
-          renderCitations(assistantBubble, parsed.data.citations, parsed.data.message_id, activeConversationId);
-          const usage = parsed.data.usage;
-          finishTimeline(
-            timeline,
-            "completed",
-            usage.total_tokens || 0,
-            usage.prompt_cache_hit_rate,
-          );
-          const cacheText =
-            usage.prompt_cache_hit_rate === null
-              ? ""
-              : ` · cache ${(usage.prompt_cache_hit_rate * 100).toFixed(1)}%`;
-          status.textContent = `Đã trả lời · ${usage.total_tokens || 0} token${cacheText}`;
-        }
+        if (done) break;
       }
-      if (done) break;
+      if (!timeline.terminal) throw new Error("Kết nối đã đóng trước khi lần chạy hoàn tất.");
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+      stopTimelineClock(timeline);
+    }
+  }
+
+  async function requestAgentStream(url, options) {
+    const assistantBubble = addMessage("assistant");
+    const timeline = createAgentTimeline(assistantBubble);
+    try {
+      const response = await fetch(url, options);
+      await consumeAgentStream(response, { assistantBubble, timeline });
+    } catch (error) {
+      if (!timeline.terminal) {
+        finishTimeline(timeline, "failed");
+        await addAvailableResumeButton(timeline, timeline.root.dataset.runId);
+      }
+      if (!assistantBubble.textContent) window.renderMarkdown(assistantBubble, error.message);
+      assistantBubble.classList.add("is-error");
+      throw error;
+    } finally {
+      stopTimelineClock(timeline);
     }
   }
 
   async function streamReply(content) {
-    const response = await fetch(`/api/conversations/${activeConversationId}/messages`, {
+    await requestAgentStream(`/api/conversations/${activeConversationId}/messages`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content }),
     });
-    await consumeAgentStream(response);
   }
 
   async function streamResume(runId) {
-    const response = await fetch(
+    await requestAgentStream(
       `/api/conversations/${activeConversationId}/runs/${runId}/resume`,
       { method: "POST", credentials: "same-origin" },
     );
-    await consumeAgentStream(response);
   }
 
   chatApp.querySelector("[data-new-chat]").addEventListener("click", async () => {

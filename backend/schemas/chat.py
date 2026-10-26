@@ -117,3 +117,5 @@ class AgentRunTimelineResponse(BaseModel):
     created_at: datetime
     finished_at: datetime | None
     steps: list[RunStepTimelineResponse]
+    progress: list[dict[str, object]] = Field(default_factory=list)
+    started_at: datetime | None = None

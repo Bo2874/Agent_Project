@@ -174,6 +174,17 @@ Worker Windows cấp profile riêng cho parser để Docling khởi động đư
 File từng failed do lỗi môi trường có thể dùng Thử lại sau khi worker đã nạp bản sửa;
 không cần upload lại hoặc tạo version mới chỉ để chạy lại parsing chưa thành công.
 
+PDF dùng batch bố cục/bảng 1 trang, hàng đợi 2 phần tử mỗi công đoạn và bộ đệm native
+tối đa 2 kết quả trang với 2 luồng đọc (parser v2),
+giữ OCR tắt và phân tích bảng bật. Đây không phải giới hạn tổng cộng 2 trang trong RAM:
+model, các công đoạn đang chạy và kết quả trích xuất cũng chiếm bộ nhớ. Giới hạn cây
+tiến trình parse/chunk vẫn là `DOCUMENT_PROCESS_MEMORY_MB=4096`; timeout mặc định
+`DOCUMENT_PROCESS_TIMEOUT_SECONDS=1800` (30 phút), vì PDF dài chạy trên CPU có thể vượt
+mốc cũ 600 giây sau khi giảm batch. Nếu `.env` đã đặt timeout riêng thì giá trị đó được ưu tiên.
+Khởi động lại web và worker sau khi đổi cấu hình để các job mới nhận đúng giới hạn.
+File lớn cần kiểm riêng RAM cao nhất, độ phủ trang và thời gian; giảm batch không đảm bảo
+mọi PDF đều nằm dưới giới hạn. File failed chưa có bản ready dùng Thử lại sau khi nạp code mới.
+
 ## 5. Chunking, embedding và index
 
 Upload `06_long.txt`, đợi ready rồi dùng inspector `--verify-tokens --chunks 30`.
@@ -393,3 +404,33 @@ Lưu báo cáo local trong `data/rag-testing` (Git ignore). Mỗi case ghi:
 
 Ưu tiên chạy U01 → P01 → C01/E01 → R01/R04 → H01 → Q01/Q06 → L04/L05 → S01/S02,
 sau đó mở rộng các case còn lại. Ghi lại raw JSON/ID của một case fail trước khi thử sửa hoặc re-index.
+
+## 12. Bộ đếm thời gian và tiến trình trả lời
+
+Khởi động lại web sau khi cập nhật code, rồi Ctrl+F5 để nạp JS/CSS mới. Trên Windows chạy
+Uvicorn không có `--reload` và chỉ một web worker. File đã ready không cần chạy lại ingestion.
+`DOCUMENT_QA_TIMEOUT_SECONDS=600` là giới hạn graph hỏi đáp tài liệu, riêng với
+`AGENT_MAX_DURATION_SECONDS=120` của chat/tool và `DOCUMENT_PROCESS_TIMEOUT_SECONDS=1800`
+của parse/chunk file. Giá trị `.env` nếu đã đặt riêng được ưu tiên.
+
+| Case | Thao tác | Điều kiện đạt |
+| --- | --- | --- |
+| T01 | Gửi câu hỏi về file đã chọn | Timer xuất hiện ngay khi gửi, tăng mỗi giây dù backend đang yên lặng; dừng khi hoàn thành |
+| T02 | Hỏi lần đầu sau khi restart web | Có mốc nhận/phân loại, kiểm tra phạm vi, phân tích câu hỏi, embedding, dense/lexical, gộp, rerank, chọn nguồn, tổng hợp, kiểm citation; chỉ có dòng nạp model nếu thực sự phải nạp |
+| T03 | Xem công đoạn rerank | Hiển thị số ứng viên thật khi đã biết, chẳng hạn 20 đoạn; không có phần trăm hoặc ETA giả. Thời gian công đoạn cha bao gồm các bước con được thụt vào |
+| T04 | Mở lại hội thoại đã hoàn tất hoặc lỗi | Giữ thời gian tổng theo timestamps và tiến trình đã lưu; timer không tự chạy lại. Model plan được gọi là phân tích câu hỏi, không phải hoàn thiện đáp án |
+| T05 | Mất kết nối khi đang gửi/stream | Timer dừng, báo lỗi; không giữ bước đang chạy quay mãi. EOF trước done/error phải được báo là kết nối chưa hoàn tất |
+| T06 | Mở lại run còn running | Timer phản ánh thời gian đã trôi qua, API được kiểm lại mỗi 3 giây tới terminal; đổi hội thoại hoặc đóng DOM phải dừng timer/poll. Lỗi mạng khi poll dừng clock, báo mất kết nối và thử cập nhật lại |
+| T07 | Chat thường hoặc tool_task | Vẫn có timer tổng và timeline model/tool cũ; tool_task có mốc chọn công cụ ở bước shortlist thật; luồng phê duyệt tool vẫn hoạt động, thời gian tổng bao gồm cả thời gian chờ user |
+
+Khi timeout, backend đóng các công đoạn đang chạy, ghi duration/latency và failed_stage;
+thông báo chỉ rõ công đoạn bị ngắt, không chỉ hiện thông báo model chung. Có thể kiểm
+với timeout nhỏ trong môi trường test riêng, không hạ giới hạn web đang có user hoạt động.
+Không tự cho rằng câu hỏi vượt 120 giây là lỗi LLM: cần xem thời gian nạp model, embedding
+và rerank trong trace. Progress chỉ chứa nhãn/trạng thái/thời gian/số đoạn; không trả raw
+reasoning, nội dung tài liệu hoặc credential.
+
+Kiểm live 2026-10-26: câu chunk/overlap trên PDF 421 trang hoàn thành 170,74 giây,
+đúng 256–1024 token, 10%–20%, nguồn trang 117. Đây là RAG service/model thật; HTTP/SSE
+được kiểm riêng với Atlas qua JEV/DeepSeek/F2/Qwen thật (26 progress event, 13 phase).
+Báo cáo: `data/rag-testing/progress-20261026-3446c11e/REPORT.md` (Git ignore).

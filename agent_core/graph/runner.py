@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, NoReturn
 from uuid import uuid4
@@ -722,6 +723,22 @@ async def run_agent_graph_stream(
             # A committed choice is reused on resume/retry. A completed tool batch
             # advances the step and triggers a fresh choice over observation status.
             if active_choice is None or active_choice.step_number != state["step_number"]:
+                selection_started = perf_counter()
+                selection_progress = {
+                    "id": f"tool_selection.{state['step_number']}",
+                    "label": "Chọn công cụ phù hợp",
+                    "state": "running",
+                    "duration_ms": 0,
+                    "elapsed_ms": round((selection_started - started_at) * 1000),
+                    "started_at": datetime.now(UTC).isoformat(),
+                }
+                await publish(
+                    AgentLoopEvent(
+                        kind="pipeline_progress",
+                        step_number=state["step_number"],
+                        progress=selection_progress,
+                    )
+                )
                 active_choice = await selection_policy.choose(
                     latest_query,
                     step_number=state["step_number"],
@@ -734,6 +751,18 @@ async def run_agent_graph_stream(
                 except ContextBudgetError as exc:
                     raise AgentContextLimitError(str(exc)) from exc
                 install_resolution(resolution)
+                await publish(
+                    AgentLoopEvent(
+                        kind="pipeline_progress",
+                        step_number=state["step_number"],
+                        progress={
+                            **selection_progress,
+                            "state": "completed",
+                            "duration_ms": round((perf_counter() - selection_started) * 1000),
+                            "elapsed_ms": round((perf_counter() - started_at) * 1000),
+                        },
+                    )
+                )
             await validate_capabilities()
         usage = _usage_from_state(state["usage"])
         current_budget = _budget_with_elapsed(state, deadline)

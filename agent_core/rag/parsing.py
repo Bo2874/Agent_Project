@@ -200,7 +200,10 @@ def parse_document(path: Path, file_type: str, work: Path, options: dict) -> Par
         )
 
     from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
-    from docling.datamodel.backend_options import MsWordBackendOptions
+    from docling.datamodel.backend_options import (
+        MsWordBackendOptions,
+        ThreadedDoclingParseBackendOptions,
+    )
     from docling.datamodel.base_models import ConversionStatus, InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.document_converter import DocumentConverter, PdfFormatOption, WordFormatOption
@@ -211,6 +214,12 @@ def parse_document(path: Path, file_type: str, work: Path, options: dict) -> Par
     pdf_options = PdfPipelineOptions(
         do_ocr=False,
         do_table_structure=True,
+        # Bound pages in flight on CPU; Docling defaults to batches of 4 and
+        # queues of 100, which can exhaust the parser's 4 GiB process limit.
+        layout_batch_size=1,
+        table_batch_size=1,
+        ocr_batch_size=1,
+        queue_max_size=2,
         enable_remote_services=False,
         allow_external_plugins=False,
         document_timeout=options["timeout_seconds"],
@@ -219,7 +228,13 @@ def parse_document(path: Path, file_type: str, work: Path, options: dict) -> Par
     converter = DocumentConverter(
         allowed_formats=[InputFormat.PDF, InputFormat.DOCX],
         format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_options=pdf_options,
+                backend_options=ThreadedDoclingParseBackendOptions(
+                    parser_threads=2,
+                    max_concurrent_results=2,
+                ),
+            ),
             InputFormat.DOCX: WordFormatOption(
                 backend_options=MsWordBackendOptions(
                     enable_remote_fetch=False,
@@ -337,7 +352,8 @@ def parse_document(path: Path, file_type: str, work: Path, options: dict) -> Par
                 "message": "Các trang này không có nội dung text được đưa vào chunk.",
             }
         )
-    parser = f"docling-{version('docling-slim')}/core-{version('docling-core')}/v1"
+    recipe = "v2" if file_type == "pdf" else "v1"
+    parser = f"docling-{version('docling-slim')}/core-{version('docling-core')}/{recipe}"
     if file_type == "doc":
         parser += "/libreoffice-docx"
         warnings.append(

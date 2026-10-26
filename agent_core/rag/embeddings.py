@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from agent_core.rag.local_models import MAX_FRAME_BYTES as MAX_FRAME_BYTES
@@ -63,7 +64,12 @@ class F2EmbeddingClient(LocalModelClient):
             raise EmbeddingError("embedding_profile", "Cấu hình embedding không khớp.")
 
     async def encode(
-        self, texts: list[str], *, revision: str, query: bool = False
+        self,
+        texts: list[str],
+        *,
+        revision: str,
+        query: bool = False,
+        on_load: Callable[[str], Awaitable[None]] | None = None,
     ) -> EmbeddingBatch:
         if not re.fullmatch(r"[0-9a-f]{40}", revision):
             raise EmbeddingError("embedding_revision", "Embedding cần revision cố định của model.")
@@ -77,6 +83,7 @@ class F2EmbeddingClient(LocalModelClient):
             )
         result = await self.request(
             revision=revision,
+            on_load=on_load,
             payload={"operation": "query" if query else "document", "texts": texts}
             if texts
             else None,

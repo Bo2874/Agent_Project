@@ -919,22 +919,32 @@ Ngoài ra 5 upload trả HTTP 500 nhưng đã lưu file/job; không coi bước 
 Báo cáo từng case/run/trace tại data/rag-testing/live-20261026-a8f29c71/REPORT.md (Git ignore),
 tổng 20/22 đạt, 1 blocked, 1 flaky; chưa chốt nghiệm thu M3, chưa sửa các lỗi mới phát hiện.
 
-Sửa và kiểm lại ngày 2026-10-26: upload flush/refresh server fields rồi dựng DTO trước commit,
-tránh lazy-load updated_at; 5 upload mới HTTP 201, dedup HTTP 200/cùng ID/version và chỉ một
-job Atlas. Parser Windows có USERPROFILE riêng trong scratch; thêm opencv-python-headless
-vào ingestion (lock 4.14.0.94) vì PDF TableFormer cần cv2. DOCX/PDF mới đều ready với 4 chunk/
-vector/FTS; retry hai file lỗi cũ cũng ready, giữ ID/version. Citation cho phép nhiều nhãn cạnh
-nhau nhưng chặn URL/reference link/nguồn ngoài evidence; answer v2, repair JSON/schema/citation
-tối đa 1 lần qua guard quota/scope/budget hiện có, trace ghi attempt/repair_reason/error_code.
-3/3 so sánh nhiều nguồn và cả hai câu hỏi bảng phí qua LLM thật đạt; mở 14 nguồn citation đúng.
-Regression phát hiện JEV đôi lúc coi câu hỏi tiếp về file là chat vì history đã có đáp án;
-chỉnh taxonomy 2.0.1/query jev_query2.1.3 (970 ký tự), kiểm lại 2 câu hỏi tiếp đều document_qa,
-chat không liên quan và planned_task vẫn đúng. Giữ run sai trước chỉnh policy làm bằng chứng.
-Báo cáo sau sửa: data/rag-testing/fix-20261026-b71c9a04/REPORT.md (Git ignore), 12 kiểm tra
-chat live đạt. Nhánh repair không phát sinh trong live; đã kiểm giới hạn bằng callback riêng.
-Chưa chạy lại toàn bộ bộ M3; không thay các checkbox nghiệm thu tổng thể chỉ từ các case này.
-
 **Upload và ingestion**
+
+Điều chỉnh RAM PDF ngày 2026-10-26: Docling PDF recipe v2 đặt batch layout/table/OCR
+bằng 1 (OCR vẫn tắt), queue mỗi công đoạn bằng 2, native parser 2 luồng/2 kết quả đệm;
+giữ giới hạn parse/chunk 4096 MiB. Giảm batch/queue đã giữ peak 1825 MiB trong phép kiểm
+600 giây, nhưng PDF 421 trang chạm timeout cũ; nâng timeout mặc định lên 1800 giây,
+giữ cấu hình được qua DOCUMENT_PROCESS_TIMEOUT_SECONDS (giá trị `.env` có ưu tiên).
+DOC/DOCX giữ recipe v1; giữ nguyên giới hạn RAM và chức năng phân tích bảng.
+Đã kiểm xong parser toàn bộ PDF: 1170,27 giây (19 phút 30 giây), peak 1573,17 MiB
+(1,54 GiB), 421/421 trang có text ngoài header/footer, 1.308.288 ký tự/4.640 block.
+PDF mẫu 2 trang giữ nguyên dữ kiện bảng và số trang nguồn; chunking ra 4 chunk đúng offset/hash.
+Báo cáo data/rag-testing/memory-20261026/REPORT.md (Git ignore). Chưa embedding/hỏi đáp
+toàn bộ sách; cần restart web/worker để job retry mới nhận timeout 1800 giây.
+
+Tiến trình trả lời ngày 2026-10-26: timer tổng bắt đầu ngay khi gửi, trạng thái từng công đoạn
+đi qua SSE progress; RAG lưu snapshot nhãn/trạng thái/duration trong JSON trace hiện có,
+API timeline chỉ trả field tiến trình được chọn, không trả nội dung file/reasoning.
+Tách DOCUMENT_QA_TIMEOUT_SECONDS=600 khỏi chat/tool 120 giây và ingestion 1800 giây;
+timeout báo đúng bước đang chạy, đóng progress và lưu latency. Timeline cũ vẫn tương thích,
+mở lại run active có poll 3 giây tới terminal, lỗi/mất kết nối dừng clock đúng cách.
+75 test hiện có, DOM host và timeout có điều khiển đạt; tool_task phát thêm mốc chọn công cụ
+ở đúng bước shortlist trong graph, giữ luồng phê duyệt/thực thi hiện có. PDF thật trả đúng chunk/overlap,
+citation trang 117 trong 170,74 giây; HTTP/SSE Atlas thật qua JEV hoàn thành 81,48 giây,
+26 event/13 phase. Báo cáo data/rag-testing/progress-20261026-3446c11e/REPORT.md.
+Browser không kết nối nên chưa nghiệm thu trực quan layout/mobile; cần restart web và
+hard refresh để user kiểm UI. Không thêm migration/dependency hoặc file code/test tracked.
 
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;
    ghi storage bằng ID do server sinh. Mức khởi đầu đề xuất: 20 MiB/file, 200 MiB/user,
