@@ -346,16 +346,38 @@ phải phép đếm chính xác bằng tokenizer của LLM. Nhãn cuối S1… �
 
 Nguồn đúng định dạng chưa đủ: đọc đoạn trích để xác nhận nó thực sự hỗ trợ nhận định.
 DOCX/DOC/TXT có thể dẫn mục/offset thay vì số trang; không yêu cầu số trang được suy đoán.
-Trong `summary`, pipeline dùng all-chunks/map-reduce, không dùng top-6 semantic như QA thông thường.
+Trong `summary`, pipeline dùng all-chunks/map-reduce, không dùng Top-k/Ranked Round-Robin của QA thông thường.
 Tóm tắt dài vẫn có thể dừng bởi budget thời gian/token/call; nếu dừng, phải báo rõ thay vì tuyên bố hoàn tất.
 
 Nếu model trả JSON/schema/citation sai, mỗi bước model được sửa lại tối đa một lần trên cùng
 evidence; không chạy lại JEV/retrieval chỉ để sửa output. Xem `rag_trace.calls[].attempt`,
-`repair_reason`, `error_code` và `usage`: attempt=2 là lượt sửa, cả hai lượt đều tính budget/quota.
+`repair_reason`, `repair_details`, `error_code`, `error_details` và `usage`: attempt=2 là lượt sửa,
+cả hai lượt đều tính budget/quota. Các call document_qa (plan/answer/summary/repair) có
+`response_format=json_object`; prompt plan v2, answer v3, summary notes v2.
+JSON vẫn phải qua schema/citation.
 Hết budget hoặc lỗi provider/phạm vi tài liệu thì không sửa lại. Nếu lượt sửa vẫn sai, trả
 `document_qa_invalid_output`; lỗi provider là `document_qa_provider_error`. Không lưu raw output
 LLM vào trace. Đúng hai nhãn [S1] [S2] không bị coi là liên kết; nhãn ngoài evidence/URL tự tạo
 vẫn phải bị từ chối. Không cần ép model trả sai bằng chat để chạy các case thông thường.
+
+### Hồi quy JSON có dấu ngoặc kép
+
+| ID | Thao tác | Điều kiện đạt |
+| --- | --- | --- |
+| J01 | Chọn PDF sách, Fast, hỏi “Tài liệu giới thiệu những chiến lược chunking nào? Nêu ưu và nhược điểm của từng loại.” | Có câu trả lời/citation hợp lệ; các call mới có response_format=json_object; không lỗi invalid_json do dấu ngoặc kép trong answer |
+| J02 | Hỏi “Theo tài liệu, cụm "vách đá" ngữ nghĩa trong semantic chunking có nghĩa gì?” | Hiển thị ngoặc kép bình thường nếu model dùng chúng; JSON nội bộ escape đúng, không yêu cầu user tránh dấu ngoặc kép |
+| J03 | Chạy kiểm local với output JSON/schema/citation sai có kiểm soát | Mỗi bước chỉ sửa một lần, giữ evidence cũ; error_details có vị trí JSON hoặc issue type/location của schema, không có nội dung model; không lặp retrieval/rerank |
+
+Repair nhận tối đa 160 ký tự quanh lỗi JSON làm dữ liệu chẩn đoán tạm thời trong request tới
+cùng model; không đưa đoạn này vào nguồn citation hoặc trace/log. Metadata bền vững chỉ có
+loại lỗi/vị trí, không lưu giá trị schema sai hoặc tên field lạ do model tạo. JSON mode chưa
+thay thế validation schema/citation. Lỗi cuối nêu rõ JSON, cấu trúc dữ liệu hoặc trích dẫn;
+code document_qa_invalid_output giữ tương thích. Chat/tool không bật JSON mode mặc định.
+
+Kiểm sau sửa 2026-10-27: phát lại riêng bước answer với đúng 5 nguồn của run lỗi,
+3.753 token nguồn; DeepSeek JSON mode trả hợp lệ ngay call đầu, 16,316 s/4.885 token,
+nguồn S1/S2/S4. Không chạy lại plan/embedding/search/rerank trong kiểm này; chưa phải E2E
+toàn web. Báo cáo `data/rag-testing/json-fix-20261027/REPORT.md` (Git ignore).
 
 ## 9. Worker, retry, cancel, re-index và delete
 

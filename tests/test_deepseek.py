@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -8,7 +9,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from agent_core.llm.deepseek import (
     LangChainDeepSeekChatModel,
@@ -16,7 +17,10 @@ from agent_core.llm.deepseek import (
     LLMProviderError,
     to_langchain_messages,
 )
+from agent_core.rag.qa import DocumentOutputError, GroundedAnswer, QueryPlan, parse_json
 from backend import dependencies_llm
+from backend.services.document_qa import _repair_request, _with_output_repair
+from backend.services.documents import DocumentServiceError
 
 
 class FakeLangChainModel:
@@ -205,3 +209,133 @@ async def test_langchain_provider_error_uses_application_error_contract() -> Non
 
     with pytest.raises(LLMProviderError, match="Không thể gọi DeepSeek"):
         _ = [chunk async for chunk in client.stream([{"role": "user", "content": "Hi"}])]
+
+
+async def test_json_mode_is_per_call_and_preserves_escaped_stream_content() -> None:
+    raw = json.dumps(
+        {"answer": 'Cắt ở "vách đá" ngữ nghĩa [S1].', "sources": ["S1"], "answerable": True},
+        ensure_ascii=False,
+    )
+    split = raw.index('\\"') + 1
+    model = FakeLangChainModel(
+        [AIMessageChunk(content=raw[:split]), AIMessageChunk(content=raw[split:])]
+    )
+    client = make_client(model)
+    chunks = [
+        chunk
+        async for chunk in client.stream(
+            [{"role": "user", "content": "Return JSON"}], json_mode=True
+        )
+    ]
+    assert model.stream_kwargs["response_format"] == {"type": "json_object"}
+    assert model.stream_kwargs["stream_usage"] is True
+    assert model.bound_tools is None
+    output = "".join(chunk.content for chunk in chunks)
+    assert output == raw
+    answer = GroundedAnswer.model_validate(parse_json(output)).validate_sources({"S1"})
+    assert '"vách đá"' in answer.answer
+
+    _ = [chunk async for chunk in client.stream([{"role": "user", "content": "Hi"}])]
+    assert "response_format" not in model.stream_kwargs
+
+
+def test_invalid_json_reports_position_without_persisting_content_in_details() -> None:
+    raw = '{"answer":"Cắt ở "vách đá" [S1].","sources":["S1"],"answerable":true}'
+    with pytest.raises(DocumentOutputError) as raised:
+        parse_json(raw)
+    error = raised.value
+    assert error.code == "invalid_json"
+    assert error.details["message"] == "Expecting ',' delimiter"
+    assert error.details["line"] == 1
+    assert error.details["column"] == error.details["position"] + 1
+    assert '"vách đá"' in error.excerpt
+    assert len(error.excerpt) <= 160
+    assert "vách đá" not in json.dumps(error.details, ensure_ascii=False)
+    assert str(error) == "invalid_json"
+
+
+@pytest.mark.parametrize("raw", ["", '```json\n{"answer":"x"}\n```', '{"answer":"a "quote""}'])
+def test_json_parser_remains_strict(raw: str) -> None:
+    with pytest.raises(DocumentOutputError, match="invalid_json"):
+        parse_json(raw)
+
+
+def test_json_mode_still_requires_schema_and_valid_citation_bindings() -> None:
+    with pytest.raises(ValidationError):
+        GroundedAnswer.model_validate(parse_json('{"answer":"No source"}'))
+    with pytest.raises(DocumentOutputError, match="citation_sources"):
+        GroundedAnswer(answer="Answer [S99]", sources=["S99"], answerable=True).validate_sources(
+            {"S1"}
+        )
+    with pytest.raises(DocumentOutputError, match="citation_link"):
+        GroundedAnswer(
+            answer="Answer [S1](https://example.com)", sources=["S1"], answerable=True
+        ).validate_sources({"S1"})
+
+
+def test_schema_diagnostics_exclude_values_and_untrusted_field_names() -> None:
+    with pytest.raises(ValidationError) as raised:
+        QueryPlan.model_validate(
+            {"query": "x", "queries": ["x"], "mode": "qa", "private_name": "private_value"}
+        )
+    error = DocumentOutputError.from_schema_error(raised.value)
+    assert error.code == "invalid_schema"
+    assert error.details["count"] == 1
+    assert error.details["issues"] == [{"type": "extra_forbidden", "loc": ["unknown"]}]
+    assert "private" not in json.dumps(error.details)
+
+
+async def test_output_repair_uses_bounded_diagnostics_and_same_evidence_once() -> None:
+    payload = {"question": "x", "allowed_sources": ["S1"]}
+    observations = []
+    raw = '{"answer":"a "quoted" phrase"}'
+
+    async def invoke(attempt, reason):
+        prompt, request = _repair_request("Return JSON.", payload, reason, has_sources=True)
+        observations.append((attempt, prompt, request))
+        if attempt == 1:
+            return parse_json(raw)
+        return GroundedAnswer(answer="Valid [S1]", sources=["S1"], answerable=True)
+
+    answer = await _with_output_repair(invoke)
+    assert answer.sources == ["S1"]
+    assert len(observations) == 2
+    request = observations[1][2]
+    assert request["output_validation_error"] == "invalid_json"
+    assert request["validation_details"]["column"] > 0
+    assert len(request["invalid_output_excerpt"]) <= 160
+    assert request["allowed_sources"] is payload["allowed_sources"]
+    assert "untrusted diagnostic data" in observations[1][1]
+    assert "output_validation_error" not in payload
+
+
+@pytest.mark.parametrize("code", ["invalid_json", "invalid_schema", "citation_sources"])
+async def test_output_repair_stops_after_one_retry_with_specific_message(code: str) -> None:
+    calls = []
+
+    async def fail(attempt, reason):
+        calls.append(attempt)
+        raise DocumentOutputError(code)
+
+    with pytest.raises(DocumentServiceError) as raised:
+        await _with_output_repair(fail)
+    assert calls == [1, 2]
+    assert raised.value.code == "document_qa_invalid_output"
+    expected = {
+        "invalid_json": "JSON",
+        "invalid_schema": "cấu trúc",
+        "citation_sources": "Trích dẫn",
+    }
+    assert expected[code] in str(raised.value)
+
+
+async def test_output_repair_does_not_retry_provider_errors() -> None:
+    calls = []
+
+    async def fail(attempt, reason):
+        calls.append(attempt)
+        raise LLMProviderError("controlled provider error")
+
+    with pytest.raises(LLMProviderError):
+        await _with_output_repair(fail)
+    assert calls == [1]

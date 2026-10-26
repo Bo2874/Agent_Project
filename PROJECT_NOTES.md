@@ -1064,3 +1064,75 @@
   MANUAL_M3_CASES.md cập nhật R04/R06–R08, RRF Top10 và F01–F07 cho user test web; PROJECT_PLAN.md
   ghi cấu hình mới. Chưa chạy benchmark LLM/model thật hoặc kiểm trực quan browser của bản Fast/Deep,
   không dùng số đo CPU cũ làm bằng chứng tốc độ mới. User restart web không --reload rồi Ctrl+F5.
+
+## 2026-10-27 — Chẩn đoán lỗi JSON khi hỏi các chiến lược chunking
+
+- Đọc DB read-only, lọc đúng owner user@personalagent.vn và câu hỏi user cung cấp. Run
+  d504077d-f54e-4134-8611-81135abbb925 lúc 00:46:43 +07, Fast, hai query; dense/lexical/RRF
+  và final selection hoàn thành. Chọn5 chunk, 3753/4000 token nguồn, đóng góp [3,2].
+- Plan thành công; call2 (689 completion token) và call3 sửa output (777 completion token)
+  đều error_code=invalid_json. Stop reason cuối document_qa_invalid_output. Chưa tới bước
+  validate citation, nên thông báo chung JSON/citation chưa nêu đúng loại lỗi cụ thể.
+- Parser agent_core/rag/qa.py gọi json.loads trực tiếp trên toàn bộ output. Adapter DeepSeek
+  hiện yêu cầu JSON qua prompt, chưa bind response_format/structured output cho RAG. Lượt
+  repair là regenerate trên cùng evidence và error code, không nhận raw output lỗi để sửa.
+  Đây là các điểm cần cải thiện; chưa kết luận lỗi thực tế là Markdown fence, escape hay ký tự nào.
+- Trace/ModelCall không lưu raw output hoặc chi tiết vị trí JSONDecodeError. Helper chẩn đoán
+  answer-only dưới .tools/runtime-setup (Git ignore) đã dựng lại scope owner và kiểm budget3753;
+  thử mạng mặc định không kết nối được. Auto-review từ chối escalation vì gửi lại5 đoạn riêng tư
+  tới DeepSeek và phát sinh phí chưa được user duyệt riêng. Đã hỏi quyền replay; chưa tái hiện
+  được raw output, không bypass rejection. Không chạy lại embedding/retrieval/rerank hoặc sửa code.
+
+- Cập nhật sau khi user cho phép replay: gọi đúng2 lần DeepSeek với cùng5 nguồn, đúng scope
+  owner/active version và context3753 token; không chạy lại plan/search/rerank. Call answer
+  4,515s/4698 token, call repair 4,172s/4879 token (tổng9577), finish_reason=stop cả hai;
+  usage thật được cộng quota. Không tạo message/run hoặc thay đổi tài liệu/index.
+- Tái hiện được invalid_json cả hai call mới: dấu ngoặc kép không escape quanh cụm “vách đá”
+  bên trong trường answer, JSONDecodeError Expecting ',' delimiter tại dòng1 cột914 và900.
+  Repair còn có lỗi cùng loại ở “công ty” và tên phần “Truy xuất nhận biết theo ngữ cảnh”.
+  Đây là bằng chứng từ phản hồi tái hiện; raw output gốc vẫn không có để xác định từng ký tự.
+- Kiểm offline chỉ escape các cụm lỗi quan sát trong bản sao: cả hai qua JSON/schema/citation,
+  cùng nguồn S1/S2/S4. Không đưa thay thế cụm từ vào code sản phẩm và không nới validator.
+  Nguyên nhân tái hiện là định dạng chuỗi JSON; cần cải thiện ràng buộc output/repair RAG.
+  Báo cáo cùng raw replay ở data/rag-testing/output-diagnostic-20261027 (Git ignore).
+
+## 2026-10-27 — Sửa JSON Output và repair trong document_qa
+
+- User duyệt kế hoạch sửa và kiểm lại DeepSeek tối đa2 call với đúng5 nguồn. Giữ các ghi chú
+  chẩn đoán chưa commit, không stage/commit/push thay user. Chỉ sửa file tracked hiện có.
+- agent_core/llm/types.py/deepseek.py thêm json_mode keyword tùy chọn, mặc địnhFalse. Adapter
+  chỉ truyền response_format={type:json_object} khi bật; không thay cấu hình model toàn cục
+  hoặc mang cờ sang request sau. Các call plan/answer/summary/repair của document_qa bậtTrue;
+  chat/tool và API rewrite độc lập giữ hành vi cũ. Tài liệu DeepSeek đã đối chiếu:
+  https://api-docs.deepseek.com/guides/json_mode/ . Không fallback âm thầm nếu provider báo lỗi.
+- agent_core/rag/qa.py bổ sung quy tắc escape bằng ví dụ sinh từ json.dumps; tăng plan v2,
+  answer v3, summary notes v2. Giữ parser json.loads strict và mọi kiểm schema/citation. DocumentOutputError có
+  vị trí JSON/message tĩnh hoặc schema issue type/location (tối đa8 issue, không có input/context,
+  tên field lạ thay bằng unknown). Excerpt tối đa160 ký tự giữ trong bộ nhớ cho repair, str(error)
+  chỉ là mã lỗi. Không thêm json-repair/regex tự sửa output hoặc thay thế cụm từ cụ thể.
+- backend/services/document_qa.py chuyển error object qua đúng một lượt repair, kèm metadata
+  và excerpt tạm thời trong user payload, prompt đánh dấu dữ liệu chẩn đoán untrusted. Dùng cùng
+  evidence và allowed_sources; không gọi lại JEV/embedding/search/rerank. Trace calls ghi thêm
+  response_format/error_details/repair_details, không ghi excerpt/raw output. Thông báo cuối
+  phân biệt JSON/schema/citation nhưng giữ mã document_qa_invalid_output cho tương thích.
+- backend/routes/chat.py và frontend/static/chat.js nhận dạng prefix document-qa-plan-v để
+  nhãn plan đúng cho cả v1/v2, bao gồm timeline đã lưu. Không đổi UI Fast/Deep, nguồn hoặc footer.
+- tests/test_deepseek.py bổ sung transport option theo call, stream escape bị chia giữa chunk,
+  parser strict/ngoặc kép/metadata privacy, schema và citation sai, repair một lượt và provider
+  không retry. 40 test gồm deepseek/context_middleware/agent_status/graph_streaming đạt.
+  Helper regression graph Fast/Deep trong .tools (Git ignore) kiểm json_mode mọi call, repair
+  JSON/schema/citation, metadata không chứa marker private, hết lượt lỗi đóng phase và không
+  lặp retrieval. Mock summary12 chunk chạy notes theo batch cũng xác nhận mọi call JSON mode,
+  đọc đủ12 chunk, không chuyển sang Top-k. DOM host timer/poll/SSE/Fast–Deep đạt;
+  không phải nghiệm thu ảnh giao diện.
+- Sau kiểm local, gọi DeepSeek thật bằng adapter mới với đúng5 nguồn owner-scoped/active version
+  từ run d504077d-f54e-4134-8611-81135abbb925, source budget3753. Dùng prompt/repair/parser
+  sản phẩm, nhận response_format=json_object. Thành công ngay attempt1, finish_reason=stop,
+  16,316s, prompt4116/completion769/tổng4885 token; schema/citation hợp lệ, nguồn S1/S2/S4.
+  Dùng1/2 call được duyệt, không cần call thứ2. Usage cộng quota thật. Không chạy lại plan,
+  embedding/search/rerank, không tạo message/run hoặc đổi tài liệu/index. Báo cáo và output
+  kiểm riêng tại data/rag-testing/json-fix-20261027 (Git ignore); không phải E2E toàn web.
+- Cập nhật PROJECT_PLAN.md và MANUAL_M3_CASES.md với J01–J03 để user chạy lại. Không thêm
+  file tracked/dependency/migration/.env; user restart web không --reload rồi Ctrl+F5 để nạp code.
+  Ruff check/format6 file Python, JS syntax và git diff --check đạt; đã kiểm lại18 test adapter/RAG
+  sau khi hoàn thiện giới hạn excerpt, đều đạt. Không cộng lượt chạy lặp vào tổng40 test khác nhau.

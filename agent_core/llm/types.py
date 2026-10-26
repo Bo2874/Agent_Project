@@ -57,6 +57,8 @@ class ChatModel(Protocol):
         messages: list[ModelMessage],
         tools: list[ModelToolDefinition] | None = None,
         user_id: str | None = None,
+        *,
+        json_mode: bool = False,
     ) -> AsyncIterator[LLMChunk]: ...
 
     async def aclose(self) -> None: ...

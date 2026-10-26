@@ -167,7 +167,7 @@ def agent_status_payload(event: AgentLoopEvent) -> dict[str, object]:
         }
     if event.context_usage is not None:
         context_usage = event.context_usage
-        if context_usage.prompt_version == "document-qa-plan-v1":
+        if (context_usage.prompt_version or "").startswith("document-qa-plan-v"):
             payload["message"] = (
                 "Đang phân tích câu hỏi và ngữ cảnh."
                 if event.kind == "model_started"

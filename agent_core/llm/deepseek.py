@@ -200,6 +200,8 @@ class LangChainDeepSeekChatModel:
         messages: list[ModelMessage],
         tools: list[ModelToolDefinition] | None = None,
         user_id: str | None = None,
+        *,
+        json_mode: bool = False,
     ) -> AsyncIterator[LLMChunk]:
         if not self.api_key and self._chat_model is None:
             raise LLMConfigurationError("Chưa cấu hình DEEPSEEK_API_KEY trong file .env")
@@ -221,6 +223,7 @@ class LangChainDeepSeekChatModel:
                 to_langchain_messages(messages),
                 stream_usage=True,
                 extra_body=extra_body,
+                **({"response_format": {"type": "json_object"}} if json_mode else {}),
             ):
                 if not isinstance(raw_chunk, AIMessageChunk):
                     raise LLMProviderError("LangChain trả về stream chunk không hợp lệ")

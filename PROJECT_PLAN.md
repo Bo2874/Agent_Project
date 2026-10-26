@@ -965,6 +965,20 @@ Ngày 2026-10-27 — Fast/Deep và Final Chunk Selection đã cập nhật theo 
 
 Không thêm dependency/migration/file code hoặc test tracked, không sửa .env/cache/index/tài liệu user.
 
+Ngày 2026-10-27 — Sửa lỗi JSON ở nhánh document_qa:
+- [x] Adapter có json_mode theo từng call; plan/answer/summary/repair gửi response_format=json_object.
+  Prompt plan v2/answer v3 yêu cầu escape JSON; timeline nhận cả phiên bản cũ và mới.
+- [x] Giữ parser strict, schema và citation; repair tối đa1 lần trên cùng evidence, nhận vị trí lỗi
+  cùng excerpt tối đa160 ký tự là dữ liệu untrusted tạm thời. Trace chỉ lưu metadata lỗi an toàn,
+  không lưu đoạn output/snippet hoặc tên field/schema input riêng tư; thông báo phân biệt loại lỗi.
+- [x] 40 test adapter/context/status/streaming và regression graph Fast/Deep/repair/DOM host đạt.
+- [x] Kiểm DeepSeek thật theo user duyệt, answer-only cùng5 nguồn lỗi: JSON/schema/citation đạt
+  ngay call đầu (1/2 call được duyệt),16,316s/4885 token; không chạy lại retrieval/rerank.
+- [ ] User chạy lại J01/J02 trên web sau restart/Ctrl+F5; phép kiểm answer-only chưa thay E2E web.
+
+Chi tiết tại data/rag-testing/json-fix-20261027/REPORT.md (Git ignore). Không đổi .env,
+dependency/migration hoặc index; giữ thuật toán Fast/Deep và budget nguồn 4000 token.
+
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;
    ghi storage bằng ID do server sinh. Mức khởi đầu đề xuất: 20 MiB/file, 200 MiB/user,
    500 trang/PDF; cấu hình được và phải có test biên. Chặn archive/decompression bomb của DOCX.

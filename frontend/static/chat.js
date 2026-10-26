@@ -628,7 +628,7 @@ if (chatApp) {
         name:
           `Step ${step.step_number} · ${step.model_name || "Model"}` +
           (step.attempt_number > 1 ? ` · lần thử ${step.attempt_number}` : ""),
-        description: step.prompt_version === "document-qa-plan-v1"
+        description: (step.prompt_version || "").startsWith("document-qa-plan-v")
           ? (step.status === "completed" ? "Đã phân tích câu hỏi và ngữ cảnh." : "Không hoàn tất phân tích câu hỏi.")
           : step.summary || "Model đã xử lý bước này.",
         state: step.status === "completed" ? "completed" : "failed",
