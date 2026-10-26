@@ -124,6 +124,12 @@ Trong `rag_trace`, xem `original_query`, `plan`, `retrievals`, `coverage`, `evid
 `cited_sources`, `answerable`, `calls`. Run chưa xong/lỗi sớm có thể chỉ có một phần trace.
 Nếu route sang chat thì `has_rag_trace=false`; kiểm tra routing/scope trước khi kết luận lỗi retrieval.
 
+JEV phải nhận metadata file đang chọn sau bộ lọc privacy: `selected_documents` chỉ có
+`title`/`status` (tối đa 20 file, tên tối đa 200 ký tự) và `selected_document_count`.
+Metadata không chứa nội dung/đường dẫn file và không thay thế kiểm quyền retrieval.
+Trên DevTools → Network, mở request gửi chat (`POST .../messages`) → Response/EventStream,
+xem event `routing` với `route`/`probabilities`; giao diện chat không in bảng điểm routing.
+
 ## 3. Upload, lưu trữ và chọn tài liệu
 
 | ID | Thao tác | Kết quả mong đợi |
@@ -226,6 +232,27 @@ Hai nhánh cùng trả một chunk thì RRF cộng hai đóng góp nhưng giữ 
 không dùng “thứ tự phải đổi” làm điều kiện pass. Dùng Network/JSON kiểm tra điểm giảm dần và đúng evidence.
 
 ## 7. History, rewrite và lập kế hoạch câu hỏi
+
+### Nhận ý định khi đã chọn tài liệu
+
+Đợi file ready rồi chọn đúng scope qua Chọn từ thư viện. Các case độc lập dùng chat mới;
+I02 giữ hội thoại/câu trả lời thật của I01. Chọn file không khóa cứng mọi câu hỏi vào document_qa.
+
+| ID | File đã chọn và câu hỏi | Kết quả mong đợi |
+| --- | --- | --- |
+| I01 | Chỉ `01_atlas.txt`, hỏi đúng “Atlas được bảo hành bao lâu?” | document_qa dù không nói “theo tài liệu”; trả 24 tháng kể từ ngày mua kèm citation Atlas; rag_trace có retrieval/evidence, không hỏi lại Atlas là gì |
+| I02 | Sau I01, hỏi “Còn đổi trả thì sao?” | document_qa; history giúp hiểu Atlas; trả 14 ngày và có citation |
+| I03 | Chọn Atlas + Boreal, hỏi “So sánh bảo hành của hai sản phẩm trong các file đã chọn.” | document_qa; 24/12 tháng, nguồn tương ứng từng file; nhiều file không tự thành planned_task |
+| I04 | Vẫn chọn Atlas, hỏi “Giải thích khái niệm vòng lặp for trong Python, không liên quan tài liệu.” | chat; không buộc truy xuất Atlas chỉ vì có file đang chọn |
+| I05 | Chọn Atlas, hỏi “So sánh bảo hành Atlas trong file với chính sách mới nhất trên web.” | planned_task; hiện lõi workflow chưa triển khai nên báo chưa sẵn sàng, không nhận đã tìm web/so sánh xong |
+| I06 | Chọn Atlas, hỏi “Đọc thời hạn bảo hành trong file rồi gửi kết quả qua email.” | planned_task; hiện báo workflow chưa sẵn sàng, không gọi gửi mail khi chưa đọc file/đủ tham số |
+
+I05/I06 chỉ nghiệm thu nhận ý định và thông báo giới hạn hiện tại, chưa phải nghiệm thu workflow
+tài liệu + tool. Với I01–I03, câu trả lời đúng số nhưng không có trace/citation phù hợp vẫn chưa đạt.
+Nếu metadata đã được truyền mà JEV vẫn chọn sai, lưu câu hỏi, history, scope, run ID và event routing
+để chỉnh tiếp tiêu chí; không tự sửa điểm/xuất kết quả giả hoặc ép mọi query có file sang document_qa.
+
+### Hỏi nối tiếp và kiểm rewrite
 
 Trong chat mới, chỉ chọn `01_atlas.txt`:
 
@@ -337,6 +364,7 @@ Lưu báo cáo local trong `data/rag-testing` (Git ignore). Mỗi case ghi:
 - Text gốc đã sai → xem parser/Word conversion/OCR warning trước.
 - Parsed đúng nhưng chunk sai/mất số → xem chunking/normalization/offset.
 - Chunk đúng nhưng thiếu vector/FTS → xem embedding/index/worker error.
+- Không có rag_trace và route=chat dù hỏi file đã chọn → kiểm selection và metadata sau bộ lọc privacy trước.
 - Đoạn đúng không vào ứng viên → dense/lexical/scope; vào ứng viên nhưng bị loại → RRF/rerank/budget.
 - Câu hỏi nối tiếp sai chủ thể → so history với `plan` hoặc rewrite API.
 - Evidence đúng nhưng answer sai/không dẫn nguồn → bước sinh câu trả lời/attribution.

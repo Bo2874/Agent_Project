@@ -888,6 +888,17 @@ vượt giới hạn ShortText 1.000 ký tự, chưa gọi DeepSeek và chưa c�
 Chat kiểm checkpoint từ API trước khi hiện nút resume ngay sau lỗi; lỗi nội bộ không còn
 bị gán thông báo lỗi DeepSeek. User cần gửi lại câu hỏi cho lượt lỗi chưa có checkpoint.
 
+Sửa metadata routing ngày 2026-10-26: lượt Atlas đã hoàn thành nhưng JEV chọn chat (0,8),
+không có rag_trace. Xác định PrivacyPolicy loại selected_documents/selected_document_count
+khỏi request dù backend đã gắn metadata. Cho phép đúng title/status (20 file, title 200 ký tự)
+và số lượng file qua bộ lọc, giữ scrub secret/PII và loại trường ngoài allow-list.
+Policy `decision_policy1.2.1`, query `jev_query2.1.2` (instructions 917 ký tự) làm rõ hỏi về
+file/chủ thể trong tên file/hỏi nối tiếp là document_qa; tài liệu + tool là planned_task;
+chat/tool độc lập vẫn được chọn, giữ argmax 4 nhánh. Không xây lõi planned_task ở phần này.
+Kiểm đường truyền đủ qua ManagedDecisionProvider/privacy/adapter bằng phản hồi giả,
+dispatch QA và SELECT read-only scope/chunk hiện có; không gọi JEV/LLM thật.
+MANUAL_M3_CASES.md bổ sung I01–I06 để user nghiệm thu lại trên web.
+
 **Upload và ingestion**
 
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;

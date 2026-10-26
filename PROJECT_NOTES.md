@@ -752,3 +752,35 @@
 - Dừng hai cây uvicorn của đúng workspace đang chạy song song, khởi động một web server
   local ẩn để nạp code mới, không đổi worker/database/model cache. User tải lại trình duyệt
   và gửi lại câu hỏi Atlas; run chưa có checkpoint không thể dùng nút tiếp tục để khôi phục.
+
+## 2026-10-26 — Truyền metadata tài liệu qua bộ lọc trước khi JEV phân route
+
+- Theo user phản ánh, lượt hỏi Atlas hoàn thành nhưng trả lời không biết sản phẩm. Đọc run
+  thấy JEV chọn chat=0,8, document_qa=0,18 và không có rag_trace. Tái hiện request xác nhận
+  backend đã gắn metadata nhưng PrivacyPolicy.prepare bỏ selected_documents/count; đây là
+  lỗi đường truyền trước provider, không phải bằng chứng index thiếu nội dung Atlas.
+- Sửa agent_core/routing/policy.py: query chỉ cho phép title/status của tối đa 20 metadata
+  file, title tối đa 200 ký tự, status là chuỗi không rỗng tối đa 20 ký tự. Bỏ entry sai kiểu,
+  bỏ mọi trường khác như ID/path/text, giữ selected_document_count dạng int phù hợp hoặc
+  suy ra từ danh sách hợp lệ. Scrub secret trước cắt title và tiếp tục scrub PII/secret toàn
+  payload; giữ giới hạn state/payload và bộ lọc capability/history hiện có. Policy lên 1.2.1.
+- Sửa agent_core/routing/query_router.py: query policy jev_query2.1.2, instructions 917 ký tự.
+  Hỏi file/chủ thể trong tên file/hỏi nối tiếp chọn document_qa kể cả không nói theo tài liệu;
+  tài liệu + tìm web/gửi mail/phối hợp bước chọn planned_task. Chat hoặc tool độc lập vẫn
+  được chọn khi có file. Giữ đủ 4 choices, argmax và tie về chat; không ép route bằng selection.
+- Kiểm inline đủ chuỗi build_query_request -> ManagedDecisionProvider -> PrivacyPolicy ->
+  JevDecisionProvider -> route với phản hồi JEV giả; xác nhận metadata thực sự tới SDK boundary,
+  không chỉ kiểm request đầu vào. Kiểm không chọn file, history/query, entry/count sai kiểu,
+  giới hạn 20/200, secret cắt ngang ranh giới title, PII, loại trường ngoài allow-list và payload
+  budget; capability không nhận metadata và vẫn giữ history. Không tạo file kiểm thử mới.
+- Kiểm dispatch graph bằng handler giả: document_qa gọi QA handler, không chạy model chat
+  thường. Trên transaction SQL read-only, scope của hội thoại hiện có trả bản active/ready và
+  chunk đúng owner/file đã chọn. Đã kiểm đường nối QA hiện có, không thay service retrieval,
+  embedding/rerank, quyền truy cập hoặc lõi planned_task. Không gọi JEV/DeepSeek thật.
+- Cập nhật docs/rag/MANUAL_M3_CASES.md với cách quan sát SSE routing/trace và I01–I06:
+  Atlas không nói theo tài liệu, history, nhiều file, chat không liên quan, tài liệu + web/mail.
+  Hai case phối hợp chỉ kiểm ý định/thông báo chưa sẵn sàng; chưa triển khai workflow tool.
+  Cập nhật PROJECT_PLAN.md và ghi cuối PROJECT_NOTES.md; tổng cộng sửa 5 file, không tạo file mới.
+- Ruff check/format và git diff --check đạt. Khởi động lại đúng web của workspace để nạp code;
+  health live/ready 200. Không restart worker hoặc đổi dữ liệu/index. User tiếp tục Ctrl+F5,
+  chọn Atlas và gửi lại câu hỏi để nghiệm thu phân loại thật, retrieval và citation trên web.

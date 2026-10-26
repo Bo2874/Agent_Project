@@ -16,7 +16,7 @@ from agent_core.routing.types import (
     DecisionTelemetry,
 )
 
-POLICY_VERSION = "decision_policy1.2.0"
+POLICY_VERSION = "decision_policy1.2.1"
 _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _KEY = re.compile(r"(?i)\b(?:sk-or-v1-|sk-)[A-Za-z0-9_-]{8,}")
@@ -73,9 +73,27 @@ class PrivacyPolicy:
                 else []
             )
             if request.phase == "query":
+                documents = state.get("selected_documents")
+                documents = documents if isinstance(documents, list) else []
+                # Only bounded display metadata may cross the provider boundary.
+                # Scrub before truncation so a cut credential cannot escape redaction.
+                selected_documents = [
+                    {"title": clean(item["title"].strip())[:200], "status": item["status"]}
+                    for item in documents[:20]
+                    if isinstance(item, dict)
+                    and isinstance(item.get("title"), str)
+                    and item["title"].strip()
+                    and isinstance(item.get("status"), str)
+                    and 0 < len(item["status"]) <= 20
+                ]
+                count = state.get("selected_document_count")
                 filtered = {
                     "query": state.get("query") if isinstance(state.get("query"), str) else "",
                     "history": history,
+                    "selected_documents": selected_documents,
+                    "selected_document_count": count
+                    if type(count) is int and count >= len(selected_documents)
+                    else len(selected_documents),
                     "trust": "untrusted_data",
                 }
             else:
