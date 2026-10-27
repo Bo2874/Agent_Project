@@ -1347,3 +1347,54 @@
   probe_web_search_live.py, enable_web_search.py, test_web_search_e2e.py,
   diagnose_jev_web_search.py, verify_web_search_saved.py; không lưu mật khẩu fixture/key/cookie.
   Không restart dịch vụ hoặc stage/commit/push thay user; user restart web và Ctrl+F5 để dùng.
+
+## 2026-10-27 ? ReAct ??t 1: v?ng chung tr??c planner M4
+
+- User ch?t tri?n khai t?ng ??t theo k? ho?ch6 b??c; retrieval live ? ??t2 ph?i d?ng b?n
+  Hi?u s?u v? AI Agent.pdf ?? upload c?a user@personalagent.vn. ??t1 ch? nghi?m thu h?i tho?i
+  ch?a ch?n file; kh?ng t?o fixture Atlas/Boreal ho?c tuy?n b? ?? test PDF trong ??t n?y.
+- agent_core/graph/runner.py nh?n react_enabled, b? query route/shortlist b?t bu?c trong mode n?y.
+  ToolSelector.fit n?p to?n b? schema ???c ph?p theo role/allowlist trong budget; kh?ng keyword
+  search, kh?ng t? n?p Skill. Qu? schema budget b?o ContextLimit thay v? ?m th?m gi?u tool.
+  Tool return_direct (g?m search_web) tr? v? observation/model trong ReAct; routed gi? h?nh vi c?.
+- AgentState.execution_mode pin routed/react trong checkpoint. Resume ??c mode ?? pin d? flag
+  ??i; checkpoint c? thi?u field m?c ??nh routed. ReAct pin catalog/schema c? khi kh?ng c? plugin
+  authority; ??i catalog sau checkpoint ph?i t?o run m?i. Gi? model/tool guards, executor,
+  approval, budget, cancel, idempotency v? quy?n runtime hi?n c?, kh?ng t?o v?ng l?p th? hai.
+- SYSTEM_PROMPT v3 y?u c?u ??c observation th?c, ph?n bi?t r?ng/l?i/ch?a x?c ??nh, kh?ng t? nh?n
+  ?? th?c hi?n h?nh ??ng v? gi? link web. Ch? ph?t tr?ng th?i/k?t qu?, kh?ng xu?t raw chain of thought.
+- backend/routes/chat.py ?p d?ng flag host AGENT_REACT_ENABLED cho run m?i ch?a ch?n file;
+  c? file gi? pipeline M3/JEV hi?n t?i ??n ??t2. ReAct kh?ng g?i bind/query/capability JEV;
+  thi?u OpenRouter key kh?ng ch?n nh?nh n?y ? dependency (tool web v?n c?n key ?? ho?t ??ng).
+  Resume ??c checkpoint mode ? backend v? graph; memory extraction v?n theo c?u h?nh th?t.
+- Progress ghi mode v?o trace, nh?n Chu?n b? Agent; start/history timeline kh?ng g?n nh?n
+  T?m ki?m t?i li?u Fast cho run ReAct. Kh?ng ??i frontend/CSS ho?c schema DB ? ??t n?y.
+  .env host ?? b?t AGENT_REACT_ENABLED=true, gi? c?c key/settings kh?c; env m?u v? Compose
+  c? flag default false/DEV_AGENT_REACT_ENABLED. Kh?ng restart d?ch v? c?a user.
+- Hai file tracked m?i: scripts/test_agent_live.py v? docs/agent/MANUAL_AGENT_CASES.md.
+  Runner m?c ??nh ch? in case; --live m?i t?o account fixture v? g?i API tr? ph?. D?ng
+  FastAPI auth/message/SSE/history/run, PostgreSQL/MCP v? model th?t; kh?ng thao t?c browser.
+  Report kh?ng l?u key/password/cookie; d? li?u/report ? data/agent-testing ???c Git ignore.
+- 5/5 case live ??t: R01 tr? AGENT_REACT_OK kh?ng tool (2,804s/2179 token); R02 h?i r?,
+  kh?ng g?i mail (4,502s/2518); R03 count_text?observation?calculate?119 (5,110s/7520);
+  R04 search_web?model t?ng h?p ??ng Python3.14.0 ng?y7/10/2025/link Python.org
+  (8,824s/13873); R05 d?ng history tr?2025, kh?ng search l?i (2,479s/2373).
+  N?m run kh?ng c? RoutingTrace; history/timeline tr? l?i ??ng c?u tr? l?i v? kh?ng hi?n Fast.
+- Run IDs l?n l??t14928079-b3d7-47d7-9159-bd0f5978e46b,
+  08cef57f-96d9-4a01-a4b8-394689d4c61f,919f3c34-f69c-4d97-882a-1e4f941853c6,
+  24cc6ba3-8b3e-4af1-85ad-d61017946a65,3bc3e7d2-9c7f-42df-ae55-7547cd639b29.
+  Native search ghi0,0153904 USD/m?t l??t; ch?a c?ng DeepSeek/memory.
+  Report: data/agent-testing/20261027-123819-f08639e7/REPORT.md v? REPORT.json.
+- L?n sandbox ban ??u R01 l?i proxy tr??c tool, kh?ng ph?i l?i ki?n tr?c; ch?y l?i ngo?i sandbox
+  ??t. Kh?ng s?a transport model s?n ph?m. Kh?ng g?i email ho?c s?a h?i tho?i/t?i li?u user.
+- 256 test graph/runtime/context/SSE/recorder/router/usage/approval/security/checkpoint/RAG
+  adapter/public pages ??t; b? sung pin mode/catalog, observation nhi?u b??c, bypass JEV,
+  role/injection/denied approval trong ReAct v? missing-key dependency. Assertion SSE router c?
+  ???c c?p nh?t ?? ch?p nh?n progress event c? s?n tr??c routing. Ruff14 file ??t.
+- Ch?a tri?n khai ??t2?6: search_documents chung, summary ph?i h?p, audit tool gi?a c?c l??t,
+  ng?n s?ch d?nh cho final/partial result, planner/DAG/worker/song song/background task UI.
+  Ng?n s?ch20.000 token/run gi? nguy?n; nhi?u paid search v?n c? th? ch?m gi?i h?n.
+  R05 ch? ki?m history c?u tr? l?i, kh?ng ch?ng minh truy c?p audit tool t? l??t tr??c.
+- C?p nh?t PROJECT_PLAN.md, h??ng d?n Docker v? manual. Kh?ng th?m dependency/migration,
+  kh?ng ??i embedding/index, kh?ng stage/commit/push. D?ng ? m?c ??t1 ?? user review/commit;
+  ph?n ti?p theo l? ??t2 v?i PDF user ?? ch? ??nh.

@@ -147,6 +147,11 @@ class AgentRunRecorder:
             if run is None:
                 return
             trace = dict(run.rag_trace or {})
+            if event.progress.get("id") == "routing" and event.progress.get("execution_mode") in {
+                "react",
+                "routed",
+            }:
+                trace["execution_mode"] = event.progress["execution_mode"]
             rows = list(trace.get("progress", []))
             rows = [row for row in rows if row.get("id") != event.progress["id"]]
             trace["progress"] = [*rows, dict(event.progress)]
@@ -738,7 +743,9 @@ async def list_agent_run_timelines(
                     for row in (run.rag_trace or {}).get("progress", [])
                 ],
                 started_at=run.last_resumed_at or run.created_at,
-                rag_search_mode=(run.rag_trace or {}).get("search_mode"),
+                rag_search_mode=(run.rag_trace or {}).get("search_mode")
+                if (run.rag_trace or {}).get("execution_mode") != "react"
+                else None,
             )
         )
     return timelines

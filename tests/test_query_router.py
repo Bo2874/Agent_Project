@@ -538,6 +538,8 @@ async def test_backend_sse_persists_terminal_response_and_defers_memory_until_ro
     )
     assert (await anext(stream)).startswith("event: start\n")
     routed = await anext(stream)
+    while routed.startswith("event: progress\n"):
+        routed = await anext(stream)
     assert routed.startswith("event: routing\n")
     assert json.loads(routed.split("data: ")[1])["route"] == expected_route
     assert not extracted and not model.requests
@@ -548,4 +550,5 @@ async def test_backend_sse_persists_terminal_response_and_defers_memory_until_ro
     assert len(persisted) == 1 and persisted[0]["content"] and model.closed
     assert len(extracted) == extractions
     if expected_route == "clarify":
-        assert not events and not quotas and not model.requests
+        assert all(e.kind == "pipeline_progress" for e in events)
+        assert not quotas and not model.requests

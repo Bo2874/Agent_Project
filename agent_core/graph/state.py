@@ -69,6 +69,7 @@ class AgentState(TypedDict):
     step_number: int
     loaded_tool_names: list[str]
     selected_skill: str | None
+    execution_mode: Literal["routed", "react"]
     plugin_runtime_version: str | None
     routing_decision: dict[str, Any] | None
     capability_routing: str | None
@@ -168,6 +169,7 @@ def create_initial_agent_state(
         step_number=1,
         loaded_tool_names=[],
         selected_skill=None,
+        execution_mode="routed",
         tool_definitions=[],
         pending_tool_calls=[],
         tool_approvals={},

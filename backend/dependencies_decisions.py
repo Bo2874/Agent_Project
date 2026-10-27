@@ -26,6 +26,9 @@ async def get_decision_provider() -> AsyncIterator[DecisionProvider | None]:
 
     key = settings.openrouter_api_key
     if key is None or not key.get_secret_value().strip():
+        if settings.agent_react_enabled:
+            yield None
+            return
         raise HTTPException(
             status_code=503,
             detail="Jev routing requires OPENROUTER_API_KEY",

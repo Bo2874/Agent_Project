@@ -52,6 +52,57 @@ class FinalModel:
         return None
 
 
+async def test_react_resume_rejects_a_changed_capability_catalog():
+    from agent_core.graph import AgentNodeExecutionError
+    from agent_core.tools import ToolResult, create_context_tool
+
+    registry = ToolRegistry()
+    context = ToolContext(
+        user_id=uuid4(),
+        conversation_id=uuid4(),
+        user_role="user",
+        run_id=uuid4(),
+    )
+    saver = InMemorySaver()
+    with pytest.raises(RuntimeError):
+        _ = [
+            item
+            async for item in stream_agent_graph(
+                model=FailingModel(),
+                messages=[{"role": "user", "content": "hello"}],
+                registry=registry,
+                context=context,
+                graph_checkpointer=saver,
+                react_enabled=True,
+            )
+        ]
+
+    async def handler(context, args):
+        return ToolResult.success("new capability")
+
+    registry.register(
+        create_context_tool(
+            name="new_tool",
+            description="New capability after checkpoint",
+            args_schema={"type": "object", "properties": {}},
+            coroutine=handler,
+        )
+    )
+    with pytest.raises(AgentNodeExecutionError) as exc:
+        _ = [
+            item
+            async for item in stream_agent_graph(
+                model=FinalModel(),
+                messages=[],
+                registry=registry,
+                context=context,
+                graph_checkpointer=saver,
+                resume=True,
+            )
+        ]
+    assert exc.value.code == "plugin_runtime_changed"
+
+
 def test_agent_checkpoint_config_is_stable_per_run() -> None:
     run_id = uuid4()
 
@@ -67,7 +118,8 @@ def test_agent_checkpoint_config_is_stable_per_run() -> None:
 
 
 @pytest.mark.asyncio
-async def test_external_checkpointer_resumes_same_run_without_deleting_thread() -> None:
+@pytest.mark.parametrize("react", [False, True])
+async def test_external_checkpointer_resumes_same_run_without_deleting_thread(react) -> None:
     run_id = uuid4()
     context = ToolContext(
         user_id=uuid4(),
@@ -85,6 +137,7 @@ async def test_external_checkpointer_resumes_same_run_without_deleting_thread() 
                 registry=ToolRegistry(),
                 context=context,
                 graph_checkpointer=saver,
+                react_enabled=react,
             )
         ]
 
@@ -106,8 +159,11 @@ async def test_external_checkpointer_resumes_same_run_without_deleting_thread() 
             event_handler=capture,
             resume=True,
             graph_checkpointer=saver,
+            react_enabled=not react,
         )
     ]
+    saved = await saver.aget_tuple(config)
+    assert saved.checkpoint["channel_values"]["execution_mode"] == ("react" if react else "routed")
 
     assert any(isinstance(item, LLMChunk) and item.content == "resumed" for item in items)
     assert events[0].kind == "model_started"

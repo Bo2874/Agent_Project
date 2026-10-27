@@ -23,6 +23,7 @@ from agent_core.graph import (
     AgentStreamItem,
     stream_agent_graph,
 )
+from agent_core.graph.checkpointing import agent_checkpoint_config
 from agent_core.history_compression import HistoryCompressionPolicy
 from agent_core.llm.deepseek import LLMConfigurationError, LLMProviderError
 from agent_core.llm.types import ChatModel, TokenUsage
@@ -262,15 +263,6 @@ async def stream_assistant_response(
         provider=model.provider,
         model_name=model.model,
     )
-    yield sse_event(
-        "start",
-        {
-            "model": model.model,
-            "run_id": str(agent_run_id),
-            "started_at": run_created_at.isoformat() if run_created_at else None,
-            "rag_search_mode": rag_search_mode,
-        },
-    )
     parts: list[str] = []
     usage = TokenUsage()
     settings = get_settings()
@@ -308,12 +300,14 @@ async def stream_assistant_response(
     plugin_stack = AsyncExitStack()
     document_result = DocumentQAResult()
     used_document_qa = False
+    react_enabled = settings.agent_react_enabled
     routing_started = perf_counter()
 
     async def routing_progress(state):
         row = {
             "id": "routing",
-            "label": "Nhận và phân loại yêu cầu",
+            "label": "Chuẩn bị Agent" if react_enabled else "Nhận và phân loại yêu cầu",
+            "execution_mode": "react" if react_enabled else "routed",
             "state": state,
             "duration_ms": round((perf_counter() - routing_started) * 1000),
             "elapsed_ms": round((perf_counter() - routing_started) * 1000),
@@ -343,8 +337,39 @@ async def stream_assistant_response(
             yield item
 
     try:
+        if resume:
+            checkpoint = await graph_checkpointer.aget_tuple(agent_checkpoint_config(agent_run_id))
+            values = checkpoint.checkpoint.get("channel_values", {}) if checkpoint else {}
+            react_enabled = values.get("execution_mode", "routed") == "react"
+        selected_documents = []
+        if not resume and routing_flags.is_enabled("rag"):
+            async with SessionFactory() as document_session:
+                selected = await get_conversation_documents(
+                    document_session, user_id, conversation_id
+                )
+                selected_documents = [
+                    {"title": doc.title[:200], "status": doc.status} for doc in selected.items
+                ]
+        # Stage 1: preserve the working M3 pipeline while the retrieval tool is
+        # introduced in stage 2. No-file conversations use the shared ReAct loop.
+        if selected_documents:
+            react_enabled = False
+        yield sse_event(
+            "start",
+            {
+                "model": model.model,
+                "run_id": str(agent_run_id),
+                "started_at": run_created_at.isoformat() if run_created_at else None,
+                "rag_search_mode": None if react_enabled else rag_search_mode,
+                "execution_mode": "react" if react_enabled else "routed",
+            },
+        )
         yield await routing_progress("running")
-        if decision_provider is not None and hasattr(decision_provider, "bind_run"):
+        if (
+            not react_enabled
+            and decision_provider is not None
+            and hasattr(decision_provider, "bind_run")
+        ):
             try:
                 await decision_provider.bind_run(
                     user_id=user_id,
@@ -359,20 +384,12 @@ async def stream_assistant_response(
         query_decision = None
         if (
             not resume
+            and not react_enabled
             and routing_flags.is_enabled("routing")
             and decision_provider is not None
             and not getattr(decision_provider, "shadow", False)
         ):
             await quota_guard.before_execution("model")
-            selected_documents = []
-            if routing_flags.is_enabled("rag"):
-                async with SessionFactory() as document_session:
-                    selected = await get_conversation_documents(
-                        document_session, user_id, conversation_id
-                    )
-                    selected_documents = [
-                        {"title": doc.title[:200], "status": doc.status} for doc in selected.items
-                    ]
             query_decision = await route_query_with_jev(
                 query_messages if query_messages is not None else model_messages,
                 decision_provider,
@@ -382,7 +399,7 @@ async def stream_assistant_response(
             plugin_runtime(registry, skill_registry, tool_context)
         )
         yield await routing_progress("completed")
-        if not routing_flags.is_enabled("routing"):
+        if react_enabled or not routing_flags.is_enabled("routing"):
             await extract_memories()
         memory_store = ScopedUserMemoryStore(
             user_id=user_id,
@@ -423,6 +440,7 @@ async def stream_assistant_response(
             query_routing_decision=query_decision,
             routing_messages=query_messages,
             document_qa_handler=document_qa_handler if routing_flags.is_enabled("rag") else None,
+            react_enabled=react_enabled,
         ):
             if isinstance(item, RoutingDecision):
                 yield sse_event("routing", {**item.model_dump(mode="json"), "resumed": resume})

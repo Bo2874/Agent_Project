@@ -32,8 +32,17 @@ from agent_core.tools import (
 )
 
 
-@pytest.mark.parametrize(("direct", "failed"), [(True, False), (False, False), (True, True)])
-async def test_host_direct_tool_preserves_final_text_and_counts_api_tokens(direct, failed):
+@pytest.mark.parametrize(
+    ("direct", "failed", "react"),
+    [
+        (True, False, False),
+        (False, False, False),
+        (True, True, False),
+        (True, False, True),
+        (True, True, True),
+    ],
+)
+async def test_host_direct_tool_preserves_final_text_and_counts_api_tokens(direct, failed, react):
     answer = (
         "Web search unavailable."
         if failed
@@ -84,12 +93,14 @@ async def test_host_direct_tool_preserves_final_text_and_counts_api_tokens(direc
             messages=[{"role": "user", "content": "Look up information"}],
             registry=registry,
             context=make_context(),
+            react_enabled=react,
         )
     ]
     chunks = [item for item in items if isinstance(item, LLMChunk)]
-    assert "".join(chunk.content for chunk in chunks) == (answer if direct else "Rewritten")
-    assert len(model.requests) == (1 if direct else 2)
-    assert chunks[-1].usage.total_tokens == (65 if direct else 67)
+    returns_direct = direct and not react
+    assert "".join(chunk.content for chunk in chunks) == (answer if returns_direct else "Rewritten")
+    assert len(model.requests) == (1 if returns_direct else 2)
+    assert chunks[-1].usage.total_tokens == (65 if returns_direct else 67)
     completed = next(
         item for item in items if isinstance(item, AgentLoopEvent) and item.kind == "tool_completed"
     )
@@ -147,6 +158,72 @@ def make_registry() -> ToolRegistry:
         ),
     )
     return registry
+
+
+async def test_react_exposes_authorized_tools_and_uses_each_observation_without_jev():
+    from agent_core.contracts import FeatureFlags
+
+    class UnavailableDecisionProvider:
+        async def decide(self, request):
+            pytest.fail("The ReAct baseline must not require a JEV decision")
+
+    def action(name, number, args):
+        return [
+            LLMChunk(
+                tool_call_deltas=(
+                    LLMToolCallDelta(
+                        index=0,
+                        id=f"c{number}",
+                        name=name,
+                        arguments=json.dumps(args),
+                    ),
+                ),
+                finish_reason="tool_calls",
+                usage=TokenUsage(total_tokens=3),
+            )
+        ]
+
+    model = FakeModel(
+        [
+            action("echo_text", 1, {"text": "first evidence"}),
+            action("echo_text", 2, {"text": "second evidence"}),
+            [LLMChunk(content="Both observations read", finish_reason="stop")],
+        ]
+    )
+    items = [
+        item
+        async for item in stream_agent_graph(
+            model=model,
+            messages=[{"role": "user", "content": "A request without routing keywords"}],
+            registry=make_registry(),
+            context=make_context(),
+            react_enabled=True,
+            routing_flags=FeatureFlags(enabled=True, routing=True),
+            decision_provider=UnavailableDecisionProvider(),
+        )
+    ]
+    assert len(model.requests) == 3
+    assert all(r[1][0]["function"]["name"] == "echo_text" for r in model.requests)
+    assert "first evidence" in json.dumps(model.requests[1][0])
+    assert "second evidence" in json.dumps(model.requests[2][0])
+    assert sum(isinstance(i, AgentLoopEvent) and i.kind == "tool_completed" for i in items) == 2
+
+
+async def test_react_does_not_silently_omit_tools_when_schema_budget_is_too_small():
+    model = FakeModel([])
+    with pytest.raises(AgentContextLimitError):
+        _ = [
+            item
+            async for item in stream_agent_graph(
+                model=model,
+                messages=[{"role": "user", "content": "hello"}],
+                registry=make_registry(),
+                context=make_context(),
+                react_enabled=True,
+                tool_selection_config=ToolSelectionConfig(schema_token_budget=1),
+            )
+        ]
+    assert not model.requests
 
 
 async def test_agent_graph_calls_tool_then_returns_final_answer() -> None:

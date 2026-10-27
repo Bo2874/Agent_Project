@@ -64,6 +64,34 @@ class Provider:
         return answer(req, probability=self.probability)
 
 
+@pytest.mark.parametrize("react", [False, True])
+async def test_missing_jev_key_is_optional_only_for_react_rollout(monkeypatch, react):
+    from fastapi import HTTPException
+
+    from agent_core.contracts import FeatureFlags
+    from backend import dependencies_decisions
+
+    monkeypatch.setattr(
+        dependencies_decisions,
+        "get_settings",
+        lambda: SimpleNamespace(
+            v2_features=FeatureFlags(enabled=True, routing=True),
+            openrouter_api_key=None,
+            agent_react_enabled=react,
+        ),
+    )
+    provider = dependencies_decisions.get_decision_provider()
+    try:
+        if react:
+            assert await anext(provider) is None
+        else:
+            with pytest.raises(HTTPException) as exc:
+                await anext(provider)
+            assert exc.value.status_code == 503
+    finally:
+        await provider.aclose()
+
+
 async def managed(primary, fallback=None, **kwargs):
     traces = []
 

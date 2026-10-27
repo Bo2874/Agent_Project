@@ -252,6 +252,7 @@ async def run_agent_graph_stream(
     routing_messages: Sequence[ModelMessage] | None = None,
     shortlist_config: ShortlistConfig | None = None,
     document_qa_handler: Callable[[], AsyncIterator[AgentStreamItem]] | None = None,
+    react_enabled: bool = False,
 ) -> AsyncIterator[AgentStreamItem | RoutingDecision]:
     """Execute model/tool turns with LangGraph as the only orchestrator."""
 
@@ -310,6 +311,16 @@ async def run_agent_graph_stream(
         tool_call_counts = dict(restored.get("tool_call_counts", {}))
         observation_counts = dict(restored.get("observation_counts", {}))
 
+    # Existing checkpoints keep their original execution policy. A host flag only
+    # chooses the policy for a new run; it cannot silently migrate a paused run.
+    if persisted_checkpoint is not None:
+        saved_mode = restored.get("execution_mode", "routed")
+        if saved_mode not in {"routed", "react"}:
+            raise AgentNodeExecutionError(
+                "Invalid execution checkpoint; start a new run",
+                code="agent_checkpoint_invalid",
+            )
+        react_enabled = saved_mode == "react"
     latest_query = _latest_user_query(working_messages)
     if persisted_checkpoint is not None:
         history_source = restored.get("tool_routing_history", [])
@@ -362,7 +373,7 @@ async def run_agent_graph_stream(
                     "Routing capabilities or policy changed; start a new run",
                     code="routing_checkpoint_changed",
                 )
-    elif query_routing_decision is not None:
+    elif query_routing_decision is not None and not react_enabled:
         routing_decision = RoutingDecision.model_validate(query_routing_decision)
         if (
             routing_decision.provider != "jev"
@@ -378,7 +389,7 @@ async def run_agent_graph_stream(
         routing_decision = routing_decision.model_copy(
             update={"catalog_version": registry.capability_catalog(context.user_role).version}
         )
-    elif routing_flags is not None and routing_flags.is_enabled("routing"):
+    elif not react_enabled and routing_flags is not None and routing_flags.is_enabled("routing"):
         routing_decision = route_query(
             working_messages, registry.capability_catalog(context.user_role)
         )
@@ -452,6 +463,7 @@ async def run_agent_graph_stream(
         raise SelectionPolicyError("selection_provider_policy_changed")
     if saved_policy is not None or (
         persisted_checkpoint is None
+        and not react_enabled
         and decision_provider is not None
         and routing_decision is not None
         and routing_decision.route == "tool_task"
@@ -498,7 +510,35 @@ async def run_agent_graph_stream(
         skill_selection_config=skill_selection_config,
     )
     try:
-        if selection_policy is not None and active_choice is not None:
+        if react_enabled:
+            # The small-catalog baseline exposes every authorized schema together.
+            # Fail closed instead of silently hiding arbitrary tools when it no
+            # longer fits. Large-catalog discovery is a separate rollout.
+            names = tuple(
+                record.binding_name
+                for record in registry.capability_catalog(context.user_role).records
+            )
+            skill_tool_resolution = SkillToolResolution(
+                tool_selection=ToolSelector(
+                    replace(
+                        tool_selection_config or ToolSelectionConfig(),
+                        schema_token_budget=min(
+                            (tool_selection_config or ToolSelectionConfig()).schema_token_budget,
+                            context_budget.tool_tokens,
+                        ),
+                    )
+                ).fit(
+                    registry,
+                    context.user_role,
+                    names,
+                    mode="all",
+                    required=names,
+                    max_tools=len(names),
+                ),
+                skill_selection=None,
+                selected_skill=None,
+            )
+        elif selection_policy is not None and active_choice is not None:
             skill_tool_resolution = await selection_policy.resolve(active_choice)
         elif selection_policy is not None or (
             routing_decision is not None and routing_decision.route == "chat"
@@ -543,11 +583,16 @@ async def run_agent_graph_stream(
     tool_definitions = list(selection.definitions)
 
     def runtime_version():
-        if context.capability_version is None and selection_policy is None:
+        if context.capability_version is None and selection_policy is None and not react_enabled:
             return None
         return hashlib.sha256(
             json.dumps(
                 {
+                    **(
+                        {"catalog": registry.capability_catalog(context.user_role).version}
+                        if react_enabled
+                        else {}
+                    ),
                     "authority": context.capability_version,
                     "tools": tool_definitions,
                     "skill": (
@@ -589,6 +634,8 @@ async def run_agent_graph_stream(
         progress.append(
             f"Đã chọn Skill {selected_skill.name} và nhóm tool bắt buộc."
             if selected_skill is not None
+            else "Đã tiếp nhận yêu cầu; Agent có thể chọn công cụ theo từng bước."
+            if react_enabled
             else "Đã tiếp nhận yêu cầu và chọn nhóm tool phù hợp."
         )
     initial_budget = create_agent_budget(
@@ -638,6 +685,10 @@ async def run_agent_graph_stream(
 
     async def validate_capabilities() -> None:
         try:
+            if react_enabled and (
+                registry.capability_catalog(context.user_role).version != selection.catalog_version
+            ):
+                raise ToolAuthorizationError("tool_catalog_changed")
             if selection_policy is not None:
                 selection_policy.validate_catalog()
             if selected_skill is not None and skill_registry is not None:
@@ -1040,6 +1091,7 @@ async def run_agent_graph_stream(
                 tool_usage += result.usage
             if (
                 len(state["pending_tool_calls"]) == 1
+                and not react_enabled
                 and registered
                 and registered.tool.return_direct
             ):
@@ -1110,6 +1162,7 @@ async def run_agent_graph_stream(
         budget=initial_budget,
     )
     initial_state.update(
+        execution_mode="react" if react_enabled else "routed",
         step_number=start_step,
         loaded_tool_names=sorted(selection.loaded_names),
         selected_skill=selected_skill.name if selected_skill is not None else None,

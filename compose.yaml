@@ -54,6 +54,7 @@ x-runtime-environment: &runtime-environment
   V2_ENABLED: "${DEV_V2_ENABLED:-false}"
   V2_PLUGINS_ENABLED: "${DEV_V2_PLUGINS_ENABLED:-false}"
   V2_ROUTING_ENABLED: "${DEV_V2_ROUTING_ENABLED:-false}"
+  AGENT_REACT_ENABLED: "${DEV_AGENT_REACT_ENABLED:-false}"
   V2_RAG_ENABLED: "${DEV_V2_RAG_ENABLED:-false}"
   V2_PLANNING_ENABLED: "false"
   V2_PARALLEL_ENABLED: "false"

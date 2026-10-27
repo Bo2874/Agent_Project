@@ -210,6 +210,12 @@ schema sau observation, Skill lazy loading, none và checkpoint PostgreSQL. Fixt
 DecisionProvider của project, không mock SDK/cấu hình Jev. Dependency runtime mặc định None;
 không thêm env/provider key hoặc bật flag trong Compose. [Guide](../../../docs/routing/CAPABILITY_SHORTLIST.md).
 
+ReAct đợt1 (2026-10-27): `DEV_AGENT_REACT_ENABLED=true` chọn vòng model/tool/observation
+cho hội thoại chưa chọn file. Host tương ứng `AGENT_REACT_ENABLED=true`. Restart/recreate app
+sau khi đổi flag; run đang có checkpoint giữ chế độ/catalog đã pin. File đã chọn vẫn chạy M3 cũ,
+chưa tự nạp Skill hoặc planner; không cần migration, thêm dependency hay re-index tài liệu.
+Tool vẫn chịu allowlist/role/approval. Xem [case và runner LLM thật](../../../docs/agent/MANUAL_AGENT_CASES.md).
+
 ```powershell
 docker compose --env-file .env.docker logs --tail 100 migrate app worker
 docker compose --env-file .env.docker up -d --build --wait --wait-timeout 180

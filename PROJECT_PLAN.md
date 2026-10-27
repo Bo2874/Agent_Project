@@ -8,7 +8,7 @@ Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, 
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần
 [Lộ trình mở rộng V2](#lộ-trình-mở-rộng-v2) bên dưới. Đây là kế hoạch triển khai, chưa phải các chức năng đã có.
 
-Tiến độ: **M2: người dùng đã nghiệm thu Jev phân 4 route; đã gỡ bảng route/xác suất và nối quyết định vào luồng thật. Chat/tool_task dùng phần thực thi hiện có; document_qa/planned_task có điểm nhận chờ lõi. Đã sửa cuộn/xóa hội thoại và dòng nhắc cố định. Tiếp theo bàn thiết kế Choice chọn tool động. Ngày 87 và connector/Skill Ngày 86 tiếp tục hoãn theo yêu cầu**.
+Tiến độ 2026-10-27: **M3 document_qa đã được user chấp nhận tạm thời. Đang chuyển sang ReAct dùng chung trước M4; đợt1 cho hội thoại chưa chọn file đã hoàn thành với 5 case LLM thật. Tiếp theo nối retrieval vào vòng chung và test bằng Hiểu sâu về AI Agent.pdf đã upload. Planner/DAG/sub-agent/song song chưa triển khai. Ngày87 và connector/Skill Ngày86 tiếp tục hoãn**.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),
 [mapping module](#4-mapping-module-và-dữ-liệu-dự-kiến),
@@ -1123,6 +1123,25 @@ tài liệu chưa ready hoặc đã xóa không đi vào context. Các ngưỡng
 
 ### M4 — Planner, task DAG, sub-agent và thực thi song song
 
+Điều chỉnh hướng ngày 2026-10-27: xây vòng ReAct dùng chung trước, rồi nâng lên planner/DAG.
+Route không còn là giới hạn capability cả run; model quyết định hành động từ observation thực tế.
+Triển khai từng đợt nhỏ, report và commit riêng; không tick checklist Ngày 109–119 khi mới có nền loop.
+
+- [x] Đợt 1: baseline ReAct cho hội thoại chưa chọn file; toàn bộ schema tool được phép trong budget,
+  bỏ JEV query/shortlist bắt buộc, tool → observation → model kể cả search_web. Flag
+  `AGENT_REACT_ENABLED`, checkpoint pin chế độ/catalog, giữ executor/approval/quota. R01–R05
+  dùng DeepSeek/MCP/OpenRouter thật đạt; có API/SSE/history/DB, chưa thao tác browser thật.
+- [ ] Đợt 2: capability truy xuất tài liệu, giữ summary workflow và nguồn backend; test bằng
+  **Hiểu sâu về AI Agent.pdf** đã upload của `user@personalagent.vn` theo yêu cầu user.
+- [ ] Đợt 3: lịch sử hành động giữa lượt, budget chung/dự trù câu trả lời cuối, xử lý web và partial result.
+- [ ] Đợt 4: planner/PlanSpec/TaskResult, DAG validator/storage và scheduler tuần tự.
+- [ ] Đợt 5: worker context riêng, song song có giới hạn và root budget.
+- [ ] Đợt 6: background/checkpoint/cancel/approval, event replay và UI task.
+
+Trong đợt 1, hội thoại có file đang chọn vẫn đi M3/routing cũ. Chế độ ReAct chưa tự nạp Skill;
+catalog vượt schema budget báo lỗi, chưa có discovery catalog lớn. Chưa sửa ngân sách20.000
+token/run hoặc nối toàn bộ M4. [Kịch bản và runner live](docs/agent/MANUAL_AGENT_CASES.md).
+
 Mục tiêu: tự tạo kế hoạch ngắn cho yêu cầu nhiều bước, thực thi theo dependency, quan sát từng task
 và tổng hợp kết quả. LangGraph tiếp tục là bộ điều phối duy nhất.
 [Orchestrator-worker và Send](https://docs.langchain.com/oss/python/langgraph/workflows-agents),
@@ -1372,9 +1391,11 @@ Không mặc định các số liệu hiệu năng trong sách áp dụng cho pr
 
 ## Task tiếp theo
 
-Jev phân bốn route đã được người dùng nghiệm thu và nối vào luồng thật; cờ/code preview đã gỡ.
-Chat và tool_task dùng phần thực thi hiện có; RAG/planner chưa có lõi sẽ thông báo chưa sẵn sàng.
-Tiếp theo: thống nhất thiết kế Choice động và cách chọn một/nhiều tool trong tool_task trước khi sửa.
+Ngày 2026-10-27: hoàn thành đợt1 chuyển hướng ReAct, có live report R01–R05.
+Tiếp theo đợt2: nối search_documents vào vòng chung, summary và binding nguồn dùng lõi M3;
+kiểm thử retrieval bằng Hiểu sâu về AI Agent.pdf đã có trong thư viện của user.
+Đợt3 xử lý lịch sử tool giữa các lượt và ngân sách; đợt4–6 xây planner/DAG/sub-agent/song song.
+JEV/routing cũ giữ cho hội thoại chọn file ở đợt1 và checkpoint cũ; flag ReAct không tự migrate run.
 Ngày 93/95 vẫn chưa nghiệm thu; regression/probe fixture không thay thế benchmark chất lượng.
 
 Ngày 87 vẫn chưa thực hiện: test thêm/xóa server, trùng tên, mất kết nối, credential chéo user,
