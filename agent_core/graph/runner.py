@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage, BaseMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.config import get_stream_writer
 from langgraph.errors import NodeCancelledError, NodeError, NodeTimeoutError
 from langgraph.store.base import BaseStore
 from langgraph.types import Command, Interrupt, interrupt
@@ -61,7 +63,11 @@ from agent_core.graph.state import (
     create_agent_budget,
     create_initial_agent_state,
 )
-from agent_core.graph.streaming import map_graph_stream_event, write_agent_stream_item
+from agent_core.graph.streaming import (
+    AgentGraphStreamEvent,
+    map_graph_stream_event,
+    write_agent_stream_item,
+)
 from agent_core.graph.workflow import build_agent_graph
 from agent_core.llm.deepseek import (
     LLMConfigurationError,
@@ -856,6 +862,7 @@ async def run_agent_graph_stream(
                 if selection_policy
                 else state["tool_definitions"],
                 memory=active_memory,
+                rag=_memory_blocks_from_state(state.get("rag_context", [])),
             )
         except ContextBudgetError as exc:
             raise AgentContextLimitError(str(exc)) from exc
@@ -904,7 +911,8 @@ async def run_agent_graph_stream(
             ):
                 if chunk.content:
                     content_parts.append(chunk.content)
-                    await publish(LLMChunk(content=chunk.content))
+                    if not react_enabled:
+                        await publish(LLMChunk(content=chunk.content))
                 if chunk.usage is not None:
                     step_usage = chunk.usage
                 if chunk.finish_reason is not None:
@@ -935,7 +943,8 @@ async def run_agent_graph_stream(
                 finish_reason=finish_reason,
             )
         )
-        await publish(LLMChunk(usage=cumulative, finish_reason=finish_reason))
+        if not react_enabled or call_buffers:
+            await publish(LLMChunk(usage=cumulative, finish_reason=finish_reason))
         _raise_for_model_stop(finish_reason)
 
         content = "".join(content_parts)
@@ -950,6 +959,12 @@ async def run_agent_graph_stream(
                     "Model không trả về nội dung",
                     code="empty_model_response",
                 )
+            if react_enabled:
+                # A model may emit prose before a tool call, even in another language.
+                # Publish only a confirmed final response; activity stays on the timeline.
+                for part in content_parts:
+                    await publish(LLMChunk(content=part))
+                await publish(LLMChunk(usage=cumulative, finish_reason=finish_reason))
             return {
                 "messages": [AIMessage(content=content)],
                 "model_content": content,
@@ -995,11 +1010,11 @@ async def run_agent_graph_stream(
         return {
             "messages": [
                 AIMessage(
-                    content=content,
+                    content="" if react_enabled else content,
                     additional_kwargs={"tool_calls": raw_tool_calls},
                 )
             ],
-            "model_content": content,
+            "model_content": "" if react_enabled else content,
             "pending_tool_calls": pending_calls,
             "finish_reason": finish_reason,
             "usage": _usage_to_state(cumulative),
@@ -1043,11 +1058,26 @@ async def run_agent_graph_stream(
         if selection_policy is not None:
             await validate_capabilities()
         step_number = state["step_number"]
+        # Capture before LangChain replaces the tool RunnableConfig context.
+        stream_writer = get_stream_writer()
+        writer_context = copy_context()
+
+        async def tool_progress(row):
+            event = AgentLoopEvent(
+                kind="pipeline_progress", step_number=step_number, progress=dict(row)
+            )
+            await _emit(event_handler, event)
+            writer_context.run(
+                stream_writer, AgentGraphStreamEvent(channel="agent_status", item=event)
+            )
+
         result_counts = dict(state["observation_counts"])
         tool_messages: list[BaseMessage] = []
         observations: list[dict[str, Any]] = []
         progress_updates: list[str] = []
         tool_usage = TokenUsage()
+        internal_model_calls = 0
+        document_context = None
         direct_content = None
 
         for call in state["pending_tool_calls"]:
@@ -1081,7 +1111,20 @@ async def run_agent_graph_stream(
             result = await _execute_tool(
                 tool_executor,
                 registry,
-                context,
+                replace(
+                    context,
+                    remaining_tokens=max(
+                        0,
+                        state["budget"]["max_total_tokens"]
+                        - state["usage"]["total_tokens"]
+                        - tool_usage.total_tokens,
+                    ),
+                    remaining_steps=max(
+                        0, state["budget"]["max_steps"] - step_number - internal_model_calls
+                    ),
+                    remaining_seconds=max(0, deadline - perf_counter()),
+                    progress_callback=tool_progress,
+                ),
                 request,
                 parse_error,
                 approval_granted,
@@ -1089,6 +1132,21 @@ async def run_agent_graph_stream(
             )
             if result.usage is not None:
                 tool_usage += result.usage
+            if request.name == "search_documents" and not result.is_error:
+                # Checkpoint host evidence in the RAG section rather than repeating
+                # its full text in every tool observation. Refined search replaces it.
+                document_context = (
+                    tuple(
+                        block
+                        for block in _memory_blocks_from_state(state.get("rag_context", []))
+                        if block.source == "selected_documents"
+                    )
+                    + result.context_blocks
+                )
+            if request.name == "summarize_documents":
+                count = result.data.get("internal_model_calls", 0)
+                if type(count) is int and 0 <= count <= state["budget"]["max_steps"]:
+                    internal_model_calls += count
             if (
                 len(state["pending_tool_calls"]) == 1
                 and not react_enabled
@@ -1138,12 +1196,17 @@ async def run_agent_graph_stream(
             "messages": tool_messages,
             "pending_tool_calls": [],
             "tool_observations": observations,
-            "step_number": step_number + 1,
+            "step_number": step_number + 1 + internal_model_calls,
             "progress": progress_updates,
             "observation_counts": result_counts,
             "budget": current_budget,
             "usage": _usage_to_state(_usage_from_state(state["usage"]) + tool_usage),
             "direct_answer": direct_content is not None,
+            **(
+                {"rag_context": _memory_blocks_to_state(document_context)}
+                if document_context is not None
+                else {}
+            ),
             **({"model_content": direct_content} if direct_content is not None else {}),
         }
 

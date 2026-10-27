@@ -745,6 +745,7 @@ async def list_agent_run_timelines(
                 started_at=run.last_resumed_at or run.created_at,
                 rag_search_mode=(run.rag_trace or {}).get("search_mode")
                 if (run.rag_trace or {}).get("execution_mode") != "react"
+                or (run.rag_trace or {}).get("document_search_used")
                 else None,
             )
         )

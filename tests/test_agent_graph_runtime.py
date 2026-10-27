@@ -226,6 +226,40 @@ async def test_react_does_not_silently_omit_tools_when_schema_budget_is_too_smal
     assert not model.requests
 
 
+async def test_react_does_not_publish_or_keep_action_prefaces_as_final_answer():
+    model = FakeModel(
+        [
+            [
+                LLMChunk(content="Intermediate action preface"),
+                LLMChunk(
+                    finish_reason="tool_calls",
+                    tool_call_deltas=(
+                        LLMToolCallDelta(
+                            index=0,
+                            id="call",
+                            name="echo_text",
+                            arguments='{"text":"evidence"}',
+                        ),
+                    ),
+                ),
+            ],
+            [LLMChunk(content="Final answer", finish_reason="stop")],
+        ]
+    )
+    items = [
+        i
+        async for i in stream_agent_graph(
+            model=model,
+            messages=[{"role": "user", "content": "Task"}],
+            registry=make_registry(),
+            context=make_context(),
+            react_enabled=True,
+        )
+    ]
+    assert "".join(i.content for i in items if isinstance(i, LLMChunk)) == "Final answer"
+    assert "Intermediate action preface" not in json.dumps(model.requests[1][0])
+
+
 async def test_agent_graph_calls_tool_then_returns_final_answer() -> None:
     model = FakeModel(
         responses=[

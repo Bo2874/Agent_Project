@@ -1348,53 +1348,91 @@
   diagnose_jev_web_search.py, verify_web_search_saved.py; không lưu mật khẩu fixture/key/cookie.
   Không restart dịch vụ hoặc stage/commit/push thay user; user restart web và Ctrl+F5 để dùng.
 
-## 2026-10-27 ? ReAct ??t 1: v?ng chung tr??c planner M4
+## 2026-10-27 — ReAct đợt 1: vòng chung trước planner M4
 
-- User ch?t tri?n khai t?ng ??t theo k? ho?ch6 b??c; retrieval live ? ??t2 ph?i d?ng b?n
-  Hi?u s?u v? AI Agent.pdf ?? upload c?a user@personalagent.vn. ??t1 ch? nghi?m thu h?i tho?i
-  ch?a ch?n file; kh?ng t?o fixture Atlas/Boreal ho?c tuy?n b? ?? test PDF trong ??t n?y.
-- agent_core/graph/runner.py nh?n react_enabled, b? query route/shortlist b?t bu?c trong mode n?y.
-  ToolSelector.fit n?p to?n b? schema ???c ph?p theo role/allowlist trong budget; kh?ng keyword
-  search, kh?ng t? n?p Skill. Qu? schema budget b?o ContextLimit thay v? ?m th?m gi?u tool.
-  Tool return_direct (g?m search_web) tr? v? observation/model trong ReAct; routed gi? h?nh vi c?.
-- AgentState.execution_mode pin routed/react trong checkpoint. Resume ??c mode ?? pin d? flag
-  ??i; checkpoint c? thi?u field m?c ??nh routed. ReAct pin catalog/schema c? khi kh?ng c? plugin
-  authority; ??i catalog sau checkpoint ph?i t?o run m?i. Gi? model/tool guards, executor,
-  approval, budget, cancel, idempotency v? quy?n runtime hi?n c?, kh?ng t?o v?ng l?p th? hai.
-- SYSTEM_PROMPT v3 y?u c?u ??c observation th?c, ph?n bi?t r?ng/l?i/ch?a x?c ??nh, kh?ng t? nh?n
-  ?? th?c hi?n h?nh ??ng v? gi? link web. Ch? ph?t tr?ng th?i/k?t qu?, kh?ng xu?t raw chain of thought.
-- backend/routes/chat.py ?p d?ng flag host AGENT_REACT_ENABLED cho run m?i ch?a ch?n file;
-  c? file gi? pipeline M3/JEV hi?n t?i ??n ??t2. ReAct kh?ng g?i bind/query/capability JEV;
-  thi?u OpenRouter key kh?ng ch?n nh?nh n?y ? dependency (tool web v?n c?n key ?? ho?t ??ng).
-  Resume ??c checkpoint mode ? backend v? graph; memory extraction v?n theo c?u h?nh th?t.
-- Progress ghi mode v?o trace, nh?n Chu?n b? Agent; start/history timeline kh?ng g?n nh?n
-  T?m ki?m t?i li?u Fast cho run ReAct. Kh?ng ??i frontend/CSS ho?c schema DB ? ??t n?y.
-  .env host ?? b?t AGENT_REACT_ENABLED=true, gi? c?c key/settings kh?c; env m?u v? Compose
-  c? flag default false/DEV_AGENT_REACT_ENABLED. Kh?ng restart d?ch v? c?a user.
-- Hai file tracked m?i: scripts/test_agent_live.py v? docs/agent/MANUAL_AGENT_CASES.md.
-  Runner m?c ??nh ch? in case; --live m?i t?o account fixture v? g?i API tr? ph?. D?ng
-  FastAPI auth/message/SSE/history/run, PostgreSQL/MCP v? model th?t; kh?ng thao t?c browser.
-  Report kh?ng l?u key/password/cookie; d? li?u/report ? data/agent-testing ???c Git ignore.
-- 5/5 case live ??t: R01 tr? AGENT_REACT_OK kh?ng tool (2,804s/2179 token); R02 h?i r?,
-  kh?ng g?i mail (4,502s/2518); R03 count_text?observation?calculate?119 (5,110s/7520);
-  R04 search_web?model t?ng h?p ??ng Python3.14.0 ng?y7/10/2025/link Python.org
-  (8,824s/13873); R05 d?ng history tr?2025, kh?ng search l?i (2,479s/2373).
-  N?m run kh?ng c? RoutingTrace; history/timeline tr? l?i ??ng c?u tr? l?i v? kh?ng hi?n Fast.
-- Run IDs l?n l??t14928079-b3d7-47d7-9159-bd0f5978e46b,
-  08cef57f-96d9-4a01-a4b8-394689d4c61f,919f3c34-f69c-4d97-882a-1e4f941853c6,
-  24cc6ba3-8b3e-4af1-85ad-d61017946a65,3bc3e7d2-9c7f-42df-ae55-7547cd639b29.
-  Native search ghi0,0153904 USD/m?t l??t; ch?a c?ng DeepSeek/memory.
-  Report: data/agent-testing/20261027-123819-f08639e7/REPORT.md v? REPORT.json.
-- L?n sandbox ban ??u R01 l?i proxy tr??c tool, kh?ng ph?i l?i ki?n tr?c; ch?y l?i ngo?i sandbox
-  ??t. Kh?ng s?a transport model s?n ph?m. Kh?ng g?i email ho?c s?a h?i tho?i/t?i li?u user.
-- 256 test graph/runtime/context/SSE/recorder/router/usage/approval/security/checkpoint/RAG
-  adapter/public pages ??t; b? sung pin mode/catalog, observation nhi?u b??c, bypass JEV,
-  role/injection/denied approval trong ReAct v? missing-key dependency. Assertion SSE router c?
-  ???c c?p nh?t ?? ch?p nh?n progress event c? s?n tr??c routing. Ruff14 file ??t.
-- Ch?a tri?n khai ??t2?6: search_documents chung, summary ph?i h?p, audit tool gi?a c?c l??t,
-  ng?n s?ch d?nh cho final/partial result, planner/DAG/worker/song song/background task UI.
-  Ng?n s?ch20.000 token/run gi? nguy?n; nhi?u paid search v?n c? th? ch?m gi?i h?n.
-  R05 ch? ki?m history c?u tr? l?i, kh?ng ch?ng minh truy c?p audit tool t? l??t tr??c.
-- C?p nh?t PROJECT_PLAN.md, h??ng d?n Docker v? manual. Kh?ng th?m dependency/migration,
-  kh?ng ??i embedding/index, kh?ng stage/commit/push. D?ng ? m?c ??t1 ?? user review/commit;
-  ph?n ti?p theo l? ??t2 v?i PDF user ?? ch? ??nh.
+- User duyệt kế hoạch6 đợt, dừng sau mỗi đợt để review/commit. Retrieval ở đợt2 dùng
+  Hiểu sâu về AI Agent.pdf đã upload của user@personalagent.vn, không thay bằng Atlas/Boreal.
+- Đợt1 dùng AGENT_REACT_ENABLED cho hội thoại chưa chọn file; selected-file giữ M3 ở thời điểm đó.
+  Graph model→tool→observation→model dùng chung, không bắt buộc JEV query/shortlist. Nạp toàn bộ
+  tool được phép trong schema budget; chưa tự nạp Skill/discovery catalog lớn; vượt budget báo lỗi.
+- State.execution_mode pin routed/react; checkpoint cũ thiếu field mặc định routed. Resume không
+  đổi mode theo flag mới. Pin catalog/schema cả khi không có plugin authority. Giữ role/allowlist,
+  executor, approval, quota, cancel, idempotency và check runtime; không thêm vòng lặp thứ hai.
+- Prompt v3 đọc observation thật, phân biệt rỗng/lỗi/unknown, không tự nhận đã thực thi; giữ link
+  web. ReAct không return_direct search_web; tool về model tổng hợp. Không hiển thị raw CoT.
+- Backend progress Chuẩn bị Agent, trace mode; start/history không hiện Fast cho run ReAct không
+  tài liệu. .env host bật flag, key khác giữ nguyên. Env mẫu/Compose default false, DEV_ tương ứng.
+  Không migration/dependency/frontend mới, không restart dịch vụ user.
+- Hai file tracked mới: scripts/test_agent_live.py và docs/agent/MANUAL_AGENT_CASES.md. --live
+  mới gọi API có phí; mặc định chỉ in case. API auth/message/SSE/history/run + DB/MCP/model thật;
+  account fixture riêng, không gửi mail/đọc file hoặc sửa chat user. Report Git ignore, không key/cookie.
+- R01–R05 đạt: chat AGENT_REACT_OK2,804s/2179 token; hỏi rõ email không gửi4,502s/2518;
+  count_text7→calculate×17→1195,110s/7520; search Python3.14.0 đúng7/10/2025 và nguồn Python.org
+  8,824s/13873; hỏi nối tiếp trả2025 không search lại2,479s/2373. Không RoutingTrace trong5 run.
+- Run IDs:14928079-b3d7-47d7-9159-bd0f5978e46b,08cef57f-96d9-4a01-a4b8-394689d4c61f,
+  919f3c34-f69c-4d97-882a-1e4f941853c6,24cc6ba3-8b3e-4af1-85ad-d61017946a65,
+  3bc3e7d2-9c7f-42df-ae55-7547cd639b29. Report data/agent-testing/20261027-123819-f08639e7.
+  Native search0,0153904 USD/1 search, chưa cộng DeepSeek/memory. Sandbox proxy làm lần đầu
+  R01 lỗi trước tool; chạy ngoài sandbox đạt, không sửa transport sản phẩm để chữa sandbox.
+- 256 test graph/context/recorder/router/usage/approval/security/checkpoint/RAG/public pages đạt,
+  Ruff14 file đạt. Assertion SSE router cũ cập nhật để nhận progress có sẵn trước routing.
+  R05 chỉ kiểm history câu trả lời, chưa có audit tool giữa lượt. Ngân sách20k ở thời điểm đợt1;
+  planner/DAG/worker/song song/partial result chưa làm. Cập nhật plan/notes/manual/Docker;
+  không stage/commit/push. Phần kế tiếp đợt2 dùng PDF đã chỉ định.
+
+## 2026-10-27 — ReAct đợt 2: truy xuất tài liệu và phối hợp công cụ
+
+- Ba file tracked mới: agent_core/tools/documents.py, backend/services/document_tools.py,
+  tests/test_document_tools.py. Không thêm SDK/dependency/migration, không parse/embed/index lại.
+  Đã phục hồi dấu tiếng Việt của notes đợt1 bị mất do PowerShell stdin; nội dung lịch sử giữ lại.
+- search_documents chỉ có query: Agent giải nghĩa history và tạo một câu độc lập. Scope owner,
+  conversation/file/version và Fast/Deep từ backend, không nhận UUID/phân quyền từ model.
+  Dùng retrieve_document_evidence query_is_planned=True, không gọi thêm LLM rewrite/phân rã.
+  Dense20 + FTS20 → RRF10; Deep Qwen rerank10. F2/Qwen/index/parser giữ nguyên.
+- Evidence ≤10 chunk trong vùng RAG8k gồm metadata, có dự phòng nhãn nguồn. ToolResult có
+  context_blocks ngoài model observation; state checkpoint RAG context và cập nhật mỗi lượt.
+  Khi tìm cụ thể hơn, thay context evidence cũ; ToolCall giữ audit, không nhân text chunk vào
+  history. Metadata UUID/reference binding giữ ở backend, không nhét lại vào model, nhất là summary64.
+- DocumentToolSession pin/hash và revalidate scope trước/sau retrieval, trước model/tool và publish.
+  Restore nguồn từ ToolCall cùng owner/run + chunk DB/version còn active, không đọc nhãn từ LLM.
+  Registry fork theo run cả khi plugin tắt, không lưu closure file user vào registry chung.
+  ContextTool callback mang writer/context đã capture từ graph, tránh mất __pregel_runtime/
+  checkpoint_ns khi LangChain thay RunnableConfig; progress đi đúng envelope/recorder/SSE.
+- Footer/binding backend dùng evidence trong context cuối cộng lineage summary; khử trùng chunk,
+  giữ citation ID ổn định qua tìm lại/resume, lưu atomic cùng assistant message và khóa scope.
+  Source/history API vẫn filter owner, private/no-store. Không phục hồi lỗi citation_sources cũ.
+- summarize_documents gọi lại workflow toàn văn M3 với QueryPlan summary do host truyền, bỏ plan
+  LLM lặp. Giữ cap64 và map/reduce. Child dùng budget token/time/step còn lại, dành caller final;
+  usage thu thập rồi root charge đúng1 lần, internal calls cộng vào step budget. Child progress
+  tách prefix; không đè model step/root trace. Có test subgraph thật với12 chunk/map-reduce.
+- Chế độ ReAct nay dùng được cả khi chọn file. Run có file có AGENT_DOCUMENT_MAX_TOTAL_TOKENS
+  mặc định60k và deadline tối thiểu QA600s; không-file giữ20k/120s. Đây chưa phải reservation/
+  partial result toàn run đợt3. Thêm names vào default allowlist/env mẫu và .env override nếu có;
+  giữ key. Legacy khi flag tắt/checkpoint routed vẫn dùng M3; schema đổi có thể cần run mới.
+- Prompt v4 yêu cầu evidence mới cho document follow-up, phân biệt sách/web/tri thức nền, hỏi lại
+  một query cụ thể hơn khi thiếu ô bảng. Không tự nhận song song. Không phát/lưu text action
+  preface trong AIMessage tool-call. ReAct đợi model xác nhận final rồi phát text; timeline/progress
+  vẫn realtime nhưng chưa stream provisional/final text theo hai kênh riêng.
+- Live dùng chính Hiểu sâu về AI Agent.pdf:owner user@personalagent.vn,421 trang/1389 chunk,
+  document bf811f8e-bce3-4119-86a9-f72e75de6002,version ba21c9af-f8d9-4ce8-9f43-dc2e7ac89a95.
+  Tạo hội thoại test mới trong owner; cookie backend ký, auth/DB user thật, không override auth
+  hoặc đổi password. Không sửa chat cũ, file/version hoặc gửi email. Không thao tác browser.
+- D01–D06 đạt luồng thật: Fast bảng ANNOY/HNSW32,447s; follow-up HNSW8,558s; doc+web thành công,
+  có kiểm lại refinement và final nguồn/text; Deep chunking90,926s CPU/9chunk; summary toàn file
+  trả giới hạn64 thay vì giả đọc1389 chunk5,140s; thiếu bằng chứng không bịa số tài khoản6,190s.
+  Source API mở đúng chunk/trang; history reload giữ nguồn; user khác bị từ chối chọn file,
+  đọc hội thoại và mở citation. Model chính DeepSeek, web OpenRouter/OpenAI, embedding/reranker thật.
+- Fast có lần thiếu ô Bảng3-2, model báo thiếu; lượt f354031d-0aa7-44e9-9f56-deab688ab0d6 tìm
+  query cụ thể hơn lần2 và lấy đủ bảng. Case cuối fdfe6ac9-d36c-4850-ac2a-619752aa5736 kiểm
+  final text không lẫn action preface, doc+web/source/isolation. Case pass là nghiệm thu luồng,
+  không benchmark Recall/chất lượng mọi query. Tóm tắt toàn bộ PDF vẫn vượt cap64, không mở giới hạn.
+- Lỗi bắt/sửa trong live: callback runtime trước truy xuất; registry chung ở lượt2; context tràn
+  khi duplicate chunks qua nhiều lần tìm; action preface lẫn final. Không retry paid API tự động.
+  Report tổng hợp data/agent-testing/stage2-20261027/REPORT.md/.json, giữ cả failed attempts.
+- 270 test hồi quy đạt; thêm case phân biệt không có evidence và thiếu budget context.
+  Ruff và Compose config kiểm tĩnh. Không build Docker/browser E2E hoặc
+  làm planner/DAG/sub-agent/song song. Chưa có audit tool giữa các lượt, reservation/settle quota,
+  partial result khi hết ngân sách; đó là đợt3. Cập nhật PROJECT_PLAN, manuals Agent/M3 và Docker;
+  không restart dịch vụ, stage/commit/push. User restart web một worker/không --reload để dùng.
+
+- Native web toàn bộ lần thử đợt2: 4 tool call/4 searches, 0.06325105 USD, chưa cộng DeepSeek/memory.

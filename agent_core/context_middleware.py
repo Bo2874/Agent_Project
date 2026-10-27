@@ -109,6 +109,7 @@ class ContextAssemblyMiddleware(AgentMiddleware):
         status: AgentStatusBlock | None = None,
         tool_definitions: Sequence[Mapping[str, Any]] | None = None,
         memory: Sequence[ContextBlock] | None = None,
+        rag: Sequence[ContextBlock] | None = None,
     ) -> LangChainPreparedContext:
         system_messages = [
             deepcopy(message) for message in messages if isinstance(message, SystemMessage)
@@ -123,7 +124,8 @@ class ContextAssemblyMiddleware(AgentMiddleware):
             self.budget.memory_tokens,
         )
         memory_messages = _as_langchain_messages(_render_data_section("memory", fitted_memory))
-        rag_messages = _as_langchain_messages(_render_data_section("rag", self._rag))
+        active_rag = self._rag if rag is None else tuple(rag)
+        rag_messages = _as_langchain_messages(_render_data_section("rag", active_rag))
         summary_messages = _as_langchain_messages(
             _render_data_section("history_summary", self._history_summaries)
         )

@@ -3,6 +3,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from time import perf_counter
@@ -13,7 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from agent_core.context_budget import ContextBlock, ContextTokenBudget
+from agent_core.context_budget import ContextBlock, ContextTokenBudget, measure_context_blocks
 from agent_core.contracts import RoutingDecision
 from agent_core.graph import (
     AgentLimits,
@@ -33,6 +34,7 @@ from agent_core.routing.shortlist import SelectionPolicyError
 from agent_core.routing.types import DecisionProvider, DecisionProviderError
 from agent_core.skills import SkillRegistry, SkillSelectionConfig
 from agent_core.tools import ToolContext, ToolRegistry, ToolSelectionConfig
+from agent_core.tools.documents import create_document_registry
 from agent_core.tools.types import ToolAuthorizationError
 from backend.core.config import get_settings
 from backend.database import SessionFactory
@@ -77,6 +79,7 @@ from backend.services.chat import (
     list_messages,
 )
 from backend.services.document_qa import DocumentQAResult, message_citations, stream_document_qa
+from backend.services.document_tools import DOCUMENT_TOOLS, DocumentToolSession
 from backend.services.documents import (
     DocumentServiceError,
     get_conversation_documents,
@@ -300,6 +303,7 @@ async def stream_assistant_response(
     plugin_stack = AsyncExitStack()
     document_result = DocumentQAResult()
     used_document_qa = False
+    document_tools = None
     react_enabled = settings.agent_react_enabled
     routing_started = perf_counter()
 
@@ -342,7 +346,7 @@ async def stream_assistant_response(
             values = checkpoint.checkpoint.get("channel_values", {}) if checkpoint else {}
             react_enabled = values.get("execution_mode", "routed") == "react"
         selected_documents = []
-        if not resume and routing_flags.is_enabled("rag"):
+        if routing_flags.is_enabled("rag"):
             async with SessionFactory() as document_session:
                 selected = await get_conversation_documents(
                     document_session, user_id, conversation_id
@@ -350,10 +354,14 @@ async def stream_assistant_response(
                 selected_documents = [
                     {"title": doc.title[:200], "status": doc.status} for doc in selected.items
                 ]
-        # Stage 1: preserve the working M3 pipeline while the retrieval tool is
-        # introduced in stage 2. No-file conversations use the shared ReAct loop.
-        if selected_documents:
-            react_enabled = False
+        if react_enabled and selected_documents:
+            limits = replace(
+                limits,
+                max_total_tokens=settings.agent_document_max_total_tokens,
+                max_duration_seconds=max(
+                    limits.max_duration_seconds, settings.document_qa_timeout_seconds
+                ),
+            )
         yield sse_event(
             "start",
             {
@@ -398,6 +406,58 @@ async def stream_assistant_response(
         runtime = await plugin_stack.enter_async_context(
             plugin_runtime(registry, skill_registry, tool_context)
         )
+        execution_registry = runtime.registry
+        rag_context = ()
+        if react_enabled:
+            rag_context = (
+                ContextBlock(
+                    content=json.dumps(
+                        {
+                            "selected_documents": selected_documents[:20],
+                            "selected_document_count": len(selected_documents),
+                            "trust": "untrusted_metadata",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    source="selected_documents",
+                ),
+            )
+            if selected_documents:
+                document_tools = DocumentToolSession(
+                    owner=user_id,
+                    conversation_id=conversation_id,
+                    message_id=user_message_id,
+                    run_id=agent_run_id,
+                    result=document_result,
+                    search_mode=rag_search_mode,
+                    context_budget=replace(
+                        context_budget,
+                        rag_tokens=max(
+                            0,
+                            context_budget.rag_tokens
+                            - measure_context_blocks("rag", rag_context)
+                            - 64,
+                        ),
+                    ),
+                    quota_guard=quota_guard,
+                    recorder=recorder,
+                )
+                await document_tools.prepare(resume=resume)
+                execution_registry = create_document_registry(
+                    runtime.registry,
+                    search=document_tools.search,
+                    summarize=document_tools.summarize,
+                    timeout_seconds=limits.max_duration_seconds,
+                )
+                original_guard = runtime.context.authorization_guard
+
+                async def document_guard(name):
+                    if original_guard:
+                        await original_guard(name)
+                    if name in DOCUMENT_TOOLS:
+                        await document_tools.validate()
+
+                runtime.context = replace(runtime.context, authorization_guard=document_guard)
         yield await routing_progress("completed")
         if react_enabled or not routing_flags.is_enabled("routing"):
             await extract_memories()
@@ -420,7 +480,7 @@ async def stream_assistant_response(
         async for item in stream_agent_graph(
             model=model,
             messages=model_messages,
-            registry=runtime.registry,
+            registry=execution_registry,
             context=runtime.context,
             event_handler=record_event,
             approval_handler=tool_approval_manager.wait_for_decision,
@@ -430,6 +490,7 @@ async def stream_assistant_response(
             skill_registry=runtime.skills,
             skill_selection_config=skill_selection_config,
             history_summary_context=history_summary_context,
+            rag_context=rag_context,
             resume=resume,
             execution_guard=quota_guard.before_execution,
             graph_checkpointer=graph_checkpointer,
@@ -464,6 +525,10 @@ async def stream_assistant_response(
         if not content:
             raise LLMProviderError("DeepSeek không trả về nội dung")
 
+        if document_tools is not None and document_tools.used:
+            await document_tools.validate()
+            await document_tools.finalize()
+            used_document_qa = True
         message = await complete_agent_run(
             agent_run_id=agent_run_id,
             conversation_id=conversation_id,

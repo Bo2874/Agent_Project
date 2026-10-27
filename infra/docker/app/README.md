@@ -210,10 +210,12 @@ schema sau observation, Skill lazy loading, none và checkpoint PostgreSQL. Fixt
 DecisionProvider của project, không mock SDK/cấu hình Jev. Dependency runtime mặc định None;
 không thêm env/provider key hoặc bật flag trong Compose. [Guide](../../../docs/routing/CAPABILITY_SHORTLIST.md).
 
-ReAct đợt1 (2026-10-27): `DEV_AGENT_REACT_ENABLED=true` chọn vòng model/tool/observation
-cho hội thoại chưa chọn file. Host tương ứng `AGENT_REACT_ENABLED=true`. Restart/recreate app
-sau khi đổi flag; run đang có checkpoint giữ chế độ/catalog đã pin. File đã chọn vẫn chạy M3 cũ,
-chưa tự nạp Skill hoặc planner; không cần migration, thêm dependency hay re-index tài liệu.
+ReAct đợt2 (2026-10-27): `DEV_AGENT_REACT_ENABLED=true` chọn vòng model/tool/observation,
+có `search_documents`/`summarize_documents` theo scope file của hội thoại khi bật V2 RAG.
+Host tương ứng `AGENT_REACT_ENABLED=true`. Run có file dùng
+`DEV_AGENT_DOCUMENT_MAX_TOTAL_TOKENS=60000` (host bỏ `DEV_`), deadline theo QA mặc định600s.
+Restart/recreate app sau khi đổi flag; checkpoint giữ mode/catalog đã pin. Tắt flag dùng M3 cũ;
+chưa tự nạp Skill hoặc planner; không cần migration, dependency mới hay re-index tài liệu.
 Tool vẫn chịu allowlist/role/approval. Xem [case và runner LLM thật](../../../docs/agent/MANUAL_AGENT_CASES.md).
 
 ```powershell

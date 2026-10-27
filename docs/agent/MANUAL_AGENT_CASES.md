@@ -48,18 +48,68 @@ Kết quả 2026-10-27: R01–R05 đạt, report
 `data/agent-testing/20261027-123819-f08639e7/REPORT.md`.
 Search một lượt, phí native ghi nhận 0.0153904 USD; chưa cộng DeepSeek/memory.
 
+## Đợt 2 — Tài liệu trong vòng ReAct
+
+Giữ `AGENT_REACT_ENABLED=true`, `V2_ENABLED=true`, `V2_RAG_ENABLED=true`. Trong chat chọn
+**Hiểu sâu về AI Agent.pdf** của `user@personalagent.vn` (421 trang, 1.389 chunk đã ready).
+Không upload/re-index lại. Agent nhận `search_documents` và `summarize_documents` chỉ trong
+registry riêng của run; backend giữ owner, file/version và Fast/Deep, model chỉ truyền query.
+Nếu có override `TOOL_ALLOWLIST`, thêm hai tên này. Tắt ReAct vẫn dùng nhánh M3 cũ.
+
+`search_documents`: một query độc lập do Agent viết theo history, không thêm lượt LLM rewrite.
+Dense20 + keyword20 → RRF top10; Deep rerank10. Evidence và metadata thư viện nằm trong
+vùng RAG tối đa8.000 token; observation không chép lại text chunk. Một lần tìm cụ thể hơn
+thay vùng evidence hiện tại, giữ audit cũ trong ToolCall và khử trùng lặp nguồn. Footer lưu
+các chunk ở context cuối (tối đa10) cộng lineage của summary nếu có, không lấy nhãn nguồn từ LLM.
+
+Run có file dùng `AGENT_DOCUMENT_MAX_TOTAL_TOKENS=60000` và deadline ít nhất bằng
+`DOCUMENT_QA_TIMEOUT_SECONDS` (host hiện600 giây); run không file giữ20.000/120 giây.
+Đây là hạn mức, không phải số token chắc chắn tiêu thụ. Dự trù/settle quota toàn run sẽ làm ở đợt3.
+
+| Case | Câu hỏi trên web | Kỳ vọng |
+| --- | --- | --- |
+| D01 · Fast | Theo bảng 3-2, so sánh ANNOY và HNSW về bộ nhớ, cập nhật gia tăng và tình huống sử dụng. Chỉ dựa trên tài liệu đã chọn. | Search thật, ANNOY thấp/không cập nhật gia tăng; HNSW cao/có hỗ trợ, nguồn tr.119 |
+| D02 · cùng hội thoại D01 | Vì sao loại thứ hai phù hợp hơn khi cần cập nhật gia tăng? Chỉ dựa trên tài liệu, hãy tìm lại bằng chứng cho câu hỏi nối tiếp này. | Resolve thành HNSW, gọi retrieval mới, không dùng lời chat cũ làm bằng chứng |
+| D03 · Fast | Theo tài liệu, HNSW và ANNOY khác nhau thế nào về cập nhật gia tăng? Sau đó tìm tài liệu chính thức hnswlib trên GitHub để đối chiếu khả năng thêm phần tử. Nêu rõ phần từ sách và phần từ web. | Có doc + web trong cùng run, link GitHub và nguồn PDF; có thể tìm cụ thể hơn nếu thiếu bảng, không tự bù nội dung thiếu |
+| D04 · Deep | Tài liệu giới thiệu những chiến lược chunking nào? Nêu ưu và nhược điểm của từng loại, chỉ theo nội dung tài liệu. | Rerank tối đa10 cặp, nguồn tr.116–117; cố định/đệ quy/ngữ nghĩa; thiếu ưu/nhược điểm nào phải nêu rõ |
+| D05 | Tóm tắt toàn bộ file đã chọn bằng luồng tóm tắt toàn văn. Nếu vượt giới hạn, chỉ thông báo giới hạn đó; không thay bằng tìm Top-k rồi tóm tắt. | `summarize_documents` báo `document_summary_limit`; file1389 chunk vượt cap64, không giả tóm tắt toàn bộ |
+| D06 | Theo tài liệu đã chọn, số tài khoản ngân hàng cá nhân của tác giả là gì? Nếu các đoạn tìm được không nêu, hãy nói không có đủ thông tin, không suy đoán. | Retrieval thật nhưng không bịa số tài khoản từ các chunk không liên quan |
+
+R01–R04/D01/D03–D06 dùng hội thoại mới; D02 giữ hội thoại D01. Nguồn cuối mở đúng chunk/trang,
+reload giữ được nguồn. Một user khác không được chọn file, đọc hội thoại hoặc mở citation này.
+
+Xem case, không gọi API:
+
+```powershell
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite documents
+```
+
+Chạy thật trên file đã upload, tạo **hội thoại thử mới trong chính tài khoản owner**:
+
+```powershell
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite documents --owner-email user@personalagent.vn --document-id bf811f8e-bce3-4119-86a9-f72e75de6002 --live
+```
+
+Runner dùng cookie ký bởi backend và kiểm user thật trong DB; không đổi mật khẩu/override auth,
+không sửa hội thoại có sẵn. Thêm `--case D03` để chỉ chạy một case; D02 riêng dùng câu độc lập,
+nên muốn kiểm history phải chạy cả bộ. Report chứa dữ liệu PDF riêng ở `data/agent-testing`
+được Git ignore; không chia sẻ report ngoài phạm vi bạn cho phép.
+
+Kết quả ngày2026-10-27:6/6 case luồng đạt, có Fast/Deep, nguồn/SSE/history và kiểm isolation.
+Deep trên CPU khoảng91 giây. Đây không phải benchmark Recall/độ đúng của mọi câu trả lời:
+Fast có lần chỉ lấy đoạn giới thiệu bảng và model nêu rõ thiếu ô bảng; query cụ thể hơn đã
+lấy được nội dung đúng. Xem report tổng hợp `data/agent-testing/stage2-20261027/REPORT.md`.
+Tóm tắt các file nhỏ vẫn dùng map/reduce/cap64 cũ; kiểm graph tự động, không tạo file retrieval khác.
+
+Trong ReAct, timeline/tool/progress tiếp tục phát realtime. Text model được giữ tới khi xác định
+lượt đó trả lời cuối hay gọi tool, tránh lời dẫn hành động lẫn vào đáp án; chữ đáp án xuất sau
+khi model hoàn tất lượt cuối. Chưa có UI riêng để stream provisional/final text theo hai kênh.
+
 ## Các đợt tiếp theo — Chưa nghiệm thu
 
-- Đợt 2: nối capability tìm tài liệu vào vòng chung. Mọi case retrieval dùng bản
-  **Hiểu sâu về AI Agent.pdf** đã sẵn sàng trong thư viện `user@personalagent.vn`;
-  không dùng bộ Atlas/Boreal thay cho file này. Hiện chọn file vẫn chạy pipeline M3 cũ.
-- Câu hỏi chuẩn bị: “Tài liệu giới thiệu những chiến lược chunking nào? Nêu ưu và nhược
-  điểm”; “Theo bảng 3-2, so sánh ANNOY và HNSW về bộ nhớ, cập nhật gia tăng và tình huống
-  sử dụng”; “Tại sao gọi là khóa lạc quan?”. Đối chiếu đoạn nguồn/trang thực tế, không
-  coi kiến thức nền của model là bằng chứng đã đọc tài liệu.
 - Đợt 3: lịch sử tool giữa các lượt, ngân sách và kết quả một phần. R05 hiện chỉ kiểm
-  history câu trả lời; chưa chứng minh agent đọc được audit tool từ lượt trước. Ngân sách
-  hiện vẫn 20.000 token/run; nhiều paid search có thể chạm giới hạn như trước.
+  history câu trả lời; chưa chứng minh agent đọc được audit tool từ lượt trước. Nhiều paid
+  search vẫn có thể chạm giới hạn; tăng hạn mức cho run tài liệu không thay reservation/partial result.
 - Đợt 4–6: planner/DAG tuần tự, worker/song song, background/resume và task UI.
 
 Không chạy lại paid suite chỉ để kiểm tra một thay đổi tài liệu hoặc định dạng report.

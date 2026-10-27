@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
@@ -170,8 +170,19 @@ async def stream_document_qa(
     context_budget: ContextTokenBudget,
     result: DocumentQAResult,
     search_mode: RagSearchMode = "fast",
+    planned_query: QueryPlan | None = None,
+    persist_trace: Callable[[dict], Awaitable[None]] | None = None,
+    preserve_limits: bool = False,
 ) -> AsyncIterator[LLMChunk | AgentLoopEvent]:
-    limits = replace(limits, max_duration_seconds=get_settings().document_qa_timeout_seconds)
+    if not preserve_limits:
+        limits = replace(limits, max_duration_seconds=get_settings().document_qa_timeout_seconds)
+
+    async def save_trace():
+        if persist_trace is not None:
+            await persist_trace(result.trace)
+        else:
+            await _save_trace(run_id, owner, result.trace)
+
     request = DocumentSearchRequest(query=query[:4000], conversation_id=conversation_id)
     total_usage, calls = TokenUsage(), 0
     started = perf_counter()
@@ -226,7 +237,7 @@ async def stream_document_qa(
             row["count"] = metadata["count"]
         progress_rows[stage] = row
         result.trace["progress"] = list(progress_rows.values())
-        await _save_trace(run_id, owner, result.trace)
+        await save_trace()
         return AgentLoopEvent(kind="pipeline_progress", step_number=calls, progress=row)
 
     async def progress(stage, state="running", metadata=None):
@@ -378,7 +389,7 @@ async def stream_document_qa(
                     "model": model.model,
                 }
             )
-            await _save_trace(run_id, owner, result.trace)
+            await save_trace()
             if repair_reason:
                 await progress(f"model.{calls}.repair", status)
 
@@ -417,7 +428,7 @@ async def stream_document_qa(
                 )
                 result.trace["availability"] = exc.code
                 await progress("scope", "completed")
-                await _save_trace(run_id, owner, result.trace)
+                await save_trace()
                 return {
                     "terminal": True,
                     "answer": {"answer": text},
@@ -443,7 +454,7 @@ async def stream_document_qa(
         )
         await progress("scope", "completed")
         await progress("plan")
-        plan = await call_model(
+        plan = planned_query or await call_model(
             PLAN_PROMPT,
             {
                 "question": query,
@@ -456,11 +467,11 @@ async def stream_document_qa(
             version=PLAN_VERSION,
             json_mode=True,
         )
-        if not history:
+        if not history and planned_query is None:
             plan.query = query
         result.trace["plan"] = plan.model_dump()
         await progress("plan", "completed")
-        await _save_trace(run_id, owner, result.trace)
+        await save_trace()
         return {"plan": plan.model_dump()}
 
     async def retrieve(state):
@@ -520,7 +531,7 @@ async def stream_document_qa(
                 hit.model_dump(mode="json", exclude={"text"}) for hit in response.items
             ]
             result.trace["retrievals"].append(trace)
-            await _save_trace(run_id, owner, result.trace)
+            await save_trace()
             await progress("evidence")
             packed = pack_evidence(
                 response.items, token_budget=context_budget.rag_tokens, label_sources=True
@@ -549,7 +560,7 @@ async def stream_document_qa(
             hit.model_dump(mode="json", exclude={"text"}) for hit in result.evidence
         ]
         await revalidate()
-        await _save_trace(run_id, owner, result.trace)
+        await save_trace()
         await progress("evidence", "completed", {"count": len(result.evidence)})
         return {"evidence": [hit.model_dump(mode="json") for hit in result.evidence]}
 
@@ -650,7 +661,7 @@ async def stream_document_qa(
         supplied = set().union(*(block_sources[block.source] for block in blocks))
         result.evidence = [hit for hit in result.evidence if hit.citation_id in supplied]
         result.trace["reference_sources"] = [hit.citation_id for hit in result.evidence]
-        await _save_trace(run_id, owner, result.trace)
+        await save_trace()
         await progress("references", "completed", {"count": len(result.evidence)})
         await progress("answer", "completed")
         return {"answer": {"answer": output}}
@@ -699,7 +710,7 @@ async def stream_document_qa(
         raise
     finally:
         result.trace["latency_ms"] = round((perf_counter() - started) * 1000)
-        await _save_trace(run_id, owner, result.trace)
+        await save_trace()
 
 
 async def lock_document_answer_scope(session, *, conversation_id, owner, result):

@@ -11,6 +11,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, ValidationInfo, create_model, model_validator
 
+from agent_core.context_budget import ContextBlock
 from agent_core.llm.types import TokenUsage
 
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -28,6 +29,13 @@ class ToolContext:
         default=None, repr=False, compare=False
     )
     capability_version: str | None = None
+    # Per-dispatch allowance supplied by the graph, never part of model arguments.
+    remaining_tokens: int | None = None
+    remaining_steps: int | None = None
+    remaining_seconds: float | None = None
+    progress_callback: Callable[[Mapping[str, Any]], Awaitable[None]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 class ToolAuthorizationError(RuntimeError):
@@ -85,6 +93,7 @@ class ToolResult:
     is_error: bool = False
     error_code: str | None = None
     usage: TokenUsage | None = None
+    context_blocks: tuple[ContextBlock, ...] = field(default=(), repr=False)
 
     def __post_init__(self) -> None:
         if not self.content.strip():
@@ -94,9 +103,14 @@ class ToolResult:
 
     @classmethod
     def success(
-        cls, content: str, *, data: Mapping[str, Any] | None = None, usage: TokenUsage | None = None
+        cls,
+        content: str,
+        *,
+        data: Mapping[str, Any] | None = None,
+        usage: TokenUsage | None = None,
+        context_blocks: tuple[ContextBlock, ...] = (),
     ) -> "ToolResult":
-        return cls(content=content, data=data or {}, usage=usage)
+        return cls(content=content, data=data or {}, usage=usage, context_blocks=context_blocks)
 
     @classmethod
     def failure(

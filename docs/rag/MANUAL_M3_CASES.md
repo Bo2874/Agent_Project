@@ -4,6 +4,12 @@
 Chạy từ `C:\Agent_Project`. Bộ mẫu là dữ liệu giả, có giá trị cố định để đối chiếu.
 Không cần dùng tài liệu cá nhân để thử các case đầu tiên.
 
+**Cập nhật ReAct đợt2 (2026-10-27):** với `AGENT_REACT_ENABLED=true`, hỏi file đã chọn đi qua
+tool `search_documents` trong vòng Agent, không bắt buộc route `document_qa`/JEV. Các kiểm tra
+parse/index/retrieval/quyền bên dưới vẫn dùng được; muốn đối chiếu nhánh M3 cũ đặt flag false
+rồi restart web. Bộ live mới dùng chính **Hiểu sâu về AI Agent.pdf** đã upload, xem
+[D01–D06](../agent/MANUAL_AGENT_CASES.md). Không cần sinh/upload lại fixture để chạy bộ đó.
+
 ## 1. Chuẩn bị và thứ tự chạy
 
 Web, worker, migration `20261024_0027`, các cờ V2/RAG và model cache đã được chuẩn bị.

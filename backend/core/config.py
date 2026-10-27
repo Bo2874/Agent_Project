@@ -137,6 +137,7 @@ class Settings(BaseSettings):
     # Staged rollout: selected-document conversations retain M3 until the
     # document capability is connected to the shared loop.
     agent_react_enabled: bool = False
+    agent_document_max_total_tokens: int = Field(default=60_000, ge=128, le=1_000_000)
     agent_max_total_tokens: int = Field(default=20_000, ge=128, le=1_000_000)
     agent_max_duration_seconds: float = Field(default=120, gt=0, le=3600)
     agent_max_identical_tool_calls: int = Field(default=3, ge=1, le=20)
@@ -173,7 +174,8 @@ class Settings(BaseSettings):
     tool_allowlist: str = (
         "demo__get_server_time,demo__calculate,demo__count_text,"
         "demo__convert_temperature,demo__simulate_sensitive_action,"
-        "demo__get_admin_runtime_info,run_python_code,send_email,search_web"
+        "demo__get_admin_runtime_info,run_python_code,send_email,search_web,"
+        "search_documents,summarize_documents"
     )
     tool_approval_timeout_seconds: float = Field(default=300, gt=0, le=3600)
     tool_lazy_load_threshold: int = Field(default=4, ge=1, le=1000)
