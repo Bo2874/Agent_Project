@@ -1,5 +1,8 @@
 import json
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 from langchain_core.messages import (
@@ -11,14 +14,21 @@ from langchain_core.messages import (
 )
 from pydantic import SecretStr, ValidationError
 
+from agent_core.context_budget import ContextTokenBudget
+from agent_core.contracts.retrieval import RetrievalResult
+from agent_core.graph import AgentLimits
 from agent_core.llm.deepseek import (
     LangChainDeepSeekChatModel,
     LLMConfigurationError,
     LLMProviderError,
     to_langchain_messages,
 )
-from agent_core.rag.qa import DocumentOutputError, GroundedAnswer, QueryPlan, parse_json
+from agent_core.llm.types import LLMChunk
+from agent_core.rag.qa import DocumentOutputError, QueryPlan, parse_json, validate_answer_text
 from backend import dependencies_llm
+from backend.models import DocumentChunk
+from backend.schemas.document import DocumentSearchResponse
+from backend.services import document_qa
 from backend.services.document_qa import _repair_request, _with_output_repair
 from backend.services.documents import DocumentServiceError
 
@@ -232,8 +242,7 @@ async def test_json_mode_is_per_call_and_preserves_escaped_stream_content() -> N
     assert model.bound_tools is None
     output = "".join(chunk.content for chunk in chunks)
     assert output == raw
-    answer = GroundedAnswer.model_validate(parse_json(output)).validate_sources({"S1"})
-    assert '"vách đá"' in answer.answer
+    assert '"vách đá"' in parse_json(output)["answer"]
 
     _ = [chunk async for chunk in client.stream([{"role": "user", "content": "Hi"}])]
     assert "response_format" not in model.stream_kwargs
@@ -260,17 +269,27 @@ def test_json_parser_remains_strict(raw: str) -> None:
         parse_json(raw)
 
 
-def test_json_mode_still_requires_schema_and_valid_citation_bindings() -> None:
+def test_only_query_plan_requires_json_schema() -> None:
     with pytest.raises(ValidationError):
-        GroundedAnswer.model_validate(parse_json('{"answer":"No source"}'))
-    with pytest.raises(DocumentOutputError, match="citation_sources"):
-        GroundedAnswer(answer="Answer [S99]", sources=["S99"], answerable=True).validate_sources(
-            {"S1"}
-        )
-    with pytest.raises(DocumentOutputError, match="citation_link"):
-        GroundedAnswer(
-            answer="Answer [S1](https://example.com)", sources=["S1"], answerable=True
-        ).validate_sources({"S1"})
+        QueryPlan.model_validate(parse_json('{"query":"Missing mode"}'))
+    text = 'Khóa "lạc quan" kiểm tra phiên bản trước khi ghi.\n\nKhông đủ dữ kiện để kết luận thêm.'
+    assert validate_answer_text(text) == text
+
+
+@pytest.mark.parametrize(
+    ("content", "code"),
+    [
+        (" \n", "empty_answer"),
+        ("private\x00text", "invalid_answer_text"),
+        ("x" * 24001, "answer_too_long"),
+    ],
+)
+def test_answer_text_validation_has_safe_diagnostics(content, code) -> None:
+    with pytest.raises(DocumentOutputError) as raised:
+        validate_answer_text(content)
+    assert raised.value.code == code
+    assert "private" not in json.dumps(raised.value.details)
+    assert raised.value.excerpt is None
 
 
 def test_schema_diagnostics_exclude_values_and_untrusted_field_names() -> None:
@@ -284,30 +303,32 @@ def test_schema_diagnostics_exclude_values_and_untrusted_field_names() -> None:
 
 
 async def test_output_repair_uses_bounded_diagnostics_and_same_evidence_once() -> None:
-    payload = {"question": "x", "allowed_sources": ["S1"]}
+    payload = {"question": "x", "files": [{"id": "same-file"}]}
     observations = []
     raw = '{"answer":"a "quoted" phrase"}'
 
     async def invoke(attempt, reason):
-        prompt, request = _repair_request("Return JSON.", payload, reason, has_sources=True)
+        prompt, request = _repair_request("Return JSON.", payload, reason, json_mode=True)
         observations.append((attempt, prompt, request))
         if attempt == 1:
             return parse_json(raw)
-        return GroundedAnswer(answer="Valid [S1]", sources=["S1"], answerable=True)
+        return QueryPlan(query="Valid", mode="qa")
 
     answer = await _with_output_repair(invoke)
-    assert answer.sources == ["S1"]
+    assert answer.query == "Valid"
     assert len(observations) == 2
     request = observations[1][2]
     assert request["output_validation_error"] == "invalid_json"
     assert request["validation_details"]["column"] > 0
     assert len(request["invalid_output_excerpt"]) <= 160
-    assert request["allowed_sources"] is payload["allowed_sources"]
+    assert request["files"] is payload["files"]
     assert "untrusted diagnostic data" in observations[1][1]
     assert "output_validation_error" not in payload
 
 
-@pytest.mark.parametrize("code", ["invalid_json", "invalid_schema", "citation_sources"])
+@pytest.mark.parametrize(
+    "code", ["invalid_json", "invalid_schema", "empty_answer", "answer_too_long"]
+)
 async def test_output_repair_stops_after_one_retry_with_specific_message(code: str) -> None:
     calls = []
 
@@ -322,7 +343,8 @@ async def test_output_repair_stops_after_one_retry_with_specific_message(code: s
     expected = {
         "invalid_json": "JSON",
         "invalid_schema": "cấu trúc",
-        "citation_sources": "Trích dẫn",
+        "empty_answer": "nội dung",
+        "answer_too_long": "độ dài",
     }
     assert expected[code] in str(raised.value)
 
@@ -337,6 +359,180 @@ async def test_output_repair_does_not_retry_provider_errors() -> None:
     with pytest.raises(LLMProviderError):
         await _with_output_repair(fail)
     assert calls == [1]
+
+
+async def test_answer_text_repair_does_not_request_json_or_source_selection() -> None:
+    observations = []
+
+    async def invoke(attempt, reason):
+        prompt, data = _repair_request(
+            "Answer from supplied data.", {"question": "x"}, reason, json_mode=False
+        )
+        observations.append((prompt, data))
+        return validate_answer_text(" " if attempt == 1 else 'Plain "answer" without citations.')
+
+    assert await _with_output_repair(invoke) == 'Plain "answer" without citations.'
+    assert len(observations) == 2
+    assert observations[1][1]["output_validation_error"] == "empty_answer"
+    assert "ordinary answer text, not JSON" in observations[1][0]
+    assert "sources" not in observations[1][1]
+
+
+@pytest.mark.parametrize(
+    "scenario", ["nine", "repair", "summary", "empty", "unanswerable", "model_labels"]
+)
+async def test_qa_backend_owns_all_supplied_references(monkeypatch, scenario) -> None:
+    """Run the real QA graph; provider/search/DB are controlled at their boundaries."""
+    hits = (
+        [
+            RetrievalResult(
+                citation_id=f"source.c{index}",
+                document_id=UUID(int=100),
+                version_id=UUID(int=101),
+                chunk_id=UUID(int=index),
+                title="Fixture.pdf",
+                text=(f"Passage {index}. " + "data " * 300),
+                page_start=index,
+                page_end=index + 1,
+                score=1.0,
+                score_kind="fusion",
+                retrieval_config_version="fixture-v1",
+            )
+            for index in range(1, 13 if scenario == "summary" else 10)
+        ]
+        if scenario != "empty"
+        else []
+    )
+    version = SimpleNamespace(id=UUID(int=101), document_id=UUID(int=100), pipeline_hash="fixture")
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def execute(self, statement):
+            if any(item.get("entity") is DocumentChunk for item in statement.column_descriptions):
+                return SimpleNamespace(
+                    all=lambda: [
+                        (
+                            SimpleNamespace(
+                                id=hit.chunk_id,
+                                document_id=hit.document_id,
+                                version_id=hit.version_id,
+                                text=hit.text,
+                                page_start=hit.page_start,
+                                page_end=hit.page_end,
+                                section=None,
+                                start_offset=None,
+                                end_offset=None,
+                            ),
+                            hit.title,
+                        )
+                        for hit in hits
+                    ]
+                )
+            return SimpleNamespace(all=lambda: [(UUID(int=100), "Fixture.pdf")])
+
+    class Model:
+        provider, model = "controlled", "controlled-text-answer"
+
+        def __init__(self):
+            self.requests = []
+
+        async def stream(self, messages, **kwargs):
+            self.requests.append((messages, kwargs))
+            if len(self.requests) == 1:
+                assert kwargs["json_mode"] is True
+                yield LLMChunk(
+                    content=json.dumps(
+                        {"query": "Question", "mode": "summary" if scenario == "summary" else "qa"}
+                    )
+                )
+                return
+            assert kwargs["json_mode"] is False
+            data = json.loads(next(m["content"] for m in messages if m["role"] == "user"))
+            assert "allowed_sources" not in data
+            if scenario == "repair" and len(self.requests) == 2:
+                yield LLMChunk(content=" ")
+            elif scenario == "unanswerable":
+                yield LLMChunk(content="Tài liệu không đủ thông tin để trả lời.")
+            elif scenario == "model_labels":
+                yield LLMChunk(content="Unrequested label [S99] does not add a reference.")
+            else:
+                yield LLMChunk(content='Ordinary "answer" without inline source labels.')
+
+    retrieve = AsyncMock(
+        return_value=DocumentSearchResponse(
+            query="Question",
+            mode="hybrid",
+            items=hits,
+            retrieval_config_version="fixture-v1",
+        )
+    )
+    monkeypatch.setattr(document_qa, "SessionFactory", Session)
+    monkeypatch.setattr(document_qa, "_scope", AsyncMock(return_value=[version]))
+    monkeypatch.setattr(document_qa, "_recent_history", AsyncMock(return_value=([], False)))
+    monkeypatch.setattr(document_qa, "_save_trace", AsyncMock())
+    monkeypatch.setattr(document_qa, "retrieve_document_evidence", retrieve)
+    result, model = document_qa.DocumentQAResult(), Model()
+    events = [
+        event
+        async for event in document_qa.stream_document_qa(
+            model=model,
+            owner=UUID(int=200),
+            conversation_id=UUID(int=201),
+            message_id=UUID(int=202),
+            query="Question",
+            run_id=UUID(int=203),
+            recorder=AsyncMock(),
+            quota_guard=SimpleNamespace(before_execution=AsyncMock(), record_tokens=AsyncMock()),
+            limits=AgentLimits(),
+            context_budget=ContextTokenBudget(),
+            result=result,
+        )
+    ]
+    output = "".join(event.content for event in events if isinstance(event, LLMChunk))
+    assert output
+    assert result.trace["reference_policy"] == "supplied_context"
+    assert result.trace["reference_sources"] == [
+        f"S{i}" for i in range(1, len(result.evidence) + 1)
+    ]
+    assert "cited_sources" not in result.trace
+    assert all(
+        call["response_format"] == ("json_object" if i == 0 else "text")
+        for i, call in enumerate(result.trace["calls"])
+    )
+    assert not any("citations" in row["id"] for row in result.trace["progress"])
+    if scenario == "summary":
+        retrieve.assert_not_awaited()
+        assert result.trace["coverage"]["processed_chunks"] == len(hits) == 12
+        assert result.trace["coverage"]["summary_levels"] >= 1
+        assert len(model.requests) >= 4
+    else:
+        retrieve.assert_awaited_once()
+        assert len(model.requests) == (
+            1 if scenario == "empty" else 3 if scenario == "repair" else 2
+        )
+    if scenario == "empty":
+        assert result.evidence == []
+    else:
+        assert [hit.chunk_id for hit in result.evidence] == [hit.chunk_id for hit in hits]
+        assert "answerable" not in result.trace
+    # Persistence uses the backend evidence list, even for a model abstention or stray label.
+    session = SimpleNamespace(add=lambda row: bindings.append(row))
+    bindings = []
+    await document_qa.bind_document_citations(
+        session,
+        message=SimpleNamespace(id=UUID(int=204), conversation_id=UUID(int=201)),
+        owner=UUID(int=200),
+        result=result,
+    )
+    assert [row.chunk_id for row in bindings] == [hit.chunk_id for hit in result.evidence]
+    assert all(
+        row.owner_user_id == UUID(int=200) and row.version_id == UUID(int=101) for row in bindings
+    )
 
 
 def test_query_plan_keeps_one_question_with_all_requested_aspects() -> None:

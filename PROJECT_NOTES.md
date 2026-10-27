@@ -1233,3 +1233,58 @@
 - Cập nhật PROJECT_PLAN.md và hướng dẫn gia hạn trong docs/rag/MANUAL_M3_CASES.md. Không thêm file
   tracked, dependency, migration hay sửa .env; không restart dịch vụ, stage/commit/push thay user.
   User restart web (Windows không --reload), Ctrl+F5; phiên cũ hết hạn thì đăng nhập lại một lần.
+
+## 2026-10-27 — Chẩn đoán citation khi hỏi vì sao gọi là khóa lạc quan
+
+- Đọc run c4e2802f-473c-4845-b98d-289232aae095 đúng owner user@personalagent.vn, lúc12:58:40 +07.
+  Plan v3 lần đầu thiếu mode (invalid_schema); repair thành công, giữ một query và 8 message history.
+- Fast chạy một retrieval dense20/lexical20/RRF10; pack9 chunk/7975 token, budget_skip1 đúng cap8000.
+  S1 trang406/mục10.5.1 có đoạn Optimistic Locking mô tả kiểm phiên bản lúc ghi và thử lại khi xung
+  đột. Xác nhận nguồn trực tiếp về cơ chế đã vào context; chưa đánh giá đủ mọi ý nghĩa câu hỏi.
+- Answer v4 và repair đều citation_sources, JSON/schema đã qua; error_details={} nên không biết
+  vi phạm sources ngoài allowed, mismatch inline/list, duplicate, answerable/citation hay answer
+  rỗng. Raw output không được lưu; không khẳng định lỗi nằm ở điều kiện con nào hoặc giống hệt
+  lượt ANNOY/HNSW. Repair hiện chỉ nhận mã chung, thiếu hướng dẫn sửa theo lỗi cụ thể.
+- Chưa sửa code sản phẩm. Đề xuất bổ sung chẩn đoán citation an toàn/chi tiết cho trace và repair,
+  làm rõ prompt về inline/sources/answerable, giữ kiểm tra nguồn và một lần repair; không thay
+  retrieval để chữa một lỗi đầu ra chưa rõ. Không gọi LLM/model, không ghi DB.
+- Helper Git ignore .tools/runtime-setup/diagnose_optimistic_citations.py; report/inspection ở
+  data/rag-testing/optimistic-citation-diagnostic-20261027. Không tạo thêm file tracked.
+
+## 2026-10-27 — Backend quản lý nguồn, LLM chỉ trả văn bản
+
+- User chốt liệt kê mọi chunk đã cung cấp cho AI ở cuối câu trả lời. QA có9 chunk trong context
+  thì có9 mục nguồn, không yêu cầu LLM khai báo chunk thực sự dùng hoặc gắn nguồn vào từng câu.
+  Đây là danh sách đầu vào cho AI, không phải chứng minh attribution/ngữ nghĩa từng nhận định.
+- agent_core/rag/qa.py: answer v5 và summary notes v3 yêu cầu text/Markdown thường, không JSON,
+  không inline label/sources/answerable. Xóa GroundedAnswer và các validator citation_sources/
+  citation_link/citation_syntax từ output model. Plan v3 vẫn QueryPlan JSON strict, một query.
+  Text rỗng/NUL/quá24000 ký tự có mã/details riêng, không lưu nội dung vào diagnostics.
+- backend/services/document_qa.py: chỉ plan/plan repair bật JSON mode; answer/notes/text repair
+  ghi response_format=text. Giữ tối đa1 repair trên cùng input, budget/quota/provider/scope/
+  timeout và một retrieval; không đọc nguồn từ output model. Backend trace reference_policy=
+  supplied_context và reference_sources; có evidence thì không tự suy ra answerable. Không tìm
+  được evidence thì trả thông báo rõ và không có nguồn; model tự nói thiếu dữ kiện khi có context
+  vẫn giữ nguồn đã cấp. Lỗi quote trong answer không còn phải parse JSON.
+- Summary giữ mọi chunk trong all-chunks scope (tối đa64), propagates lineage từ metadata qua
+  các batch/nhiều tầng, không dùng nhãn trong notes model. Link cuối vẫn trỏ chunk gốc/version.
+  Progress thay kiểm citation output bằng “Chuẩn bị nguồn tham khảo” do backend thực hiện.
+- frontend/static/chat.js: footer “Nguồn tài liệu được cung cấp”, một mục/chunk có nhãn/tên/trang
+  hoặc khoảng trang và link mở nguồn. Sắp nhãn theo số để reload giữ S1…S10 đúng thứ tự; giữ
+  nguyên từng chunk dù cùng file/trang, không đoán trang khi TXT/DOCX không có. Tooltip giải thích
+  AI có thể không dùng hết từng đoạn. Giữ inline rendering cho message cũ, filter nguồn đã xóa.
+- Binding message/owner/document/version/chunk, commit cùng câu trả lời, revalidate/lock scope,
+  API history/source/download và kiểm quyền giữ nguyên. Không sửa migration, .env, model/index,
+  Fast/Deep, giới hạn10 chunk/8000 token của QA hoặc phần ingestion; không cần upload/re-index lại.
+- tests/test_deepseek.py cập nhật protocol/repair, bổ sung kiểm graph thật với provider/DB/search
+  giả:9 chunk→9 bindings, text có quote, answer không đủ dữ kiện, model tự ghi S99 không thêm
+  nguồn, empty evidence, repair rỗng một lần, summary12 chunk qua batch vẫn giữ12 nguồn gốc.
+  106 test adapter/context/status/streaming/recorder/runtime/safety/security/public pages đạt.
+- Helper Git ignore check_single_query_rag.py cập nhật và đạt Fast/Deep ordering, history,
+  budget10/8000, một retrieval, repair, API opaque IDs và summary. check_reference_footer.cjs
+  đạt9 link, sort số, trang/khoảng trang/no-page, title text an toàn, target nguồn, reload/delete;
+  check_progress_ui.cjs và check_session_renewal.cjs tiếp tục đạt. Đây là Node VM/DOM host giả,
+  chưa kiểm browser thật hoặc gọi LLM/model thật ở lượt này; không ghi DB dữ liệu user.
+- Cập nhật PROJECT_PLAN.md và MANUAL_M3_CASES.md (Q02/J01–J04/T02/trace) theo thiết kế mới,
+  giữ ghi chú/report/run lịch sử. Không tạo thêm file tracked, dependency; không restart dịch vụ
+  hoặc stage/commit/push thay user. User restart web (Windows không --reload) và Ctrl+F5 để test.

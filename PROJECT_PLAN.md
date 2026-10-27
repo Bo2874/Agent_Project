@@ -820,14 +820,18 @@ Deep dùng thứ tự reranker. Chọn tối đa10 nguồn nguyên chunk trong80
 Câu trả lời dùng query đã resolve/coverage và evidence; history không làm nguồn
 cho sự kiện tài liệu. Không cấp tool/Skill, không ghi tài liệu vào user memory.
 Tóm tắt: lấy mọi chunk của scope đã chọn, tối đa64 chunk; vừa context thì trả lời trực tiếp,
-không vừa thì notes theo batch và rút gọn nhiều tầng trước câu trả lời cuối. Mọi batch giữ label
-nguồn gốc; vượt chunk/call/token/time/context budget thì báo rõ yêu cầu thu hẹp, không thay bằng
+không vừa thì notes theo batch và rút gọn nhiều tầng trước câu trả lời cuối. Backend giữ lineage
+nguồn gốc qua từng batch, không yêu cầu model giữ nhãn; vượt chunk/call/token/time/context budget
+thì báo rõ yêu cầu thu hẹp, không thay bằng
 top-k rồi tuyên bố đã tóm tắt toàn bộ. Dùng budget8 call/20.000 token và timeout RAG600 giây hiện có.
 
-Output model JSON được kiểm schema và đối chiếu [S<number>]/sources với các chunk thực sự cấp
-trong context; từ chối nhãn lạ, URL gắn vào nhãn hoặc nguồn không khớp. Thiếu dữ kiện thì nói rõ,
-không tự suy diễn. Validation này kiểm cấu trúc/binding, chưa chứng minh ngữ nghĩa của từng claim.
-Chỉ phát câu trả lời sau validation; SSE timeline vẫn báo từng model call, không stream JSON thô.
+Plan dùng JSON/schema QueryPlan; answer và summary notes dùng văn bản thường, không yêu cầu
+inline citation, sources hoặc answerable từ LLM. Backend liệt kê mọi chunk đã cung cấp cho AI,
+không suy ra nguồn từ văn bản model. Footer ghi “Nguồn tài liệu được cung cấp”, có nhãn/trang/
+liên kết mở đúng chunk; không xác nhận AI thực sự dùng mọi chunk hoặc nguồn hỗ trợ từng claim.
+Thiếu dữ kiện thì prompt yêu cầu nói rõ, không tự suy diễn. Text được kiểm rỗng/NUL/độ dài;
+repair tối đa1 lần trên cùng input, không sửa output bằng cách chạy lại retrieval.
+Chỉ phát câu trả lời sau kiểm text; SSE timeline vẫn báo từng model call và bước chuẩn bị nguồn.
 Recorder/quota chung ghi từng call và usage lỗi/hủy đã báo về. Trace lưu query gốc/plan/history
 counts, profiles/config retrieval, source references, coverage, usage và latency; không lưu text
 chunk đầy đủ vào trace. QA lỗi chưa có durable checkpoint để resume; user gửi lại câu hỏi.
@@ -970,7 +974,7 @@ Ngày 2026-10-27 — Fast/Deep và Final Chunk Selection, thiết kế cũ trư�
 
 Không thêm dependency/migration/file code hoặc test tracked, không sửa .env/cache/index/tài liệu user.
 
-Ngày 2026-10-27 — Sửa lỗi JSON ở nhánh document_qa:
+Ngày 2026-10-27 — Sửa lỗi JSON ở nhánh document_qa (lịch sử, trước thiết kế nguồn backend):
 - [x] Adapter có json_mode theo từng call; plan/answer/summary/repair gửi response_format=json_object.
   Prompt plan v2/answer v3 yêu cầu escape JSON; timeline nhận cả phiên bản cũ và mới.
 - [x] Giữ parser strict, schema và citation; repair tối đa1 lần trên cùng evidence, nhận vị trí lỗi
@@ -999,6 +1003,20 @@ Ngày 2026-10-27 — Thiết kế hiện tại: một query và tối đa10 ngu�
   của case ANNOY/HNSW vẫn cần nghiệm thu riêng, không coi thay thiết kế là đã sửa mọi lỗi citation.
 
 Không thêm dependency/migration hoặc file tracked; không đổi tài liệu/index, không cần re-index.
+
+Ngày 2026-10-27 — Nguồn tham khảo do backend quản lý:
+- [x] Answer v5 và summary notes v3 trả text, bỏ GroundedAnswer/sources/answerable/validator
+  citation từ model; chỉ plan v3 và plan repair dùng JSON mode. Text lỗi có mã/details an toàn.
+- [x] Backend giữ mọi chunk đã cấp vào context; summary giữ lineage qua batch bằng metadata.
+  Trace mới có reference_policy=supplied_context/reference_sources, không dùng cited_sources
+  hoặc tự suy ra answerable khi có evidence. Không có evidence thì backend trả thông báo rõ.
+- [x] Footer hiển thị một mục/chunk, tên/trang hoặc khoảng trang, thứ tự S1… và link mở nguồn;
+  giữ binding owner/message/version/chunk và hỗ trợ nguồn đã lưu từ các run cũ.
+- [x] Kiểm graph/provider/repair/summary/persistence có kiểm soát và DOM host; không gọi LLM thật.
+- [ ] User test lại Q01/Q02/Q06–Q09/J01–J04 sau restart/Ctrl+F5, nhất là câu khóa lạc quan và
+  ANNOY/HNSW; danh sách nguồn do backend không thay thế nghiệm thu độ đúng/ngữ nghĩa câu trả lời.
+
+Không thêm dependency/migration/file tracked, không sửa .env hoặc re-index; notes có kết quả kiểm.
 
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;
    ghi storage bằng ID do server sinh. Mức khởi đầu đề xuất: 20 MiB/file, 200 MiB/user,

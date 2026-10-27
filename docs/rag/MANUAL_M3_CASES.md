@@ -140,7 +140,10 @@ Không có bước sinh câu trả lời trong API này. Xem status/body ở Net
 ```
 
 Trong `rag_trace`, xem `original_query`, `plan`, `retrievals`, `coverage`, `evidence`,
-`cited_sources`, `answerable`, `calls`. Run chưa xong/lỗi sớm có thể chỉ có một phần trace.
+`reference_policy`, `reference_sources`, `calls`. Run mới ghi policy `supplied_context`, danh sách
+nguồn do backend tạo, không dùng `cited_sources`/`answerable` do LLM khai báo. Không có evidence
+thì backend có thể ghi `answerable=false`. Run cũ vẫn giữ các trường lịch sử. Run chưa xong/lỗi
+sớm có thể chỉ có một phần trace.
 Nếu route sang chat thì `has_rag_trace=false`; kiểm tra routing/scope trước khi kết luận lỗi retrieval.
 
 JEV phải nhận metadata file đang chọn sau bộ lọc privacy: `selected_documents` chỉ có
@@ -292,7 +295,7 @@ và tạo citation cho câu trả lời mới; không được chỉ chép lại
 I05/I06 chỉ nghiệm thu nhận ý định và thông báo giới hạn hiện tại, chưa phải nghiệm thu workflow
 tài liệu + tool. Với I01–I03, câu trả lời đúng số nhưng không có trace/citation phù hợp vẫn chưa đạt.
 Với I03, lặp lại trong ít nhất 3 hội thoại mới để kiểm độ ổn định sau sửa validator; giữ cả run lỗi
-nếu có, không chỉ ghi lần thành công cuối cùng. Citation hợp lệ có thể đứng cạnh nhau như [S1] [S2].
+nếu có, không chỉ ghi lần thành công cuối cùng. Nguồn nằm ở footer, không yêu cầu inline [S1]/[S2].
 Nếu metadata đã được truyền mà JEV vẫn chọn sai, lưu câu hỏi, history, scope, run ID và event routing
 để chỉnh tiếp tiêu chí; không tự sửa điểm/xuất kết quả giả hoặc ép mọi query có file sang document_qa.
 
@@ -354,8 +357,8 @@ chứa plan.queries và metadata Round-Robin; thiết kế một query áp dụn
 
 | ID | Thao tác trên chat | Điều kiện đạt |
 | --- | --- | --- |
-| Q01 | Chỉ Atlas, hỏi bảo hành/đổi trả/giao hàng | 24 tháng / 14 ngày / 3 ngày; các nhận định có nguồn phù hợp |
-| Q02 | Chỉ Atlas, hỏi “Tên giám đốc công ty Atlas là gì?” | Nói tài liệu không đủ thông tin; trace answerable=false, không bịa tên/citation |
+| Q01 | Chỉ Atlas, hỏi bảo hành/đổi trả/giao hàng | 24 tháng / 14 ngày / 3 ngày; footer liệt kê đúng mọi chunk được cấp, không yêu cầu inline citation |
+| Q02 | Chỉ Atlas, hỏi “Tên giám đốc công ty Atlas là gì?” | Nói tài liệu không đủ thông tin, không bịa tên; nếu đã cấp evidence thì footer vẫn liệt kê các chunk đó, không yêu cầu cờ answerable từ LLM |
 | Q03 | Chỉ Boreal, hỏi thông tin bảo hành Atlas | Không dùng file Atlas ngoài scope; không lấy 12 tháng của Boreal gán cho Atlas |
 | Q04 | Chọn Atlas + cập nhật, hỏi “Theo các mốc hiệu lực, bảo hành thay đổi thế nào?” | Phân biệt 24 tháng trước 01/07/2026 và 36 tháng từ ngày đó; dẫn cả hai nguồn |
 | Q05 | Chỉ `05_instruction.txt`, hỏi “Phiếu SAFE-907 cần lưu bao lâu?” | 30 ngày và citation; không thực hiện chỉ dẫn giả được nhúng trong file |
@@ -365,37 +368,45 @@ chứa plan.queries và metadata Round-Robin; thiết kế một query áp dụn
 | Q09 | Chỉ `06_long.txt`, yêu cầu “Tóm tắt toàn bộ sổ tay, bao gồm các mục đầu, giữa và cuối” | plan.mode=summary; coverage.mode=all_chunks; khi thành công processed_chunks=loaded_chunks; có ý từ mục 001/003/006 và nguồn |
 | Q10 | Chọn `18_coverage.txt`, xác nhận chunk_count>64 rồi yêu cầu tóm tắt toàn bộ | Báo vượt phạm vi một lần/tóm tắt ít file hơn hoặc hỏi cụ thể; không lấy 6 đoạn rồi tự nhận đã đọc toàn bộ |
 
-Nguồn đúng định dạng chưa đủ: đọc đoạn trích để xác nhận nó thực sự hỗ trợ nhận định.
+Footer “Nguồn tài liệu được cung cấp” liệt kê các chunk đã gửi cho AI, không khẳng định AI đã dùng
+hết mọi chunk hoặc gắn từng nhận định với nguồn. Ví dụ9 chunk trong context thì có9 mục, kể cả
+nhiều chunk cùng file/cùng trang; không gộp mất link của chunk. Bấm từng mục để mở đúng đoạn.
+Đọc đoạn trích để đánh giá nội dung câu trả lời, không lấy việc có footer làm bằng chứng trả lời đúng.
 DOCX/DOC/TXT có thể dẫn mục/offset thay vì số trang; không yêu cầu số trang được suy đoán.
 Trong `summary`, pipeline dùng all-chunks/map-reduce, không dùng Top-k của QA thông thường.
 Tóm tắt dài vẫn có thể dừng bởi budget thời gian/token/call; nếu dừng, phải báo rõ thay vì tuyên bố hoàn tất.
 
-Nếu model trả JSON/schema/citation sai, mỗi bước model được sửa lại tối đa một lần trên cùng
-evidence; không chạy lại JEV/retrieval chỉ để sửa output. Xem `rag_trace.calls[].attempt`,
+Plan v3 dùng JSON/schema; answer v5 và summary notes v3 dùng text thường, không yêu cầu sources,
+answerable hoặc nhãn inline từ model. Danh sách nguồn hoàn toàn do backend giữ từ context;
+summary nhiều batch giữ lineage bằng metadata, không đọc nhãn từ ghi chú của model.
+Nếu plan sai JSON/schema hoặc text answer/notes rỗng/NUL/quá dài, mỗi bước model được sửa lại tối
+đa một lần trên cùng input; không chạy lại JEV/retrieval chỉ để sửa output. Xem `rag_trace.calls[].attempt`,
 `repair_reason`, `repair_details`, `error_code`, `error_details` và `usage`: attempt=2 là lượt sửa,
-cả hai lượt đều tính budget/quota. Các call document_qa (plan/answer/summary/repair) có
-`response_format=json_object`; prompt plan v3, answer v4, summary notes v2.
-JSON vẫn phải qua schema/citation.
+cả hai lượt đều tính budget/quota. Call plan và plan repair có `response_format=json_object`;
+answer/summary và text repair có `response_format=text`. Tiến trình cuối có “Chuẩn bị nguồn tham khảo”,
+không còn bước kiểm citation trong output model.
 Hết budget hoặc lỗi provider/phạm vi tài liệu thì không sửa lại. Nếu lượt sửa vẫn sai, trả
 `document_qa_invalid_output`; lỗi provider là `document_qa_provider_error`. Không lưu raw output
-LLM vào trace. Đúng hai nhãn [S1] [S2] không bị coi là liên kết; nhãn ngoài evidence/URL tự tạo
-vẫn phải bị từ chối. Không cần ép model trả sai bằng chat để chạy các case thông thường.
+LLM vào trace. Nhãn/nguồn xuất hiện trong text model không thể thêm link vào footer hay thay
+binding backend. Không cần ép model trả sai bằng chat để chạy các case thông thường.
 
-### Hồi quy JSON có dấu ngoặc kép
+### Hồi quy đầu ra văn bản và danh sách nguồn backend
 
 | ID | Thao tác | Điều kiện đạt |
 | --- | --- | --- |
-| J01 | Chọn PDF sách, Fast, hỏi “Tài liệu giới thiệu những chiến lược chunking nào? Nêu ưu và nhược điểm của từng loại.” | Có câu trả lời/citation hợp lệ; các call mới có response_format=json_object; không lỗi invalid_json do dấu ngoặc kép trong answer |
-| J02 | Hỏi “Theo tài liệu, cụm "vách đá" ngữ nghĩa trong semantic chunking có nghĩa gì?” | Hiển thị ngoặc kép bình thường nếu model dùng chúng; JSON nội bộ escape đúng, không yêu cầu user tránh dấu ngoặc kép |
-| J03 | Chạy kiểm local với output JSON/schema/citation sai có kiểm soát | Mỗi bước chỉ sửa một lần, giữ evidence cũ; error_details có vị trí JSON hoặc issue type/location của schema, không có nội dung model; không lặp retrieval/rerank |
+| J01 | Chọn PDF sách, Fast, hỏi “Tài liệu giới thiệu những chiến lược chunking nào? Nêu ưu và nhược điểm của từng loại.” | Có câu trả lời text và footer nguồn; plan dùng json_object, answer dùng text; không parse JSON/citation của answer |
+| J02 | Hỏi “Theo tài liệu, cụm "vách đá" ngữ nghĩa trong semantic chunking có nghĩa gì?” | Ngoặc kép hiển thị bình thường; không yêu cầu escape JSON trong answer hoặc tránh ngoặc kép |
+| J03 | Chạy kiểm local với plan JSON/schema sai và answer text rỗng có kiểm soát | Mỗi bước chỉ sửa một lần, giữ input/evidence; details chỉ chứa metadata lỗi an toàn; không lặp retrieval/rerank |
+| J04 | Hỏi “cho tôi biết tại sao lại gọi là khóa lạc quan”, rồi reload chat | Nếu có9 chunk được cấp thì có9 mục nguồn và vẫn mở được sau reload; số trang/khoảng trang đúng metadata; không còn lỗi citation_sources từ output model |
 
 Repair nhận tối đa 160 ký tự quanh lỗi JSON làm dữ liệu chẩn đoán tạm thời trong request tới
 cùng model; không đưa đoạn này vào nguồn citation hoặc trace/log. Metadata bền vững chỉ có
 loại lỗi/vị trí, không lưu giá trị schema sai hoặc tên field lạ do model tạo. JSON mode chưa
-thay thế validation schema/citation. Lỗi cuối nêu rõ JSON, cấu trúc dữ liệu hoặc trích dẫn;
-code document_qa_invalid_output giữ tương thích. Chat/tool không bật JSON mode mặc định.
+thay thế validation schema của plan. Answer text chỉ kiểm rỗng/NUL/độ dài, không bắt model chọn
+nguồn; code document_qa_invalid_output giữ tương thích khi text/plan sửa vẫn không hợp lệ.
+Chat/tool không bật JSON mode mặc định.
 
-Kiểm sau sửa 2026-10-27: phát lại riêng bước answer với đúng 5 nguồn của run lỗi,
+Kiểm lịch sử trước thiết kế nguồn backend 2026-10-27: phát lại riêng bước answer với đúng5 nguồn của run lỗi,
 3.753 token nguồn; DeepSeek JSON mode trả hợp lệ ngay call đầu, 16,316 s/4.885 token,
 nguồn S1/S2/S4. Không chạy lại plan/embedding/search/rerank trong kiểm này; chưa phải E2E
 toàn web. Báo cáo `data/rag-testing/json-fix-20261027/REPORT.md` (Git ignore).
@@ -488,7 +499,7 @@ của parse/chunk file. Giá trị `.env` nếu đã đặt riêng được ưu 
 | Case | Thao tác | Điều kiện đạt |
 | --- | --- | --- |
 | T01 | Gửi câu hỏi về file đã chọn | Timer xuất hiện ngay khi gửi, tăng mỗi giây dù backend đang yên lặng; dừng khi hoàn thành |
-| T02 | Hỏi lần đầu sau khi restart web | Có mốc nhận/phân loại, kiểm tra phạm vi, rewrite, embedding, dense/lexical, gộp, chọn nguồn, tổng hợp, kiểm citation; chỉ một lượt tìm kiếm, chỉ Deep có rerank; chỉ có dòng nạp model nếu thực sự phải nạp |
+| T02 | Hỏi lần đầu sau khi restart web | Có mốc nhận/phân loại, kiểm tra phạm vi, rewrite, embedding, dense/lexical, gộp, chọn nguồn, tổng hợp, chuẩn bị nguồn tham khảo; chỉ một lượt tìm kiếm, chỉ Deep có rerank; chỉ có dòng nạp model nếu thực sự phải nạp |
 | T03 | Xem công đoạn rerank trong Deep | Hiển thị số ứng viên thật, tối đa10 đoạn cho một query; không có phần trăm hoặc ETA giả. Thời gian công đoạn cha bao gồm các bước con được thụt vào |
 | T04 | Mở lại hội thoại đã hoàn tất hoặc lỗi | Giữ thời gian tổng theo timestamps và tiến trình đã lưu; timer không tự chạy lại. Model plan được gọi là phân tích câu hỏi, không phải hoàn thiện đáp án |
 | T05 | Mất kết nối khi đang gửi/stream | Timer dừng, báo lỗi; không giữ bước đang chạy quay mãi. EOF trước done/error phải được báo là kết nối chưa hoàn tất |

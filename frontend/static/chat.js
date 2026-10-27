@@ -196,7 +196,8 @@ if (chatApp) {
 
   function renderCitations(bubble, citations, messageId, conversationId) {
     const valid = (citations || []).filter((source) =>
-      /^S\d+$/.test(source.citation_id) && !deletedDocumentIds.has(source.document_id));
+      /^S\d+$/.test(source.citation_id) && !deletedDocumentIds.has(source.document_id))
+      .sort((a, b) => Number(a.citation_id.slice(1)) - Number(b.citation_id.slice(1)));
     bubble.parentElement.querySelector(".message-citations")?.remove();
     if (!valid.length || !messageId) return;
     const byLabel = new Map(valid.map((source) => [source.citation_id, source]));
@@ -206,7 +207,8 @@ if (chatApp) {
       button.type = "button";
       button.className = full ? "citation-source" : "citation-inline";
       button.textContent = full
-        ? `[${label}] ${source.title}${source.page_start ? ` · tr. ${source.page_start}` : ""}`
+        ? `[${label}] ${source.title}${source.page_start
+          ? ` · tr. ${source.page_start}${source.page_end > source.page_start ? `–${source.page_end}` : ""}` : ""}`
         : `[${label}]`;
       button.title = `Mở nguồn: ${source.title}`;
       button.dataset.citationDocumentId = source.document_id;
@@ -232,9 +234,10 @@ if (chatApp) {
     }
     const panel = document.createElement("section");
     panel.className = "message-citations";
-    panel.setAttribute("aria-label", "Nguồn tham khảo");
+    panel.setAttribute("aria-label", "Nguồn tài liệu được cung cấp");
     const label = document.createElement("strong");
-    label.textContent = "Nguồn tham khảo";
+    label.textContent = "Nguồn tài liệu được cung cấp";
+    label.title = "Các đoạn được cung cấp cho AI; không xác nhận AI đã sử dụng từng đoạn trong câu trả lời.";
     panel.append(label);
     for (const source of valid) panel.append(citationButton(source.citation_id, true));
     bubble.after(panel);
