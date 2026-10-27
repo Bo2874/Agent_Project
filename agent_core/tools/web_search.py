@@ -122,7 +122,9 @@ class WebSearchHandler:
             "engine": "native",
             "searched_at": datetime.now(UTC).isoformat(),
         }
-        usage = None
+        # The endpoint preflight is not an inference call. Once POST starts,
+        # billing stays unknown until the provider returns valid usage.
+        usage = TokenUsage()
 
         def failure(code, message):
             return ToolResult.failure(message, error_code=code, data=data, usage=usage)
@@ -159,6 +161,7 @@ class WebSearchHandler:
                         )
                     if context.authorization_guard:
                         await context.authorization_guard("search_web")
+                    usage = None
                     response = await client.post(
                         f"{OPENROUTER_URL}/chat/completions",
                         headers={
@@ -213,6 +216,15 @@ class WebSearchHandler:
                 return failure(code, message)
             payload = response.json()
             raw_usage = payload.get("usage") or {}
+            if not isinstance(raw_usage, dict) or any(
+                type(raw_usage.get(key)) is not int or raw_usage[key] < 0
+                for key in ("prompt_tokens", "completion_tokens")
+            ):
+                data["billing_status"] = "unknown"
+                return failure(
+                    "web_search_missing_usage",
+                    "Dịch vụ chưa trả usage hợp lệ; không tự động tìm lại.",
+                )
             prompt, completion = (
                 _integer(raw_usage.get("prompt_tokens")),
                 _integer(raw_usage.get("completion_tokens")),
@@ -271,13 +283,13 @@ class WebSearchHandler:
                 )
             return ToolResult.success(content.strip(), data=data, usage=usage)
         except TimeoutError:
-            data["billing_status"] = "unknown"
+            data["billing_status"] = "unknown" if usage is None else "not_started"
             return failure("web_search_timeout", "Web search vượt giới hạn thời gian. Hãy thử lại.")
         except httpx.TimeoutException:
-            data["billing_status"] = "unknown"
+            data["billing_status"] = "unknown" if usage is None else "not_started"
             return failure("web_search_timeout", "Web search vượt giới hạn thời gian. Hãy thử lại.")
         except httpx.HTTPError:
-            data["billing_status"] = "unknown"
+            data["billing_status"] = "unknown" if usage is None else "not_started"
             return failure("web_search_connection", "Không kết nối được tới dịch vụ web search.")
         except (ValueError, TypeError, KeyError, AttributeError):
             return failure(

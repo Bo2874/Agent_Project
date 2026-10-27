@@ -31,6 +31,7 @@ class AgentGraphContext:
     build_final: AgentNodeHandler
     request_approvals: AgentNodeHandler | None = None
     observe_node_error: AgentNodeErrorObserver | None = None
+    build_partial: AgentNodeHandler | None = None
 
 
 _EXPECTED_PHASES: dict[AgentNodeName, frozenset[AgentPhase]] = {

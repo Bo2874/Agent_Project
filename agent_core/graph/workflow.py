@@ -3,6 +3,7 @@ from typing import Any
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.runtime import Runtime
 from langgraph.store.base import BaseStore
 from langgraph.types import RetryPolicy, TimeoutPolicy
 
@@ -39,6 +40,7 @@ def build_agent_graph(
     checkpointer: BaseCheckpointSaver[Any] | None = None,
     store: BaseStore | None = None,
     node_timeout_seconds: float | None = None,
+    retry_model: bool = True,
 ) -> CompiledStateGraph:
     """Compile the production model -> tool -> model conditional workflow."""
     builder = StateGraph(AgentState, context_schema=AgentGraphContext)
@@ -56,7 +58,7 @@ def build_agent_graph(
     builder.add_node(
         "model",
         model_node,
-        retry_policy=MODEL_RETRY_POLICY,
+        retry_policy=MODEL_RETRY_POLICY if retry_model else None,
         error_handler=node_error_handler,
         timeout=timeout,
     )
@@ -73,7 +75,14 @@ def build_agent_graph(
         error_handler=node_error_handler,
         timeout=timeout,
     )
-    builder.add_node("limit", limit_node)
+
+    async def finish_limit(state: AgentState, runtime: Runtime[AgentGraphContext]):
+        if runtime.context is not None and runtime.context.build_partial is not None:
+            result = dict(await runtime.context.build_partial(state))
+            return {**result, "phase": "completed", "node_trace": ["final"]}
+        return await limit_node(state)
+
+    builder.add_node("limit", finish_limit)
     builder.add_edge(START, "context")
     builder.add_conditional_edges(
         "context",

@@ -64,7 +64,7 @@ các chunk ở context cuối (tối đa10) cộng lineage của summary nếu c
 
 Run có file dùng `AGENT_DOCUMENT_MAX_TOTAL_TOKENS=60000` và deadline ít nhất bằng
 `DOCUMENT_QA_TIMEOUT_SECONDS` (host hiện600 giây); run không file giữ20.000/120 giây.
-Đây là hạn mức, không phải số token chắc chắn tiêu thụ. Dự trù/settle quota toàn run sẽ làm ở đợt3.
+Đây là hạn mức, không phải số token chắc chắn tiêu thụ. Đợt3 đã thêm dự trù/settle và partial result.
 
 | Case | Câu hỏi trên web | Kỳ vọng |
 | --- | --- | --- |
@@ -105,11 +105,55 @@ Trong ReAct, timeline/tool/progress tiếp tục phát realtime. Text model đư
 lượt đó trả lời cuối hay gọi tool, tránh lời dẫn hành động lẫn vào đáp án; chữ đáp án xuất sau
 khi model hoàn tất lượt cuối. Chưa có UI riêng để stream provisional/final text theo hai kênh.
 
+## Đợt 3 — Lịch sử hành động, ngân sách và kết quả một phần
+
+Lượt mới nhận tối đa24 tool call gần nhất trong cùng owner/hội thoại, gói trong1.500 token.
+Audit gồm tên/status/thời điểm, trạng thái run, nguồn web đã bỏ query string/fragment và số
+nguồn tài liệu. Không chép arguments, email body, stdout hay payload plugin vào audit. Prompt v5
+phân biệt completed/failed/denied/running và kết quả một phần; không tìm lại chỉ để xác nhận đã tìm.
+
+ReAct dự trù input + output của model trước khi gọi; web dự trù theo
+`AGENT_WEB_SEARCH_ESTIMATED_TOKENS=10000` (Docker thêm `DEV_`). Trước mỗi tool, chừa budget cho
+caller trả lời cuối và kiểm lại sau tool trước đó. Summary dùng phần token còn lại sau phần chừa.
+Quota ngày giữ chỗ nguyên tử trong PostgreSQL, sau đó thay dự trù bằng actual usage đúng một lần.
+Không tăng mặc định20k/60k; cache tokens và native web tokens vẫn nằm trong actual usage.
+
+Native web có input/search ẩn:10k chỉ là **ước lượng admission**, không phải hard cap nhà cung cấp.
+Actual có thể cao hơn dự trù và cả giới hạn run/ngày; phải ghi đủ, chặn lời gọi tiếp theo và giữ
+kết quả đã có. Timeout/mất usage sau POST giữ reservation tới hết cửa sổ ngày; không tự động gửi lại.
+Preflight chưa POST có usage0. Root ReAct tắt retry model tự động. Deadline dùng chung, có khoảng
+cleanup10s để hủy/đối soát/lưu; wall time có thể vượt deadline vì cleanup. Chuẩn bị memory/history
+ngoài graph vẫn dùng quota ngày hiện có, không tính trong token state của graph.
+
+Hết step/token/time/quota trả một thông báo **yêu cầu chưa hoàn tất**, kèm observation đã nhận và
+các lỗi/việc chưa làm. Không gọi thêm LLM nếu không đủ budget; không biến kết quả thô thành kết
+luận mới. SSE/history/timeline ghi `partial_*`, giao diện hiện “Kết quả một phần”, không mời resume
+run đã hoàn tất ở trạng thái một phần. User có thể gửi yêu cầu mới nếu muốn tiếp tục.
+
+| Case | Thao tác | Kỳ vọng |
+| --- | --- | --- |
+| B01 | Tìm ngày phát hành Python3.14.0 trên Python.org, chỉ gọi web một lần | Có một tool thành công, nguồn và actual token/cost |
+| B02 · cùng chat B01 | Hỏi đã thực sự tìm web chưa, không tìm lại | Xác nhận từ audit, không gọi tool |
+| B03 | Chọn PDF đã upload, hỏi semantic chunking | Retrieval thật từ Hiểu sâu về AI Agent.pdf, có nguồn; không upload/reindex |
+| B04 | Test runner tạm đặt max_steps2; đếm chuỗi bằng demo rồi nhân bằng tool tiếp theo | Chỉ đếm xong; lưu partial_step_limit và không cho resume run này |
+| B05 | Tìm riêng ngày phát hành Python và phiên bản Git, budget20k | Chỉ một paid web call; giữ kết quả, partial_token_limit cho phần còn lại |
+
+```powershell
+# Chỉ xem câu hỏi, không gọi API.
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite budget
+# LLM thật, tạo chat thử mới; không sửa hội thoại có sẵn.
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite budget --owner-email user@personalagent.vn --document-id bf811f8e-bce3-4119-86a9-f72e75de6002 --live
+```
+
+Runner kiểm SSE partial flag, text lưu/history, DB stop_reason và API từ chối resume. Sau các case,
+tạo account fixture riêng để kiểm PostgreSQL giữ chỗ chồng lấn/settle/unknown bằng usage mô phỏng;
+không thay quota của owner bằng số mô phỏng. B04 chỉ đổi setting trong tiến trình test rồi khôi phục.
+Đây là kiểm API/ASGI, không phải browser E2E. Báo cáo tổng hợp:
+`data/agent-testing/stage3-20261027/REPORT.md`;5/5 case LLM thật đạt,282 test hồi quy đạt.
+
 ## Các đợt tiếp theo — Chưa nghiệm thu
 
-- Đợt 3: lịch sử tool giữa các lượt, ngân sách và kết quả một phần. R05 hiện chỉ kiểm
-  history câu trả lời; chưa chứng minh agent đọc được audit tool từ lượt trước. Nhiều paid
-  search vẫn có thể chạm giới hạn; tăng hạn mức cho run tài liệu không thay reservation/partial result.
-- Đợt 4–6: planner/DAG tuần tự, worker/song song, background/resume và task UI.
+- Đợt4: planner/DAG và scheduler tuần tự.
+- Đợt5–6: worker/song song, background/resume và task UI.
 
 Không chạy lại paid suite chỉ để kiểm tra một thay đổi tài liệu hoặc định dạng report.

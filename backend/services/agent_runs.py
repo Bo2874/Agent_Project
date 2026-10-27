@@ -445,6 +445,16 @@ async def complete_agent_run(
         if document_result is not None:
             agent_run.rag_trace = document_result.trace
         agent_run.stop_reason = "final_answer"
+        partial = next(
+            (
+                row
+                for row in (agent_run.rag_trace or {}).get("progress", [])
+                if row.get("id") == "budget.partial"
+            ),
+            None,
+        )
+        if partial:
+            agent_run.stop_reason = "partial_" + str(partial.get("stop_reason", "budget"))
         agent_run.finished_at = datetime.now(UTC)
 
         latest_step = await session.scalar(

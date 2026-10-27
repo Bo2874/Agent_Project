@@ -10,6 +10,8 @@ AgentLimitReason = Literal[
     "time_limit",
     "repeated_tool_call",
     "repeated_observation",
+    "quota_limit",
+    "unknown_billing",
 ]
 
 
@@ -21,6 +23,8 @@ class AgentGraphLimitError(RuntimeError):
 
 def limit_reason(state: AgentState) -> AgentLimitReason | None:
     """Return the boundary-specific violation for the state's current phase."""
+    if state.get("budget_stop_reason"):
+        return state["budget_stop_reason"]
     budget = state["budget"]
     phase = state["phase"]
 
@@ -56,6 +60,8 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
             return "repeated_tool_call"
 
     if phase == "tools_completed":
+        if state["step_number"] > budget["max_steps"]:
+            return "step_limit"
         if state["usage"]["total_tokens"] >= budget["max_total_tokens"]:
             return "token_limit"
         if any(

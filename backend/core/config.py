@@ -134,9 +134,8 @@ class Settings(BaseSettings):
     memory_retention_personal_days: int = Field(default=180, ge=1, le=3650)
     memory_retention_sensitive_days: int = Field(default=30, ge=1, le=3650)
     agent_max_steps: int = Field(default=8, ge=1, le=50)
-    # Staged rollout: selected-document conversations retain M3 until the
-    # document capability is connected to the shared loop.
     agent_react_enabled: bool = False
+    agent_web_search_estimated_tokens: int = Field(default=10_000, ge=1_000, le=100_000)
     agent_document_max_total_tokens: int = Field(default=60_000, ge=128, le=1_000_000)
     agent_max_total_tokens: int = Field(default=20_000, ge=128, le=1_000_000)
     agent_max_duration_seconds: float = Field(default=120, gt=0, le=3600)

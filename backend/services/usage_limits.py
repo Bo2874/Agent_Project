@@ -1,12 +1,14 @@
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError
+from agent_core.graph.budgeting import UsageReservation
 from backend.database import SessionFactory
 from backend.models import UsageCounter
 
@@ -54,8 +56,10 @@ def _window(now: datetime, seconds: int) -> tuple[datetime, int]:
     return start, max(1, seconds - elapsed)
 
 
-async def consume_usage_limits(user_id: UUID, limits: tuple[UsageLimit, ...]) -> None:
-    now = datetime.now(UTC)
+async def consume_usage_limits(
+    user_id: UUID, limits: tuple[UsageLimit, ...], *, observed_at: datetime | None = None
+) -> None:
+    now = observed_at or datetime.now(UTC)
     async with SessionFactory() as session:
         for item in limits:
             window_start, retry_after = _window(now, item.window_seconds)
@@ -149,6 +153,22 @@ async def get_current_usage(
         return int(value or 0)
 
 
+async def settle_reserved_usage(user_id, *, window_start, reserved, actual):
+    """Settle in the original day, including calls which finish across midnight."""
+    async with SessionFactory() as session:
+        statement = (
+            update(UsageCounter)
+            .where(
+                UsageCounter.user_id == user_id,
+                UsageCounter.metric == "llm_token",
+                UsageCounter.window_start == window_start,
+            )
+            .values(value=UsageCounter.value + actual - reserved, updated_at=datetime.now(UTC))
+        )
+        await session.execute(statement)
+        await session.commit()
+
+
 async def ensure_usage_available(
     user_id: UUID,
     *,
@@ -181,6 +201,44 @@ class AgentQuotaGuard:
         self.user_id = user_id
         self.token_limit = token_limit
         self.tool_call_limit = tool_call_limit
+        self.active_reservation = None
+
+    @asynccontextmanager
+    async def reserve_tokens(self, amount):
+        if self.active_reservation is not None:
+            raise RuntimeError("Nested root token reservations are not supported")
+        now = datetime.now(UTC)
+        window_start, _ = _window(now, DAY_SECONDS)
+        try:
+            await consume_usage_limits(
+                self.user_id,
+                (
+                    UsageLimit(
+                        metric="llm_token",
+                        limit=self.token_limit,
+                        window_seconds=DAY_SECONDS,
+                        amount=amount,
+                    ),
+                ),
+                observed_at=now,
+            )
+        except (UsageLimitExceeded, ValueError) as exc:
+            raise AgentQuotaLimitError("Không đủ quota token để dự trù lời gọi tiếp theo.") from exc
+        receipt = UsageReservation()
+        self.active_reservation = receipt
+        try:
+            yield receipt
+        finally:
+            self.active_reservation = None
+            # Unknown billing/crash retains the conservative reservation until day end.
+            # Do not refund an API request simply because its response was lost.
+            settled = receipt.actual
+            if settled is None and receipt.known_tokens > amount:
+                settled = receipt.known_tokens
+            if settled is not None:
+                await settle_reserved_usage(
+                    self.user_id, window_start=window_start, reserved=amount, actual=settled
+                )
 
     async def before_execution(self, action: Literal["model", "tool"]) -> None:
         if action == "tool":
@@ -199,6 +257,8 @@ class AgentQuotaGuard:
                 raise AgentQuotaLimitError(str(exc)) from exc
             return
 
+        if self.active_reservation is not None:
+            return
         try:
             await ensure_usage_available(
                 self.user_id,
@@ -210,7 +270,15 @@ class AgentQuotaGuard:
             raise AgentQuotaLimitError(str(exc)) from exc
 
     async def record_event(self, event: AgentLoopEvent) -> None:
-        if event.kind not in {"model_completed", "tool_completed"} or event.usage is None:
+        if (
+            event.kind not in {"model_completed", "model_failed", "tool_completed"}
+            or event.usage is None
+        ):
+            return
+        if self.active_reservation is not None:
+            self.active_reservation.actual = (
+                self.active_reservation.actual or 0
+            ) + event.usage.total_tokens
             return
         if event.usage.total_tokens > 0:
             await self.record_tokens(event.usage.total_tokens)

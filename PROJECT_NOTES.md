@@ -1436,3 +1436,51 @@
   không restart dịch vụ, stage/commit/push. User restart web một worker/không --reload để dùng.
 
 - Native web toàn bộ lần thử đợt2: 4 tool call/4 searches, 0.06325105 USD, chưa cộng DeepSeek/memory.
+
+### 2026-10-27 — ReAct đợt3: execution audit, token reservation và partial result
+
+- Thêm backend/services/agent_context.py: query ToolCall → RunStep → AgentRun → Conversation
+  có owner/conversation filter, loại current run, tối đa24 record mới nhất/1.500 token. Chỉ dùng
+  tên/status/thời điểm/run status/stop reason, web URL đã bỏ query/fragment và số nguồn tài liệu.
+  Không đưa arguments, stdout, email body hoặc arbitrary plugin payload vào audit. Context nằm
+  trong history-summary budget, không nâng system trust của tool data. Prompt v5 dùng audit khi
+  user hỏi đã làm gì, phân biệt completed và failed/running/denied; không tự tìm lại chỉ để xác nhận.
+- Thêm agent_core/graph/budgeting.py, budget_stop_reason trong checkpoint và optional partial
+  handler của graph. Model dự trù input/schema + configured max output trước call; mỗi tool batch
+  xét từng call tuần tự theo usage đã có, chừa caller final. Summary nhận phần token trừ final reserve.
+  Native web dự trù AGENT_WEB_SEARCH_ESTIMATED_TOKENS mặc định10k; host20k và doc60k giữ nguyên.
+  Đây là admission estimate, không hard cap input/search ẩn; actual vẫn ghi đủ nếu vượt dự trù.
+- AgentQuotaGuard.reserve_tokens giữ chỗ bằng UPSERT có điều kiện trên usage_counters hiện có;
+  event usage cập nhật receipt, settle cộng actual−reserved đúng một lần, cùng cửa sổ UTC ban đầu
+  kể cả qua nửa đêm. Không vừa settle vừa add_usage lần2. Không có bảng/migration mới. Các run
+  khác nhìn thấy phần đã giữ chỗ; nếu actual vượt dự trù, counter vẫn ghi actual và chặn call sau.
+  Timeout/mất usage/crash giữ reservation tới hết cửa sổ ngày, không refund giả. Cơ chế này
+  bảo thủ: không phải sổ tiền tệ chính xác khi provider không trả usage, không có crash recovery
+  để tự hoàn phần giữ chỗ. Chuẩn bị memory/history ngoài graph vẫn tính quota ngày riêng hiện có.
+- Web phân biệt preflight chưa gửi POST (usage0) với paid request chưa biết usage. Response thiếu
+  prompt/completion usage trả web_search_missing_usage và unknown billing, không nhận usage0 giả.
+  Các lỗi validation/approval trước dispatch không giữ tiền dự trù. ReAct bỏ model retry tự động;
+  tool timeout có thể là outcome unknown, không khẳng định chưa có side effect hoặc tự gửi lại.
+- Hết token/step/time/quota hoặc unknown billing: deterministic partial builder giữ observation
+  đã có, ghi phần lỗi/chưa thực hiện và nói yêu cầu chưa hoàn tất; không gọi LLM ngoài budget.
+  Xác thực catalog/quyền trước khi phát partial. Model/tool dùng deadline còn lại, thêm10s cleanup
+  ở node watchdog để việc hủy, đối soát và lưu partial kết thúc. Không coi deadline là hard wall-time.
+  Legacy routed vẫn dùng limit error/retry cũ, không tự migrate checkpoint.
+- SSE done thêm partial/stop_reason; progress lưu dự trù/actual/billing status và budget.partial.
+  complete_agent_run lưu partial_* thay final_answer khi phù hợp. Chat UI hiện Kết quả một phần
+  ở live/reload, không báo Còn lại: Đã hoàn thành; run completed không có nút resume vô ích.
+  Citation backend của đợt2 vẫn ràng buộc owner/selected versions và nguồn context cuối.
+- scripts/test_agent_live.py thêm suite budget B01–B05: web Python.org → hỏi đã tìm chưa không
+  gọi lại; semantic chunking trên PDF đã upload của user@personalagent.vn; max_steps2 giữ kết
+  quả đếm tool và chặn phép nhân;20k giữ kết quả web đầu và chặn paid call tiếp theo.5/5 đạt,
+  có SSE/history/DB stop reason và từ chối resume partial. Không thao tác browser, không gửi email,
+  không sửa chat cũ/upload/reindex. PostgreSQL thật kiểm overlapping reservations bằng2 guard
+  trên account fixture riêng: giữ600 chặn600 trong quota1000, settle150, unknown200 giữ tổng350.
+  Các số fixture là usage mô phỏng, không phải phí LLM thật hoặc thay quota owner.
+- 282 regression tests đạt, gồm11 test mới về budgeting/audit và1 test thiếu web usage; Ruff,
+  Node syntax, git diff check và Compose config kiểm tĩnh. Report tổng hợp private/Git-ignore
+  data/agent-testing/stage3-20261027/REPORT.md/.json giữ cả2 lượt live. Không build Docker hoặc
+  browser E2E. Không thay .env/key, stage/commit/push hoặc restart web. Cần restart web một
+  worker/không --reload và refresh trang; không chạy migration. Đợt4 planner/DAG chưa làm.
+- Hai lượt nghiệm thu đợt3 có4 paid host web call/4 native searches,0.05923390 USD; chưa cộng
+  DeepSeek/memory. Có thêm2 yêu cầu web bị budget chặn trước dispatch, không tính thành paid call.

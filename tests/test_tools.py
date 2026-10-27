@@ -155,6 +155,22 @@ async def test_web_search_fails_closed_without_fallback_or_retry(case, expected)
     assert len(requests) == (1 if case == "not_native" else 2)
     if case != "not_native":
         assert result.usage.total_tokens == 120
+    else:
+        assert result.usage.total_tokens == 0
+
+
+async def test_web_search_missing_usage_keeps_billing_unknown_after_paid_post():
+    payload = web_payload()
+    payload.pop("usage")
+    transport, requests = web_transport(payload)
+    result = await WebSearchHandler(
+        WebSearchConfig(api_key=SecretStr("fake")), transport=transport
+    )(
+        ToolContext(user_id=uuid4(), conversation_id=uuid4(), user_role="user"),
+        {"query": "Question"},
+    )
+    assert result.error_code == "web_search_missing_usage" and result.usage is None
+    assert len(requests) == 2 and result.data["billing_status"] == "unknown"
 
 
 @pytest.mark.parametrize("status", [401, 402, 403, 429, 500])
@@ -185,7 +201,8 @@ async def test_web_search_deadline_does_not_retry_or_report_success():
         {"query": "Question"},
     )
     assert result.error_code == "web_search_timeout" and result.is_error
-    assert len(calls) == 1 and result.data["billing_status"] == "unknown"
+    assert len(calls) == 1 and result.data["billing_status"] == "not_started"
+    assert result.usage.total_tokens == 0
 
 
 class EchoInput(BaseModel):

@@ -14,7 +14,12 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import Response, StreamingResponse
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
-from agent_core.context_budget import ContextBlock, ContextTokenBudget, measure_context_blocks
+from agent_core.context_budget import (
+    ContextBlock,
+    ContextTokenBudget,
+    fit_context_blocks,
+    measure_context_blocks,
+)
 from agent_core.contracts import RoutingDecision
 from agent_core.graph import (
     AgentLimits,
@@ -60,6 +65,7 @@ from backend.schemas.document import (
     DocumentCitationSourceResponse,
     RagSearchMode,
 )
+from backend.services.agent_context import load_execution_context
 from backend.services.agent_runs import (
     AgentRunRecorder,
     AgentRunResumeError,
@@ -274,10 +280,14 @@ async def stream_assistant_response(
         token_limit=settings.agent_tokens_per_day,
         tool_call_limit=settings.agent_tool_calls_per_day,
     )
+    partial_reason = None
 
     async def record_event(event: AgentLoopEvent) -> None:
-        await recorder(event)
+        nonlocal partial_reason
+        if event.progress and event.progress.get("id") == "budget.partial":
+            partial_reason = event.progress.get("stop_reason")
         await quota_guard.record_event(event)
+        await recorder(event)
 
     async def extract_memories() -> None:
         if not resume and settings.memory_extraction_enabled:
@@ -477,6 +487,13 @@ async def stream_assistant_response(
             provider=model.provider,
             model=model.model,
         )
+        if react_enabled and not resume:
+            audit = await load_execution_context(
+                owner=user_id, conversation_id=conversation_id, current_run=agent_run_id
+            )
+            history_summary_context = fit_context_blocks(
+                "history_summary", (*audit, *history_summary_context), context_budget.history_tokens
+            )
         async for item in stream_agent_graph(
             model=model,
             messages=model_messages,
@@ -502,6 +519,8 @@ async def stream_assistant_response(
             routing_messages=query_messages,
             document_qa_handler=document_qa_handler if routing_flags.is_enabled("rag") else None,
             react_enabled=react_enabled,
+            usage_reservation=quota_guard.reserve_tokens if react_enabled else None,
+            web_search_estimated_tokens=settings.agent_web_search_estimated_tokens,
         ):
             if isinstance(item, RoutingDecision):
                 yield sse_event("routing", {**item.model_dump(mode="json"), "resumed": resume})
@@ -540,6 +559,10 @@ async def stream_assistant_response(
             "done",
             {
                 "message_id": str(message.id),
+                "partial": partial_reason is not None,
+                "stop_reason": "partial_" + str(partial_reason)
+                if partial_reason
+                else "final_answer",
                 "citations": [
                     hit.model_dump(mode="json", exclude={"text"})
                     for hit in document_result.evidence

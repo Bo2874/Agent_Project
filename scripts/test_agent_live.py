@@ -71,6 +71,271 @@ DOCUMENT_CASES = (
     ),
 )
 
+BUDGET_CASES = (
+    (
+        "B01",
+        "Tìm trên Python.org ngày phát hành Python 3.14.0. "
+        "Chỉ gọi search_web một lần, trả lời kèm nguồn.",
+    ),
+    (
+        "B02",
+        "Bạn đã thực sự tìm trên web trong cuộc hội thoại này chưa? "
+        "Chỉ xác nhận dựa trên lịch sử thực thi, không tìm lại.",
+    ),
+    (
+        "B03",
+        "Theo tài liệu đã chọn, semantic chunking là gì và ưu nhược điểm của nó? "
+        "Hãy đọc tài liệu để trả lời.",
+    ),
+    (
+        "B04",
+        'Dùng demo__count_text đếm ký tự "abc def". Sau khi đọc observation, '
+        "dùng demo__calculate nhân kết quả với 17. Phải làm lần lượt, "
+        "không tự đếm hay tính thay tool.",
+    ),
+    (
+        "B05",
+        "Tìm web hai chủ đề độc lập: ngày phát hành Python 3.14.0 trên Python.org "
+        "và phiên bản Git mới nhất trên git-scm.com. Dùng hai lời gọi search_web riêng, "
+        "mỗi query chỉ một chủ đề. Nêu rõ phần chưa xác minh nếu không đủ ngân sách.",
+    ),
+)
+
+
+async def run_budget_live(owner_email, document_id):
+    import httpx
+    from sqlalchemy import select
+
+    from backend.core.config import PROJECT_ROOT, get_settings
+    from backend.core.security import create_access_token
+    from backend.database import SessionFactory
+    from backend.main import app
+    from backend.models import AgentRun, Document, User
+
+    settings = get_settings()
+    if not owner_email or not document_id or not settings.agent_react_enabled:
+        raise SystemExit("Budget suite requires ReAct, --owner-email and --document-id.")
+    async with SessionFactory() as session:
+        owner = await session.scalar(select(User).where(User.email == owner_email, User.is_active))
+        document = await session.get(Document, UUID(document_id))
+        if (
+            not owner
+            or not document
+            or document.owner_user_id != owner.id
+            or document.status != "ready"
+        ):
+            raise SystemExit("Ready owned document is required.")
+        owner_id, role = owner.id, owner.role
+    folder = (
+        PROJECT_ROOT
+        / "data/agent-testing"
+        / (datetime.now(UTC).strftime("%Y%m%d-%H%M%S-budget-") + uuid4().hex[:8])
+    )
+    folder.mkdir(parents=True)
+    path = folder / "REPORT.json"
+    report = {
+        "suite": "react-stage-3",
+        "transport": "Real cookie auth, ASGI/SSE, DB and paid inference; no browser",
+        "cases": [],
+        "passed": False,
+    }
+
+    async def api(client, method, url, **kwargs):
+        response = await client.request(method, url, **kwargs)
+        response.raise_for_status()
+        return response
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://agent-live.local",
+            trust_env=False,
+            timeout=720,
+        ) as client:
+            client.cookies.set("access_token", create_access_token(owner_id, role))
+            conversation = None
+            for key, question in BUDGET_CASES:
+                if key != "B02":
+                    conversation = (
+                        await api(
+                            client,
+                            "POST",
+                            "/api/conversations",
+                            json={"title": f"ReAct budget acceptance {key}"},
+                        )
+                    ).json()["id"]
+                if key == "B03":
+                    await api(
+                        client,
+                        "PUT",
+                        f"/api/conversations/{conversation}/documents",
+                        json={"document_ids": [document_id]},
+                    )
+                item = {"id": key, "question": question, "conversation_id": conversation}
+                report["cases"].append(item)
+                original_steps, original_tokens = (
+                    settings.agent_max_steps,
+                    settings.agent_max_total_tokens,
+                )
+                if key == "B04":
+                    settings.agent_max_steps = 2
+                if key in {"B01", "B02", "B05"}:
+                    settings.agent_max_total_tokens = 20_000
+                started = perf_counter()
+                try:
+                    async with asyncio.timeout(720):
+                        response = await api(
+                            client,
+                            "POST",
+                            f"/api/conversations/{conversation}/messages",
+                            json={"content": question, "rag_search_mode": "fast"},
+                        )
+                    events = parse_events(response.text)
+                    item["events"] = events
+                    item["answer"] = "".join(
+                        e["data"].get("content", "") for e in events if e["event"] == "delta"
+                    )
+                    item["run_id"] = next(
+                        e["data"]["run_id"] for e in events if e["event"] == "start"
+                    )
+                    assert not any(e["event"] == "error" for e in events), "Run failed"
+                    done = next(e["data"] for e in events if e["event"] == "done")
+                    assert done["partial"] == (key in {"B04", "B05"})
+                    tools = [
+                        e["data"]
+                        for e in events
+                        if e["event"] == "agent_status" and e["data"]["status"] == "tool_completed"
+                    ]
+                    successful = [t["tool"]["name"] for t in tools if t["success"]]
+                    if key == "B01":
+                        assert successful == ["search_web"] and "python.org" in item["answer"]
+                    elif key == "B02":
+                        assert not tools and "đã" in item["answer"].lower()
+                        assert "chưa thực sự" not in item["answer"].lower()
+                    elif key == "B03":
+                        assert successful == ["search_documents"] and done["citations"]
+                        assert all(h["document_id"] == document_id for h in done["citations"])
+                    elif key == "B04":
+                        assert (
+                            successful == ["demo__count_text"] and "chưa hoàn tất" in item["answer"]
+                        )
+                    elif key == "B05":
+                        assert successful == ["search_web"] and "chưa hoàn tất" in item["answer"]
+                    history = (
+                        await api(client, "GET", f"/api/conversations/{conversation}/messages")
+                    ).json()
+                    assert (
+                        next(m for m in history if m["id"] == done["message_id"])["content"]
+                        == item["answer"]
+                    )
+                    async with SessionFactory() as session:
+                        run_row = await session.get(AgentRun, UUID(item["run_id"]))
+                        assert run_row.status == "completed"
+                        item["stop_reason"] = run_row.stop_reason
+                        if key in {"B04", "B05"}:
+                            assert run_row.stop_reason.startswith("partial_")
+                            resume = await client.post(
+                                f"/api/conversations/{conversation}/runs/{run_row.id}/resume"
+                            )
+                            assert resume.status_code in {400, 409}
+                    item["passed"] = True
+                except Exception as exc:
+                    item.update(passed=False, failure_type=type(exc).__name__)
+                    if isinstance(exc, AssertionError):
+                        item["check"] = str(exc)[:200]
+                finally:
+                    settings.agent_max_steps, settings.agent_max_total_tokens = (
+                        original_steps,
+                        original_tokens,
+                    )
+                item["seconds"] = round(perf_counter() - started, 3)
+                path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+                print(
+                    json.dumps(
+                        {
+                            k: item.get(k)
+                            for k in (
+                                "id",
+                                "passed",
+                                "run_id",
+                                "seconds",
+                                "failure_type",
+                                "check",
+                                "stop_reason",
+                            )
+                        }
+                    ),
+                    flush=True,
+                )
+                if not item["passed"]:
+                    break
+            if len(report["cases"]) == len(BUDGET_CASES) and all(
+                c["passed"] for c in report["cases"]
+            ):
+                from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError
+                from agent_core.llm.types import TokenUsage
+                from backend.services.usage_limits import (
+                    DAY_SECONDS,
+                    AgentQuotaGuard,
+                    get_current_usage,
+                )
+
+                # Controlled billing on a fresh account: actual PostgreSQL atomic counters,
+                # no inference or secret data and no changes to the owner's quota.
+                client.cookies.clear()
+                fixture = (
+                    await api(
+                        client,
+                        "POST",
+                        "/api/auth/register",
+                        json={
+                            "email": f"budget-isolation-{uuid4().hex[:10]}@example.com",
+                            "password": secrets.token_urlsafe(24),
+                            "full_name": "Budget counter fixture",
+                        },
+                    )
+                ).json()
+                fixture_id = UUID(fixture["id"] if "id" in fixture else fixture["user"]["id"])
+                first = AgentQuotaGuard(user_id=fixture_id, token_limit=1_000, tool_call_limit=10)
+                second = AgentQuotaGuard(user_id=fixture_id, token_limit=1_000, tool_call_limit=10)
+                denied = False
+                async with first.reserve_tokens(600):
+                    try:
+                        async with second.reserve_tokens(600) as receipt:
+                            receipt.actual = 0
+                    except AgentQuotaLimitError:
+                        denied = True
+                    await first.record_event(
+                        AgentLoopEvent(
+                            kind="model_completed",
+                            step_number=1,
+                            usage=TokenUsage(total_tokens=150),
+                        )
+                    )
+                assert denied
+                settled = await get_current_usage(
+                    fixture_id, metric="llm_token", window_seconds=DAY_SECONDS
+                )
+                assert settled == 150
+                async with second.reserve_tokens(200):
+                    pass  # Simulate loss of usage; keep the estimate, do not refund.
+                retained = await get_current_usage(
+                    fixture_id, metric="llm_token", window_seconds=DAY_SECONDS
+                )
+                assert retained == 350
+                report["postgres_quota_checks"] = {
+                    "overlapping_reservations_denied": denied,
+                    "settled_actual": settled,
+                    "after_unknown_reservation": retained,
+                }
+    report["passed"] = len(report["cases"]) == len(BUDGET_CASES) and all(
+        c["passed"] for c in report["cases"]
+    )
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps({"passed": report["passed"], "report": str(path)}), flush=True)
+    if not report["passed"]:
+        raise SystemExit(1)
+
 
 async def run_documents_live(owner_email, document_id, only_case=None):
     import httpx
@@ -540,13 +805,15 @@ def main():
     parser.add_argument(
         "--live", action="store_true", help="Call real paid APIs and create fixtures"
     )
-    parser.add_argument("--suite", choices=("react", "documents"), default="react")
+    parser.add_argument("--suite", choices=("react", "documents", "budget"), default="react")
     parser.add_argument("--owner-email")
     parser.add_argument("--document-id")
     parser.add_argument("--case", choices=tuple(k for k, _ in DOCUMENT_CASES))
     args = parser.parse_args()
     if args.live:
-        if args.suite == "documents":
+        if args.suite == "budget":
+            asyncio.run(run_budget_live(args.owner_email, args.document_id))
+        elif args.suite == "documents":
             asyncio.run(run_documents_live(args.owner_email, args.document_id, args.case))
         else:
             asyncio.run(run_live())
@@ -555,7 +822,13 @@ def main():
             json.dumps(
                 [
                     {"id": key, "question": value}
-                    for key, value in (DOCUMENT_CASES if args.suite == "documents" else CASES)
+                    for key, value in (
+                        DOCUMENT_CASES
+                        if args.suite == "documents"
+                        else BUDGET_CASES
+                        if args.suite == "budget"
+                        else CASES
+                    )
                 ],
                 ensure_ascii=False,
                 indent=2,

@@ -485,7 +485,7 @@ if (chatApp) {
     messageList.scrollTop = messageList.scrollHeight;
   }
 
-  function finishTimeline(timeline, statusValue, totalTokens = 0, cacheHitRate = null) {
+  function finishTimeline(timeline, statusValue, totalTokens = 0, cacheHitRate = null, partial = false) {
     stopTimelineClock(timeline);
     if (timeline.poll !== null) {
       window.clearTimeout(timeline.poll);
@@ -508,14 +508,15 @@ if (chatApp) {
     timeline.root.classList.remove("is-running");
     timeline.root.classList.add(statusValue === "completed" ? "is-completed" : "is-failed");
     timeline.titleText.textContent =
-      statusValue === "completed" ? "Agent đã hoàn thành"
+      statusValue === "completed" ? (partial ? "Agent trả kết quả một phần" : "Agent đã hoàn thành")
         : statusValue === "cancelled" ? "Agent đã dừng" : "Agent đã dừng do lỗi";
     const parts = [`${timeline.items.size} hoạt động`];
     if (totalTokens) parts.push(`${totalTokens} token`);
     if (cacheHitRate !== null) parts.push(`cache ${(cacheHitRate * 100).toFixed(1)}%`);
     timeline.count.textContent = parts.join(" · ");
     const remaining = timeline.statusBlock.querySelector(".status-remaining");
-    if (remaining && statusValue === "completed") remaining.textContent = "Còn lại: Đã hoàn thành.";
+    if (remaining && statusValue === "completed") remaining.textContent = partial
+      ? "Còn lại: Yêu cầu chưa hoàn tất do giới hạn thực thi." : "Còn lại: Đã hoàn thành.";
   }
 
   function addResumeButton(timeline, runId) {
@@ -666,7 +667,8 @@ if (chatApp) {
       timeline.titleText.textContent = run.status === "waiting_approval"
         ? "Đang chờ bạn phê duyệt" : "Agent đang xử lý";
     } else {
-      finishTimeline(timeline, run.status, run.total_tokens, run.prompt_cache_hit_rate);
+      finishTimeline(timeline, run.status, run.total_tokens, run.prompt_cache_hit_rate,
+        (run.stop_reason || "").startsWith("partial_"));
     }
     if (run.available_tool_count !== null && run.loaded_tool_count !== null) {
       timeline.count.textContent += ` · tools ${run.loaded_tool_count}/${run.available_tool_count}`;
@@ -849,12 +851,13 @@ if (chatApp) {
               "completed",
               usage.total_tokens || 0,
               usage.prompt_cache_hit_rate,
+              parsed.data.partial === true,
             );
             const cacheText =
               usage.prompt_cache_hit_rate === null
                 ? ""
                 : ` · cache ${(usage.prompt_cache_hit_rate * 100).toFixed(1)}%`;
-            status.textContent = `Đã trả lời · ${usage.total_tokens || 0} token${cacheText}`;
+            status.textContent = `${parsed.data.partial ? "Kết quả một phần" : "Đã trả lời"} · ${usage.total_tokens || 0} token${cacheText}`;
           }
         }
         if (done) break;

@@ -28,8 +28,17 @@ from agent_core.context_budget import (
 )
 from agent_core.context_middleware import ContextAssemblyMiddleware
 from agent_core.contracts import FeatureFlags, RoutingDecision
+from agent_core.graph.budgeting import (
+    UNBILLED_TOOL_ERRORS,
+    WEB_SEARCH_ESTIMATED_TOKENS,
+    final_allowance,
+    model_allowance,
+    partial_answer,
+    tool_allowance,
+    unreserved_usage,
+)
 from agent_core.graph.checkpointing import agent_checkpoint_config, agent_thread_id
-from agent_core.graph.limits import AgentGraphLimitError
+from agent_core.graph.limits import AgentGraphLimitError, limit_reason
 from agent_core.graph.nodes import AgentGraphContext
 from agent_core.graph.runtime import (
     AgentContextLimitError,
@@ -259,6 +268,8 @@ async def run_agent_graph_stream(
     shortlist_config: ShortlistConfig | None = None,
     document_qa_handler: Callable[[], AsyncIterator[AgentStreamItem]] | None = None,
     react_enabled: bool = False,
+    usage_reservation=None,
+    web_search_estimated_tokens: int = WEB_SEARCH_ESTIMATED_TOKENS,
 ) -> AsyncIterator[AgentStreamItem | RoutingDecision]:
     """Execute model/tool turns with LangGraph as the only orchestrator."""
 
@@ -654,11 +665,14 @@ async def run_agent_graph_stream(
     )
 
     model_started_steps: set[int] = set()
+    model_finished_steps: set[int] = set()
 
     async def publish(item: AgentStreamItem) -> None:
         if isinstance(item, AgentLoopEvent):
             if item.kind == "model_started":
                 model_started_steps.add(item.step_number)
+            elif item.kind in {"model_completed", "model_failed"}:
+                model_finished_steps.add(item.step_number)
             await _emit(event_handler, item)
         write_agent_stream_item(item)
 
@@ -754,7 +768,7 @@ async def run_agent_graph_stream(
         store: BaseStore | None,
     ) -> Mapping[str, Any]:
         nonlocal active_choice
-        if execution_guard is not None:
+        if execution_guard is not None and not react_enabled:
             await execution_guard("model")
         await validate_capabilities()
         if shadow_policy is not None:
@@ -891,7 +905,105 @@ async def run_agent_graph_stream(
             "memory_loaded": memory_loaded,
         }
 
+    async def build_partial_node(state: AgentState) -> Mapping[str, Any]:
+        await restore_node_selection(state)
+        await validate_capabilities()
+        if state["step_number"] in model_started_steps - model_finished_steps:
+            await publish(
+                AgentLoopEvent(
+                    kind="model_completed",
+                    step_number=state["step_number"],
+                    usage=TokenUsage(),
+                    finish_reason="budget_partial",
+                )
+            )
+        reason = state.get("budget_stop_reason") or limit_reason(state) or "time_limit"
+        content = partial_answer(state, reason)
+        await publish(
+            AgentLoopEvent(
+                kind="pipeline_progress",
+                step_number=state["step_number"],
+                progress={
+                    "id": "budget.partial",
+                    "label": "Dừng và lưu kết quả một phần",
+                    "state": "completed",
+                    "partial": True,
+                    "stop_reason": reason,
+                    "duration_ms": 0,
+                },
+            )
+        )
+        await publish(LLMChunk(content=content, usage=_usage_from_state(state["usage"])))
+        return {
+            "final_answer": content,
+            "model_content": content,
+            "pending_tool_calls": [],
+            "budget_stop_reason": reason,
+        }
+
+    async def budget_progress(step, key, estimate, actual, reason=None):
+        await publish(
+            AgentLoopEvent(
+                kind="pipeline_progress",
+                step_number=step,
+                progress={
+                    "id": f"budget.{key}",
+                    "label": "Kiểm tra ngân sách thực thi",
+                    "state": "completed",
+                    "duration_ms": 0,
+                    "estimated_tokens": estimate,
+                    "actual_tokens": actual,
+                    "billing_status": "known" if actual is not None else "unknown",
+                    "stop_reason": reason,
+                },
+            )
+        )
+
     async def call_model_node(state: AgentState) -> Mapping[str, Any]:
+        if not react_enabled:
+            return await call_model_unreserved(state)
+        output_tokens = getattr(model, "max_tokens", 2_048)
+        estimate = model_allowance(
+            to_model_messages(state["prepared_messages"]), state["tool_definitions"], output_tokens
+        )
+        available = state["budget"]["max_total_tokens"] - state["usage"]["total_tokens"]
+        reason = None
+        if estimate > available:
+            reason = "token_limit"
+        elif deadline <= perf_counter():
+            reason = "time_limit"
+        if reason is None:
+            try:
+                if execution_guard is not None:
+                    await execution_guard("model")
+                async with (usage_reservation or unreserved_usage)(estimate) as receipt:
+                    async with asyncio.timeout(max(0.001, deadline - perf_counter())):
+                        update = await call_model_unreserved(state, receipt=receipt)
+                    await budget_progress(
+                        state["step_number"],
+                        f"model.{state['step_number']}",
+                        estimate,
+                        update["usage"]["total_tokens"] - state["usage"]["total_tokens"],
+                    )
+                    return update
+            except AgentQuotaLimitError:
+                reason = "quota_limit"
+            except TimeoutError:
+                reason = "time_limit"
+                await budget_progress(
+                    state["step_number"], f"model.{state['step_number']}", estimate, None, reason
+                )
+        await publish(
+            AgentLoopEvent(
+                kind="model_completed",
+                step_number=state["step_number"],
+                usage=TokenUsage(),
+                finish_reason="budget_partial",
+            )
+        )
+        return await build_partial_node({**state, "budget_stop_reason": reason})
+
+    async def call_model_unreserved(state: AgentState, receipt=None) -> Mapping[str, Any]:
         await restore_node_selection(state)
         await validate_capabilities()
         step_number = state["step_number"]
@@ -915,6 +1027,8 @@ async def run_agent_graph_stream(
                         await publish(LLMChunk(content=chunk.content))
                 if chunk.usage is not None:
                     step_usage = chunk.usage
+                    if receipt is not None:
+                        receipt.known_tokens = max(receipt.known_tokens, step_usage.total_tokens)
                 if chunk.finish_reason is not None:
                     finish_reason = chunk.finish_reason
                 for delta in chunk.tool_call_deltas:
@@ -1079,9 +1193,32 @@ async def run_agent_graph_stream(
         internal_model_calls = 0
         document_context = None
         direct_content = None
+        budget_stop = None
+        final_reserve = (
+            final_allowance(
+                to_model_messages(state["prepared_messages"]), getattr(model, "max_tokens", 2_048)
+            )
+            if react_enabled
+            else 0
+        )
 
         for call in state["pending_tool_calls"]:
             request = _tool_call_request(call)
+            available = (
+                state["budget"]["max_total_tokens"]
+                - state["usage"]["total_tokens"]
+                - tool_usage.total_tokens
+            )
+            estimate = (
+                tool_allowance(request.name, available, final_reserve, web_search_estimated_tokens)
+                if react_enabled
+                else 0
+            )
+            if react_enabled and budget_stop is None:
+                if deadline <= perf_counter():
+                    budget_stop = "time_limit"
+                elif available < estimate + final_reserve:
+                    budget_stop = "token_limit"
             parse_error = (
                 ToolResult.failure(
                     call["parse_error_content"],
@@ -1092,8 +1229,11 @@ async def run_agent_graph_stream(
             )
             approval_granted = state["tool_approvals"].get(request.id)
             if request.id not in state["tool_approvals"]:
-                if execution_guard is not None:
-                    await execution_guard("tool")
+                if execution_guard is not None and budget_stop is None:
+                    try:
+                        await execution_guard("tool")
+                    except AgentQuotaLimitError:
+                        budget_stop = "quota_limit"
                 await publish(
                     AgentLoopEvent(
                         kind="tool_started",
@@ -1101,37 +1241,129 @@ async def run_agent_graph_stream(
                         tool_call=request,
                     )
                 )
-            elif execution_guard is not None:
-                await execution_guard("tool")
+            elif execution_guard is not None and budget_stop is None:
+                try:
+                    await execution_guard("tool")
+                except AgentQuotaLimitError:
+                    budget_stop = "quota_limit"
 
             tool_started_at = perf_counter()
+            completion_published = False
             registered = registry.get(request.name) if request.name in registry else None
-            if registered and registered.tool.return_direct and execution_guard is not None:
+            if (
+                registered
+                and registered.tool.return_direct
+                and execution_guard is not None
+                and not react_enabled
+            ):
                 await execution_guard("model")
-            result = await _execute_tool(
-                tool_executor,
-                registry,
-                replace(
-                    context,
-                    remaining_tokens=max(
-                        0,
-                        state["budget"]["max_total_tokens"]
-                        - state["usage"]["total_tokens"]
-                        - tool_usage.total_tokens,
+
+            async def execute(
+                request=request,
+                parse_error=parse_error,
+                approval_granted=approval_granted,
+                used=tool_usage.total_tokens,
+                child_calls=internal_model_calls,
+            ):
+                return await _execute_tool(
+                    tool_executor,
+                    registry,
+                    replace(
+                        context,
+                        remaining_tokens=max(
+                            0,
+                            state["budget"]["max_total_tokens"]
+                            - state["usage"]["total_tokens"]
+                            - used
+                            - final_reserve,
+                            # Delegated paid models must leave room for the root final turn.
+                        ),
+                        remaining_steps=max(
+                            0, state["budget"]["max_steps"] - step_number - child_calls
+                        ),
+                        remaining_seconds=max(0, deadline - perf_counter()),
+                        progress_callback=tool_progress,
                     ),
-                    remaining_steps=max(
-                        0, state["budget"]["max_steps"] - step_number - internal_model_calls
-                    ),
-                    remaining_seconds=max(0, deadline - perf_counter()),
-                    progress_callback=tool_progress,
-                ),
-                request,
-                parse_error,
-                approval_granted,
-                frozenset(state["loaded_tool_names"]),
-            )
+                    request,
+                    parse_error,
+                    approval_granted,
+                    frozenset(state["loaded_tool_names"]),
+                )
+
+            if budget_stop is not None:
+                result = ToolResult.failure(
+                    "Chưa thực hiện: không đủ ngân sách cho hành động và câu trả lời cuối.",
+                    error_code="agent_budget_skipped",
+                )
+            else:
+                try:
+                    async with (
+                        (usage_reservation or unreserved_usage)(estimate)
+                        if estimate
+                        else unreserved_usage(0)
+                    ):
+                        if react_enabled:
+                            async with asyncio.timeout(max(0.001, deadline - perf_counter())):
+                                result = await execute()
+                        else:
+                            result = await execute()
+                        if (
+                            react_enabled
+                            and result.usage is None
+                            and result.error_code in UNBILLED_TOOL_ERRORS
+                        ):
+                            result = replace(result, usage=TokenUsage())
+                        # Settle inside the reservation, before the next paid call.
+                        await publish(
+                            AgentLoopEvent(
+                                kind="tool_completed",
+                                step_number=step_number,
+                                duration_ms=round((perf_counter() - tool_started_at) * 1000),
+                                tool_call=request,
+                                tool_result=result,
+                                usage=result.usage,
+                            )
+                        )
+                        completion_published = True
+                except AgentQuotaLimitError:
+                    budget_stop = "quota_limit"
+                    result = ToolResult.failure(
+                        "Chưa thực hiện: không đủ quota dự trù.", error_code="agent_budget_skipped"
+                    )
+                except TimeoutError:
+                    budget_stop = "time_limit"
+                    result = ToolResult.failure(
+                        "Đã hết thời gian chờ; trạng thái thực thi chưa xác định. "
+                        "Không tự động gọi lại.",
+                        error_code="tool_outcome_unknown",
+                    )
+            if not completion_published:
+                await publish(
+                    AgentLoopEvent(
+                        kind="tool_completed",
+                        step_number=step_number,
+                        duration_ms=round((perf_counter() - tool_started_at) * 1000),
+                        tool_call=request,
+                        tool_result=result,
+                        usage=result.usage,
+                    )
+                )
             if result.usage is not None:
                 tool_usage += result.usage
+            elif react_enabled and estimate and result.is_error and budget_stop is None:
+                budget_stop = "unknown_billing"
+            if react_enabled and estimate:
+                await budget_progress(
+                    step_number,
+                    f"tool.{request.id}",
+                    estimate,
+                    result.usage.total_tokens
+                    if result.usage
+                    else 0
+                    if result.error_code == "agent_budget_skipped"
+                    else None,
+                    budget_stop,
+                )
             if request.name == "search_documents" and not result.is_error:
                 # Checkpoint host evidence in the RAG section rather than repeating
                 # its full text in every tool observation. Refined search replaces it.
@@ -1155,16 +1387,6 @@ async def run_agent_graph_stream(
             ):
                 direct_content = result.content
 
-            await publish(
-                AgentLoopEvent(
-                    kind="tool_completed",
-                    step_number=step_number,
-                    duration_ms=round((perf_counter() - tool_started_at) * 1000),
-                    tool_call=request,
-                    tool_result=result,
-                    usage=result.usage,
-                )
-            )
             tool_messages.extend(to_langchain_messages([_tool_result_message(request, result)]))
             observations.append(
                 {
@@ -1202,6 +1424,7 @@ async def run_agent_graph_stream(
             "budget": current_budget,
             "usage": _usage_to_state(_usage_from_state(state["usage"]) + tool_usage),
             "direct_answer": direct_content is not None,
+            "budget_stop_reason": budget_stop,
             **(
                 {"rag_context": _memory_blocks_to_state(document_context)}
                 if document_context is not None
@@ -1247,6 +1470,7 @@ async def run_agent_graph_stream(
         build_final=build_final_node,
         request_approvals=request_approvals_node,
         observe_node_error=observe_node_error,
+        build_partial=build_partial_node if react_enabled else None,
     )
     initial_state["plugin_runtime_version"] = plugin_runtime_version
     initial_state["routing_decision"] = (
@@ -1266,7 +1490,10 @@ async def run_agent_graph_stream(
     graph = build_agent_graph(
         checkpointer=checkpointer,
         store=memory_store,
-        node_timeout_seconds=limits.max_duration_seconds,
+        # ReAct enforces the shared deadline inside each paid operation; allow
+        # cancellation/usage settlement/final persistence to finish afterwards.
+        node_timeout_seconds=limits.max_duration_seconds + (10 if react_enabled else 0),
+        retry_model=not react_enabled,
     )
     graph_input: AgentState | Command | None = (
         None if persisted_checkpoint is not None else initial_state

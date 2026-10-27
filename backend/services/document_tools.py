@@ -361,7 +361,7 @@ class DocumentToolSession:
                 # Known uncommitted child usage still counts toward the daily allowance.
                 from backend.services.usage_limits import DAY_SECONDS, get_current_usage
 
-                if (
+                if not getattr(outer_guard, "active_reservation", None) and (
                     collected.total_tokens
                     + await get_current_usage(
                         outer_guard.user_id,
@@ -383,6 +383,9 @@ class DocumentToolSession:
                 nonlocal collected
                 if event.kind in {"model_completed", "model_failed"} and event.usage:
                     collected += event.usage
+                    active = getattr(outer_guard, "active_reservation", None)
+                    if active is not None:
+                        active.known_tokens = max(active.known_tokens, collected.total_tokens)
 
         async def keep_trace(trace):
             child.trace = trace
@@ -434,7 +437,8 @@ class DocumentToolSession:
         except DocumentServiceError as exc:
             failure = (exc.code, exc.detail)
         except asyncio.CancelledError:
-            await outer_guard.record_tokens(collected.total_tokens)
+            if getattr(outer_guard, "active_reservation", None) is None:
+                await outer_guard.record_tokens(collected.total_tokens)
             raise
         except Exception:
             failure = ("document_summary_failed", "Chưa hoàn tất tóm tắt tài liệu. Hãy thử lại.")

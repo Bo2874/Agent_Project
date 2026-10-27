@@ -155,7 +155,7 @@ def test_model_status_includes_context_breakdown() -> None:
         "total_tokens": 90,
         "budget_tokens": 32_000,
         "trimmed_messages": 2,
-        "prompt_version": "personal-agent-system-v4",
+        "prompt_version": "personal-agent-system-v5",
         "prefix_fingerprint": "",
         "available_tool_count": 0,
         "loaded_tool_count": 0,

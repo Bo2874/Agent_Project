@@ -82,6 +82,7 @@ class AgentState(TypedDict):
     tool_observations: Annotated[list[AgentToolObservation], operator.add]
     model_content: str
     direct_answer: bool
+    budget_stop_reason: str | None
     finish_reason: str | None
     usage: AgentTokenUsage
     budget: AgentBudget
@@ -180,6 +181,7 @@ def create_initial_agent_state(
         budget=create_agent_budget() if budget is None else dict(budget),
         final_answer="",
         direct_answer=False,
+        budget_stop_reason=None,
         progress=[],
         tool_call_counts={},
         observation_counts={},

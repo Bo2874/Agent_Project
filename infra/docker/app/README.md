@@ -235,3 +235,10 @@ worker/control poll; giá trị rỗng `BACKGROUND_WORKER_HEARTBEAT_PATH` ở ho
 Nguồn đối chiếu: [Docker Compose startup order](https://docs.docker.com/compose/how-tos/startup-order/),
 [Compose service reference](https://docs.docker.com/reference/compose-file/services/),
 [pgvector Docker images](https://github.com/pgvector/pgvector#docker).
+
+ReAct đợt3 thêm `DEV_AGENT_WEB_SEARCH_ESTIMATED_TOKENS=10000` (host:
+`AGENT_WEB_SEARCH_ESTIMATED_TOKENS`). Đây là dự trù native web để xét ngân sách trước mỗi call,
+không phải cap input của OpenRouter/OpenAI. Actual usage được đối soát trong counter sẵn có;
+không cần migration hoặc reindex. Mất usage giữ dự trù đến hết cửa sổ ngày. Hết budget trả
+kết quả một phần, không tự tăng20k/60k hoặc tự gọi lại paid API. Restart/rebuild web để nhận code;
+chưa chạy build Docker cho thay đổi này.
