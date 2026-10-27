@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -38,6 +38,7 @@ from agent_core.routing.query_router import route_query_with_jev
 from agent_core.routing.shortlist import SelectionPolicyError
 from agent_core.routing.types import DecisionProvider, DecisionProviderError
 from agent_core.skills import SkillRegistry, SkillSelectionConfig
+from agent_core.task_workers import process_capacity
 from agent_core.tools import ToolContext, ToolRegistry, ToolSelectionConfig
 from agent_core.tools.documents import create_document_registry
 from agent_core.tools.types import ToolAuthorizationError
@@ -281,9 +282,12 @@ async def stream_assistant_response(
         tool_call_limit=settings.agent_tool_calls_per_day,
     )
     partial_reason = None
+    plan_snapshot = None
 
     async def record_event(event: AgentLoopEvent) -> None:
-        nonlocal partial_reason
+        nonlocal partial_reason, plan_snapshot
+        if event.planning_sync:
+            plan_snapshot = event.planning_snapshot
         if event.progress and event.progress.get("id") == "budget.partial":
             partial_reason = event.progress.get("stop_reason")
         await quota_guard.record_event(event)
@@ -494,6 +498,17 @@ async def stream_assistant_response(
             history_summary_context = fit_context_blocks(
                 "history_summary", (*audit, *history_summary_context), context_budget.history_tokens
             )
+
+        @asynccontextmanager
+        async def worker_registry(task):
+            if document_tools is None:
+                yield execution_registry
+            else:
+                async with document_tools.worker_registry(
+                    task, execution_registry, limits.max_duration_seconds
+                ) as scoped:
+                    yield scoped
+
         async for item in stream_agent_graph(
             model=model,
             messages=model_messages,
@@ -521,6 +536,15 @@ async def stream_assistant_response(
             react_enabled=react_enabled,
             usage_reservation=quota_guard.reserve_tokens if react_enabled else None,
             web_search_estimated_tokens=settings.agent_web_search_estimated_tokens,
+            planning_enabled=react_enabled and routing_flags.is_enabled("planning"),
+            planning_document_versions=tuple(str(v) for v in document_result.versions),
+            parallel_enabled=react_enabled and routing_flags.is_enabled("parallel"),
+            parallel_max_workers=settings.agent_parallel_max_workers,
+            worker_registry_factory=worker_registry,
+            worker_capacity=process_capacity(
+                settings.agent_parallel_workers_per_process,
+                settings.agent_parallel_workers_per_user,
+            ),
         ):
             if isinstance(item, RoutingDecision):
                 yield sse_event("routing", {**item.model_dump(mode="json"), "resumed": resume})
@@ -546,6 +570,8 @@ async def stream_assistant_response(
 
         if document_tools is not None and document_tools.used:
             await document_tools.validate()
+            if plan_snapshot:
+                await document_tools.retain_task_sources(plan_snapshot)
             await document_tools.finalize()
             used_document_qa = True
         message = await complete_agent_run(

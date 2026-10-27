@@ -39,7 +39,7 @@ _EXPECTED_PHASES: dict[AgentNodeName, frozenset[AgentPhase]] = {
     "model": frozenset({"context_ready"}),
     "approval": frozenset({"model_completed"}),
     "tool": frozenset({"approval_completed"}),
-    "final": frozenset({"model_completed", "tools_completed"}),
+    "final": frozenset({"model_completed", "tools_completed", "context_ready"}),
 }
 _OUTPUT_PHASES: dict[AgentNodeName, AgentPhase] = {
     "context": "context_ready",

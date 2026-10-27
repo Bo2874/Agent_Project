@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -201,7 +202,11 @@ class AgentQuotaGuard:
         self.user_id = user_id
         self.token_limit = token_limit
         self.tool_call_limit = tool_call_limit
-        self.active_reservation = None
+        self._reservation = ContextVar(f"quota_receipt_{id(self)}", default=None)
+
+    @property
+    def active_reservation(self):
+        return self._reservation.get()
 
     @asynccontextmanager
     async def reserve_tokens(self, amount):
@@ -225,11 +230,11 @@ class AgentQuotaGuard:
         except (UsageLimitExceeded, ValueError) as exc:
             raise AgentQuotaLimitError("Không đủ quota token để dự trù lời gọi tiếp theo.") from exc
         receipt = UsageReservation()
-        self.active_reservation = receipt
+        token = self._reservation.set(receipt)
         try:
             yield receipt
         finally:
-            self.active_reservation = None
+            self._reservation.reset(token)
             # Unknown billing/crash retains the conservative reservation until day end.
             # Do not refund an API request simply because its response was lost.
             settled = receipt.actual

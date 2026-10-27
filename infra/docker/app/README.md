@@ -242,3 +242,16 @@ không phải cap input của OpenRouter/OpenAI. Actual usage được đối so
 không cần migration hoặc reindex. Mất usage giữ dự trù đến hết cửa sổ ngày. Hết budget trả
 kết quả một phần, không tự tăng20k/60k hoặc tự gọi lại paid API. Restart/rebuild web để nhận code;
 chưa chạy build Docker cho thay đổi này.
+
+Đợt4 planner tuần tự: `DEV_V2_PLANNING_ENABLED=true` cùng `DEV_AGENT_REACT_ENABLED=true`
+và `DEV_V2_ENABLED=true`; host tương ứng bỏ `DEV_`. Không cần JEV routing. Migration0028 thêm
+agent_tasks/task_attempts, được migrate service áp dụng khi khởi động; host dùng alembic upgrade
+head. Hai bảng chỉ phục vụ audit, state điều phối ở LangGraph checkpoint. Chưa có worker riêng,
+chạy song song hoặc task background; chưa build/test Docker cho thay đổi này.
+
+Đợt5 thêm worker đọc riêng và song song: `DEV_V2_PARALLEL_ENABLED=true` cùng các cờ đợt4.
+`DEV_AGENT_PARALLEL_MAX_WORKERS=3` giới hạn/run, `DEV_AGENT_PARALLEL_WORKERS_PER_USER=3`
+và `DEV_AGENT_PARALLEL_WORKERS_PER_PROCESS=8` giới hạn trong một process. Host bỏ tiền tố DEV_.
+Task ghi/approval/unknown chạy riêng ở root; MCP vẫn giữ giới hạn server. Không thêm migration,
+không reindex. Worker con dùng checkpoint in-memory; durable child resume/background/replay
+chưa triển khai. Restart/rebuild để nhận code; chưa build/test Docker cho đợt5.

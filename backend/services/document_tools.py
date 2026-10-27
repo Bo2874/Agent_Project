@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 from time import perf_counter
@@ -63,6 +64,45 @@ class DocumentToolSession:
         self.current_chunks = set()
         self.summary_chunks = set()
         self.request = DocumentSearchRequest(query="scope", conversation_id=conversation_id)
+        self._source_owner = None
+        self._merge_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def worker_registry(self, task, base, timeout_seconds):
+        """Private retrieval state per worker, with one synchronous source label authority."""
+        from agent_core.tools.documents import register_document_tools
+
+        child = DocumentToolSession(
+            owner=self.owner,
+            conversation_id=self.conversation_id,
+            message_id=self.message_id,
+            run_id=self.run_id,
+            result=DocumentQAResult(),
+            search_mode=self.search_mode,
+            context_budget=self.context_budget,
+            quota_guard=self.quota_guard,
+            recorder=self.recorder,
+        )
+        child.result.document_ids = list(self.result.document_ids)
+        child.result.versions = dict(self.result.versions)
+        child._source_owner = self
+        scoped = base.scoped(set(t.name for t in base.list_tools()) - DOCUMENT_TOOLS)
+        register_document_tools(
+            scoped,
+            search=child.search,
+            summarize=child.summarize,
+            timeout_seconds=timeout_seconds,
+        )
+        try:
+            yield scoped
+        finally:
+            # No AsyncSession is shared. Merge/persist only after child calls drain.
+            async with self._merge_lock:
+                self.used |= child.used
+                self.actions.extend({**a, "task_id": task.task_id} for a in child.actions)
+                self.summary_chunks.update(child.current_chunks | child.summary_chunks)
+                if child.used:
+                    await self.persist()
 
     @property
     def scope_data(self):
@@ -182,6 +222,13 @@ class DocumentToolSession:
             raise ToolAuthorizationError("tool_permission_denied")
 
     def accept(self, hits):
+        if self._source_owner is not None:
+            # No await: assign canonical labels atomically on the event loop. Text
+            # and retrieval buffers remain private to this child session.
+            accepted = self._source_owner.accept(hits)
+            existing = {h.chunk_id for h in self.result.evidence}
+            self.result.evidence.extend(h for h in accepted if h.chunk_id not in existing)
+            return accepted
         if any(
             h.document_id not in self.result.document_ids
             or h.version_id not in self.result.versions
@@ -201,6 +248,8 @@ class DocumentToolSession:
         return accepted
 
     async def persist(self):
+        if self._source_owner is not None:
+            return
         async with SessionFactory() as session:
             run = await session.scalar(
                 select(AgentRun)
@@ -238,6 +287,23 @@ class DocumentToolSession:
         visible = self.current_chunks | self.summary_chunks
         self.result.evidence = [h for h in self.result.evidence if h.chunk_id in visible]
         await self.persist()
+
+    async def retain_task_sources(self, snapshot):
+        """Task summaries retain host-verified lineage just like full-document summaries."""
+        await self.validate()
+        existing = {str(h.chunk_id): h for h in self.result.evidence}
+        for result in snapshot.get("results", {}).values():
+            for ref in result.get("evidence_refs", []):
+                hit = existing.get(ref["chunk_id"])
+                if (
+                    hit is None
+                    or str(hit.version_id) != ref["version_id"]
+                    or str(hit.document_id) != ref["document_id"]
+                ):
+                    raise DocumentServiceError(
+                        "Nguồn task không thuộc bằng chứng đã nhận.", code="document_scope_changed"
+                    )
+                self.summary_chunks.add(hit.chunk_id)
 
     async def _progress(self, context, prefix, stage, state, metadata=None):
         if not hasattr(self, "clocks"):

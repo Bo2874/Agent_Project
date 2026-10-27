@@ -101,6 +101,13 @@ class ToolRegistry:
             self._catalogs[role] = CapabilityCatalog(records, revision=self._revision)
         return self._catalogs[role]
 
+    def scoped(self, names: Collection[str]) -> "ToolRegistry":
+        """Private worker view preserving registration identity and authorization."""
+        result = self.fork()
+        result._tools = {n: e for n, e in result._tools.items() if n in names}
+        result._changed()
+        return result
+
     def model_definition(self, name: str) -> dict:
         """Convert only selected schemas; return a fresh copy of the cached JSON."""
         entry = self.get(name)

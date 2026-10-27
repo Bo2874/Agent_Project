@@ -59,6 +59,11 @@ def test_bundled_profile_preserves_legacy_names_and_kill_switch(host_files):
     (entry,) = host_files()
     assert entry.name == "demo" and entry.bindings is None
     assert entry.expected_release == "0.1.0"
+    descriptors = dict(entry.legacy_capabilities)
+    assert descriptors["count_text"].side_effect == "read_only"
+    assert descriptors["simulate_sensitive_action"].side_effect == "write"
+    assert descriptors["count_text"].capability_id == "demo__count_text"
+    assert descriptors["count_text"].plugin_id is None
     assert "get_admin_runtime_info" in entry.admin_only_tools
     assert host_files(mcp_demo_enabled=False) == ()
 

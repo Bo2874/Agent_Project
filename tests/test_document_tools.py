@@ -10,7 +10,7 @@ from agent_core.context_budget import ContextTokenBudget
 from agent_core.contracts.retrieval import RetrievalResult
 from agent_core.graph import AgentLoopEvent, stream_agent_graph
 from agent_core.llm.types import LLMChunk, LLMToolCallDelta, TokenUsage
-from agent_core.tools import ToolContext, ToolRegistry
+from agent_core.tools import ToolContext, ToolExecutor, ToolRegistry
 from agent_core.tools.documents import (
     DocumentQueryInput,
     create_document_registry,
@@ -152,6 +152,45 @@ async def test_retrieval_tool_streams_real_graph_progress_and_exposes_only_host_
     assert "text" not in completed.tool_result.data["document_references"][0]
 
 
+async def test_worker_document_sessions_keep_passages_private_and_labels_canonical(
+    bridge, monkeypatch
+):
+    service, context = bridge
+    monkeypatch.setattr(document_tools.DocumentToolSession, "validate", AsyncMock())
+    monkeypatch.setattr(
+        document_tools,
+        "retrieve_document_evidence",
+        AsyncMock(
+            side_effect=[
+                DocumentSearchResponse(
+                    query="First", mode="hybrid", items=[hit(1)], retrieval_config_version="test1"
+                ),
+                DocumentSearchResponse(
+                    query="Second", mode="hybrid", items=[hit(2)], retrieval_config_version="test1"
+                ),
+            ]
+        ),
+    )
+    base = ToolRegistry()
+    async with service.worker_registry(SimpleNamespace(task_id="first"), base, 60) as first:
+        async with service.worker_registry(SimpleNamespace(task_id="second"), base, 60) as second:
+            one = await ToolExecutor().execute(
+                first, context, "search_documents", {"query": "First"}
+            )
+            two = await ToolExecutor().execute(
+                second, context, "search_documents", {"query": "Second"}
+            )
+            assert not one.is_error and not two.is_error
+            assert "Evidence 1" in one.context_blocks[0].content
+            assert "Evidence 2" not in one.context_blocks[0].content
+            assert "Evidence 2" in two.context_blocks[0].content
+            assert [h["citation_id"] for h in one.data["document_references"]] == ["S1"]
+            assert [h["citation_id"] for h in two.data["document_references"]] == ["S2"]
+    assert service.summary_chunks == {UUID(int=1), UUID(int=2)}
+    assert service.used and len(service.actions) == 2
+    assert not base.list_tools()
+
+
 def test_document_tool_schema_cannot_override_owner_scope_or_mode():
     for args in (
         {"query": "x", "owner": str(uuid4())},
@@ -161,6 +200,21 @@ def test_document_tool_schema_cannot_override_owner_scope_or_mode():
     ):
         with pytest.raises(ValidationError):
             DocumentQueryInput.model_validate(args)
+
+
+async def test_planned_task_lineage_retains_only_evidence_already_received_in_scope(bridge):
+    service, _ = bridge
+    first, second = service.accept([hit(1), hit(2)])
+    service.current_chunks = {second.chunk_id}
+    snapshot = {"results": {"book": {"evidence_refs": [first.reference().model_dump(mode="json")]}}}
+    await service.retain_task_sources(snapshot)
+    await service.finalize()
+    assert {h.chunk_id for h in service.result.evidence} == {first.chunk_id, second.chunk_id}
+    bad = first.reference().model_copy(update={"version_id": uuid4()})
+    with pytest.raises(document_tools.DocumentServiceError):
+        await service.retain_task_sources(
+            {"results": {"fake": {"evidence_refs": [bad.model_dump(mode="json")]}}}
+        )
 
 
 @pytest.mark.parametrize("budget_error", [False, True])

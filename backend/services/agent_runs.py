@@ -88,6 +88,7 @@ class AgentRunTimeline:
     progress: list[dict[str, object]] = field(default_factory=list)
     started_at: datetime | None = None
     rag_search_mode: RagSearchMode | None = None
+    planning: dict | None = None
 
 
 async def create_agent_run(
@@ -138,15 +139,22 @@ class AgentRunRecorder:
             return
         async with SessionFactory() as session:
             run = await session.scalar(
-                select(AgentRun).where(
+                select(AgentRun)
+                .where(
                     AgentRun.id == self.agent_run_id,
                     AgentRun.conversation_id == self.conversation_id,
                     AgentRun.status == "running",
                 )
+                .with_for_update()
             )
             if run is None:
                 return
             trace = dict(run.rag_trace or {})
+            if event.planning_sync:
+                from backend.services.agent_tasks import project_tasks
+
+                await project_tasks(session, run.id, event.planning_snapshot)
+                trace["planning"] = event.planning_snapshot
             if event.progress.get("id") == "routing" and event.progress.get("execution_mode") in {
                 "react",
                 "routed",
@@ -194,7 +202,7 @@ class AgentRunRecorder:
                 )
             )
             run_step.attempt_number = (latest_attempt or 0) + 1
-            agent_run.current_step = event.step_number
+            agent_run.current_step = max(agent_run.current_step, event.step_number)
             agent_run.status = "running"
             if event.context_usage is not None:
                 usage = event.context_usage
@@ -753,6 +761,7 @@ async def list_agent_run_timelines(
                     for row in (run.rag_trace or {}).get("progress", [])
                 ],
                 started_at=run.last_resumed_at or run.created_at,
+                planning=(run.rag_trace or {}).get("planning"),
                 rag_search_mode=(run.rag_trace or {}).get("search_mode")
                 if (run.rag_trace or {}).get("execution_mode") != "react"
                 or (run.rag_trace or {}).get("document_search_used")

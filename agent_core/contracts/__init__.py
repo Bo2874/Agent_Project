@@ -16,10 +16,13 @@ from agent_core.contracts.features import FEATURE_NAMES, FeatureFlags, FeatureNa
 from agent_core.contracts.retrieval import EvidenceReference, RetrievalResult
 from agent_core.contracts.routing import FallbackReason, RouteName, RoutingDecision
 from agent_core.contracts.tasks import (
+    PlanSpec,
     TaskBudget,
     TaskInputReference,
+    TaskResult,
     TaskSpec,
     TaskStatus,
+    TaskUsage,
     WorkerType,
 )
 
@@ -34,6 +37,7 @@ __all__ = [
     "FeatureFlags",
     "FeatureName",
     "PlanCreatedEvent",
+    "PlanSpec",
     "RetrievalCompletedEvent",
     "RetrievalResult",
     "RouteName",
@@ -44,6 +48,8 @@ __all__ = [
     "TaskBudget",
     "TaskInputReference",
     "TaskSpec",
+    "TaskResult",
+    "TaskUsage",
     "TaskStatus",
     "TaskStatusEvent",
     "WorkerType",

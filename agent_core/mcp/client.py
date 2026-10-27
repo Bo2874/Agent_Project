@@ -55,6 +55,7 @@ class MCPStdioConfig:
     admin_only_tools: frozenset[str] = frozenset()
     approval_required_tools: frozenset[str] = frozenset()
     bindings: tuple[MCPToolBinding, ...] | None = None
+    legacy_capabilities: tuple[tuple[str, CapabilityDescriptor], ...] = ()
     expected_remote_names: frozenset[str] | None = None
     expected_release: str | None = None
     startup_timeout_seconds: float = 30
@@ -308,7 +309,9 @@ class MCPClientAdapter:
                 staged.register(
                     tool,
                     policy=policy,
-                    capability=binding.capability if binding else None,
+                    capability=binding.capability
+                    if binding
+                    else dict(self.config.legacy_capabilities).get(remote_tool.name),
                     manifest_fingerprint=self.config.manifest_fingerprint,
                     host_profile_fingerprint=self.config.host_profile_fingerprint,
                 )

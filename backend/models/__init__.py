@@ -24,11 +24,14 @@ from backend.models.plugin import (
 )
 from backend.models.plugin_secret import PluginOAuthState, PluginSecret
 from backend.models.routing import RoutingTrace
+from backend.models.task import AgentTask, TaskAttempt
 from backend.models.usage_counter import UsageCounter
 from backend.models.user import User
 
 __all__ = [
     "AgentRun",
+    "AgentTask",
+    "TaskAttempt",
     "AuditLog",
     "Base",
     "BackgroundJob",

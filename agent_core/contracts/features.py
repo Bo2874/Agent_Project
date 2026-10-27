@@ -30,8 +30,6 @@ class FeatureFlags(ContractModel):
 
     @model_validator(mode="after")
     def validate_dependencies(self) -> Self:
-        if self.planning and not self.routing:
-            raise ValueError("V2 planning requires routing")
         if self.parallel and not self.planning:
             raise ValueError("V2 parallel execution requires planning")
         return self

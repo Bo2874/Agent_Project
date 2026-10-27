@@ -121,6 +121,8 @@ class AgentLoopEvent:
     context_usage: ContextTokenUsage | None = None
     status_block: AgentStatusBlock | None = None
     progress: dict[str, object] | None = None
+    planning_snapshot: dict[str, Any] | None = None
+    planning_sync: bool = False
 
 
 AgentEventHandler = Callable[[AgentLoopEvent], Awaitable[None]]

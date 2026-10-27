@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     v2_rag_enabled: bool = False
     v2_planning_enabled: bool = False
     v2_parallel_enabled: bool = False
+    agent_parallel_max_workers: int = Field(default=3, ge=1, le=8)
+    agent_parallel_workers_per_user: int = Field(default=3, ge=1, le=32)
+    agent_parallel_workers_per_process: int = Field(default=8, ge=1, le=64)
     v2_redis_cache_enabled: bool = False
     v2_events_enabled: bool = False
     document_storage_path: Path = PROJECT_ROOT / "data/documents"
@@ -196,6 +199,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_context_budgets(self) -> "Settings":
         _ = self.v2_features  # Validate feature dependencies at configuration load time.
+        if self.v2_features.is_enabled("planning") and not self.agent_react_enabled:
+            raise ValueError("V2 planning requires AGENT_REACT_ENABLED")
         _ = self.email_config
         if self.document_max_user_bytes < self.document_max_file_bytes:
             raise ValueError("DOCUMENT_MAX_USER_BYTES không được nhỏ hơn DOCUMENT_MAX_FILE_BYTES")

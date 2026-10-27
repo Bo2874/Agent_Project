@@ -151,9 +151,87 @@ không thay quota của owner bằng số mô phỏng. B04 chỉ đổi setting 
 Đây là kiểm API/ASGI, không phải browser E2E. Báo cáo tổng hợp:
 `data/agent-testing/stage3-20261027/REPORT.md`;5/5 case LLM thật đạt,282 test hồi quy đạt.
 
-## Các đợt tiếp theo — Chưa nghiệm thu
+## Đợt4 — Planner/DAG tuần tự
 
-- Đợt4: planner/DAG và scheduler tuần tự.
-- Đợt5–6: worker/song song, background/resume và task UI.
+Bật `V2_ENABLED=true`, `AGENT_REACT_ENABLED=true`, `V2_PLANNING_ENABLED=true`. Docker dùng
+`DEV_V2_PLANNING_ENABLED=true` cùng hai cờ tương ứng. Host đã chạy migration0028, thêm hai bảng
+audit agent_tasks/task_attempts; máy khác cần `alembic upgrade head`. Không reindex PDF.
+
+LLM dùng `create_plan` với JSON task/goal/tools/dependency/criteria cho yêu cầu nhiều giai đoạn
+hoặc user yêu cầu plan. Câu hỏi đơn giản vẫn trả lời trực tiếp, không có một planner LLM phụ
+bắt buộc. Host tạo PlanSpec với quyền và budget thực, input refs tới dependencies/current versions;
+tối đa8 task, không nested plan/replan. Plan sai không dispatch tool. Context checkpoint pin flag
+và policy; DB chỉ là projection, resume đối soát từ checkpoint trước dispatch.
+
+Task chạy lần lượt theo ready-set. Một task chỉ nhận schema/call các tool đã khai báo và vẫn qua
+executor/approval gốc; control phải gọi riêng. Task thiếu observation/evidence không được xác nhận
+thành công. Failure block mọi nhánh phụ thuộc, nhánh độc lập còn budget vẫn chạy. LLM kết thúc
+task bằng finish_task; text task được host đưa qua cùng bước kiểm tra, không phát thành root final.
+Task web đơn hành động dùng answer/nguồn đã xác nhận của tool return_direct làm TaskResult,
+không tốn thêm một lượt model để xác nhận lại. Root vẫn tổng hợp cuối và hiển thị partial khi cần.
+
+Root token/step/day quota không tăng; task budgets lấy trong phần còn lại và chừa final. Nhiều
+lượt model có thể không đủ20k; khi đó phải từ chối plan hoặc trả partial. Không nhân hạn mức
+cho từng task. Trong runner, P02 tạm dùng40k để kiểm toàn bộ DAG rồi khôi phục; đây không phải
+mặc định mới của ứng dụng. Khi tắt V2_PARALLEL_ENABLED, task vẫn dùng context chung của root.
+RAG chỉ đưa passages vào task có capability tài liệu; final dùng TaskResult và lineage đã xác nhận.
+
+Có thể thử chat đơn giản; kế hoạch đếm chuỗi rồi nhân kết quả bằng tool; kế hoạch đọc chunking
+trong PDF rồi tìm nguồn chính thức ngoài web và đối chiếu; hoặc yêu cầu summary toàn PDF để
+quan sát task thất bại do cap64, task phụ thuộc blocked và task giải thích độc lập vẫn hoàn tất.
+
+```powershell
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite planner
+# Có phí API, tạo hội thoại thử mới. Có thể thêm --case P02 hoặc --case P03.
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite planner --owner-email user@personalagent.vn --document-id bf811f8e-bce3-4119-86a9-f72e75de6002 --live
+```
+
+Kết quả và các lần gặp lỗi nằm ở `data/agent-testing/stage4-20261027/REPORT.md` (Git ignore).
+Đây là vài case API/ASGI/LLM thật, không browser E2E hoặc benchmark. Không ép web/tool có lỗi
+thành success để chạy dependency. Retrieval có thể thiếu ô bảng; provider đôi khi không xác nhận
+native search. Acceptance checks hiện kiểm schema/observation/lineage; chưa có semantic verifier
+độc lập đảm bảo mọi tiêu chí ngôn ngữ tự nhiên. User yêu cầu không mở rộng kiểm thử thêm.
+
+## Đợt5 — Worker đọc có context riêng và song song
+
+Bật thêm `V2_PARALLEL_ENABLED=true`; `AGENT_PARALLEL_MAX_WORKERS=3` là giới hạn mỗi run.
+`AGENT_PARALLEL_WORKERS_PER_USER=3` và `AGENT_PARALLEL_WORKERS_PER_PROCESS=8` giới hạn trong
+một tiến trình web. Các bộ đếm quota ngày PostgreSQL vẫn dùng chung giữa các tiến trình.
+Docker dùng các tên tương ứng có tiền tố `DEV_`. Host đã bật flag; restart web, không dùng
+`--reload` trên Windows. Không thêm migration/dependency và không reindex tài liệu.
+
+Task đọc không cần approval được phát vào graph ReAct riêng: chỉ task brief, kết quả dependency,
+schema tool được cấp và passages do chính worker truy xuất. Không truyền toàn bộ history hoặc
+transcript của worker khác. Kết quả gom theo task ID, khử kết quả trùng/cũ, rồi root tổng hợp.
+Mỗi task giữ ngân sách riêng trong tổng root; admission đồng thời giữ phần final, không nhân
+20k/60k theo số worker. Usage chưa rõ giữ reservation và chặn paid call tiếp theo.
+
+Task ghi/cần duyệt/unknown được chạy riêng qua đường approval/checkpoint root hiện có. Tool
+trong một task vẫn gọi tuần tự; giới hạn đồng thời của từng MCP server vẫn áp dụng.
+
+| Case | Thao tác | Kỳ vọng |
+| --- | --- | --- |
+| W01 | count: đếm `abc def`; calc độc lập: nhân7×17; join phụ thuộc cả hai | Hai worker overlap, join chạy sau; kết quả7 và119 |
+| W02 | book: đọc semantic chunking trong PDF đã tải; count độc lập | Worker book nhận passages thật và nguồn, không chỉ metadata; count trả7 |
+
+```powershell
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite workers
+# Có phí API; tạo chat mới, dùng PDF đã tải, không gửi email hoặc tìm web.
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite workers --owner-email user@personalagent.vn --document-id bf811f8e-bce3-4119-86a9-f72e75de6002 --live
+```
+
+W01 tạm dùng40k trong tiến trình test rồi khôi phục; W02 dùng hạn mức tài liệu60k. Hai case đạt
+luồng/API/SSE/history/DB và overlap, chưa phải benchmark chất lượng hay browser E2E.
+Report: `data/agent-testing/stage5-20261027/REPORT.md`. Trong lượt live, prompt cũ còn khiến model
+nói nhầm “tuần tự” dù DB chứng minh overlap. Đã bỏ mệnh đề đó, thêm execution metadata và promptv7;
+không gọi lại LLM chỉ để kiểm lời diễn đạt. Lỗi native web thiếu usage chưa sửa trong đợt này.
+
+Worker checkpoint riêng hiện là in-memory, được hủy khi worker hoàn tất. Root lưu kết quả sau
+node fan-out; process chết giữa node có thể làm chạy lại tác vụ đọc. Chưa có durable worker
+checkpoint/lease/replay; không coi đây là đảm bảo exactly-once hoặc resume giữa một batch.
+
+## Đợt tiếp theo — Chưa nghiệm thu
+
+- Đợt6: background, checkpoint worker bền vững, cancel/resume/replay và task UI.
 
 Không chạy lại paid suite chỉ để kiểm tra một thay đổi tài liệu hoặc định dạng report.

@@ -83,6 +83,11 @@ class AgentState(TypedDict):
     model_content: str
     direct_answer: bool
     budget_stop_reason: str | None
+    planning_enabled: bool
+    parallel_enabled: bool
+    parallel_max_workers: int
+    budget_held_tokens: int
+    planning: dict[str, Any] | None
     finish_reason: str | None
     usage: AgentTokenUsage
     budget: AgentBudget
@@ -182,6 +187,11 @@ def create_initial_agent_state(
         final_answer="",
         direct_answer=False,
         budget_stop_reason=None,
+        planning_enabled=False,
+        parallel_enabled=False,
+        parallel_max_workers=1,
+        budget_held_tokens=0,
+        planning=None,
         progress=[],
         tool_call_counts={},
         observation_counts={},

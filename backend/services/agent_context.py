@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from agent_core.context_budget import ContextBlock, estimate_tokens
+from agent_core.planning import CONTROL_NAMES
 from backend.database import SessionFactory
 from backend.models import AgentRun, Conversation, RunStep, ToolCall
 
@@ -14,6 +15,8 @@ from backend.models import AgentRun, Conversation, RunStep, ToolCall
 def execution_rows(records, token_budget=1_500):
     rows = []
     for tool, run in records:
+        if tool.tool_name in CONTROL_NAMES:
+            continue
         data = tool.result_data or {}
         row = {
             "tool": tool.tool_name,
@@ -74,6 +77,7 @@ async def load_execution_context(*, owner: UUID, conversation_id: UUID, current_
                     Conversation.user_id == owner,
                     Conversation.id == conversation_id,
                     AgentRun.id != current_run,
+                    ToolCall.tool_name.not_in(CONTROL_NAMES),
                 )
                 .order_by(ToolCall.created_at.desc(), ToolCall.id.desc())
                 .limit(24)

@@ -90,3 +90,55 @@ class TaskSpec(ContractModel):
         if self.budget.max_tool_calls and not self.allowed_capability_ids:
             raise ValueError("A non-zero tool budget requires allowed_capability_ids")
         return self
+
+
+class PlanSpec(ContractModel):
+    plan_version: PositiveInt = 1
+    goal: ShortText
+    tasks: Annotated[tuple[TaskSpec, ...], Field(min_length=1, max_length=8)]
+
+    @model_validator(mode="after")
+    def validate_dag(self) -> Self:
+        ids = tuple(task.task_id for task in self.tasks)
+        require_unique(ids, "task_ids")
+        remaining = {task.task_id: set(task.depends_on) for task in self.tasks}
+        if any(not deps.issubset(ids) for deps in remaining.values()):
+            raise ValueError("Unknown task dependency")
+        for task in self.tasks:
+            for ref in task.input_refs:
+                if ref.kind == "task_output" and ref.reference_id != ref.source_task_id:
+                    raise ValueError("task_output reference_id must identify its source task")
+        visited = set()
+        while remaining:
+            ready = [key for key, deps in remaining.items() if deps <= visited]
+            if not ready:
+                raise ValueError("Task dependency cycle")
+            for key in ready:
+                visited.add(key)
+                del remaining[key]
+        return self
+
+
+class TaskUsage(ContractModel):
+    total_tokens: NonNegativeInt = 0
+    model_steps: NonNegativeInt = 0
+    tool_calls: NonNegativeInt = 0
+
+
+class TaskResult(ContractModel):
+    plan_version: PositiveInt
+    task_id: Identifier
+    attempt_id: Identifier
+    status: Literal["succeeded", "failed", "blocked", "cancelled"]
+    summary: Annotated[str, Field(min_length=1, max_length=4000)]
+    evidence_refs: Annotated[tuple[EvidenceReference, ...], Field(max_length=64)] = ()
+    source_tool_call_ids: Annotated[tuple[ShortText, ...], Field(max_length=50)] = ()
+    artifacts: Annotated[tuple[ShortText, ...], Field(max_length=16)] = ()
+    usage: TaskUsage = Field(default_factory=TaskUsage)
+    error: ShortText | None = None
+
+    @model_validator(mode="after")
+    def validate_result(self) -> Self:
+        if (self.status == "succeeded") != (self.error is None):
+            raise ValueError("Only successful results omit error")
+        return self

@@ -124,3 +124,4 @@ class AgentRunTimelineResponse(BaseModel):
     progress: list[dict[str, object]] = Field(default_factory=list)
     started_at: datetime | None = None
     rag_search_mode: RagSearchMode | None = None
+    planning: dict[str, object] | None = None

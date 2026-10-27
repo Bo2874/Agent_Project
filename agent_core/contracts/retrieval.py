@@ -1,21 +1,37 @@
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import Field, StrictInt, StrictStr, field_validator, model_validator
+from pydantic import (
+    Field,
+    StrictInt,
+    StrictStr,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from agent_core.contracts.base import (
     ContractModel,
-    Identifier,
     PositiveInt,
     ShortText,
     Version,
 )
 
+CitationIdentifier = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=128,
+        pattern=r"^(?:[a-z][a-z0-9_]*(?:[.:][a-z0-9_]+)*|S[1-9][0-9]*)$",
+    ),
+]
+
 
 class EvidenceReference(ContractModel):
     """Opaque, version-specific citation identity; ownership is checked separately."""
 
-    citation_id: Identifier
+    citation_id: CitationIdentifier
     document_id: UUID
     version_id: UUID
     chunk_id: UUID

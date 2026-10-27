@@ -31,10 +31,14 @@ def test_master_switch_can_disable_every_selected_feature() -> None:
     assert all(enabled.is_enabled(name) for name in FEATURE_NAMES)
 
 
-@pytest.mark.parametrize("values", [{"planning": True}, {"parallel": True}])
+@pytest.mark.parametrize("values", [{"parallel": True}])
 def test_invalid_flag_dependencies_fail_fast(values) -> None:
     with pytest.raises(ValidationError, match="requires"):
         FeatureFlags(**values)
+
+
+def test_planning_can_be_enabled_without_mandatory_jev_routing():
+    assert FeatureFlags(enabled=True, planning=True).is_enabled("planning")
 
 
 def test_settings_also_validate_flag_dependencies(monkeypatch) -> None:

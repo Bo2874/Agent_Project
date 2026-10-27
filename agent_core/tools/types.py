@@ -29,6 +29,7 @@ class ToolContext:
         default=None, repr=False, compare=False
     )
     capability_version: str | None = None
+    task_id: str | None = None
     # Per-dispatch allowance supplied by the graph, never part of model arguments.
     remaining_tokens: int | None = None
     remaining_steps: int | None = None

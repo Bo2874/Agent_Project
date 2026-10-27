@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import replace
@@ -13,21 +14,24 @@ from time import perf_counter
 from typing import Any, NoReturn
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.config import get_stream_writer
 from langgraph.errors import NodeCancelledError, NodeError, NodeTimeoutError
 from langgraph.store.base import BaseStore
 from langgraph.types import Command, Interrupt, interrupt
+from pydantic import ValidationError
 
+from agent_core import planning as dag
+from agent_core import task_workers as workers
 from agent_core.context_budget import (
     ContextBlock,
     ContextBudgetError,
     ContextTokenBudget,
 )
 from agent_core.context_middleware import ContextAssemblyMiddleware
-from agent_core.contracts import FeatureFlags, RoutingDecision
+from agent_core.contracts import FeatureFlags, RoutingDecision, TaskResult, TaskUsage
 from agent_core.graph.budgeting import (
     UNBILLED_TOOL_ERRORS,
     WEB_SEARCH_ESTIMATED_TOKENS,
@@ -270,6 +274,14 @@ async def run_agent_graph_stream(
     react_enabled: bool = False,
     usage_reservation=None,
     web_search_estimated_tokens: int = WEB_SEARCH_ESTIMATED_TOKENS,
+    planning_enabled: bool = False,
+    planning_document_versions: Sequence[str] = (),
+    parallel_enabled: bool = False,
+    parallel_max_workers: int = 3,
+    worker_registry_factory=None,
+    worker_capacity=None,
+    worker_plan: dict | None = None,
+    worker_done=None,
 ) -> AsyncIterator[AgentStreamItem | RoutingDecision]:
     """Execute model/tool turns with LangGraph as the only orchestrator."""
 
@@ -338,6 +350,17 @@ async def run_agent_graph_stream(
                 code="agent_checkpoint_invalid",
             )
         react_enabled = saved_mode == "react"
+        planning_enabled = bool(restored.get("planning_enabled", False))
+        parallel_enabled = bool(restored.get("parallel_enabled", False))
+        parallel_max_workers = int(restored.get("parallel_max_workers", 1))
+        if restored.get("planning") and restored["planning"].get("version") != dag.PLANNING_VERSION:
+            raise AgentNodeExecutionError(
+                "Planning checkpoint version changed", code="planning_checkpoint_changed"
+            )
+    planning_enabled = planning_enabled and react_enabled
+    parallel_enabled = parallel_enabled and planning_enabled and worker_plan is None
+    if not 1 <= parallel_max_workers <= 8:
+        raise ValueError("Worker concurrency must be between 1 and 8")
     latest_query = _latest_user_query(working_messages)
     if persisted_checkpoint is not None:
         history_source = restored.get("tool_routing_history", [])
@@ -624,6 +647,12 @@ async def run_agent_graph_stream(
             ).encode()
         ).hexdigest()
 
+    if planning_enabled:
+        if any(name in registry for name in dag.CONTROL_NAMES):
+            raise AgentNodeExecutionError(
+                "Reserved planning control name collision", code="planning_control_collision"
+            )
+        tool_definitions = [*tool_definitions, *dag.control_definitions()]
     plugin_runtime_version = runtime_version()
     if persisted_checkpoint is not None and (
         restored.get("plugin_runtime_version") != plugin_runtime_version
@@ -643,7 +672,7 @@ async def run_agent_graph_stream(
         rag=rag_context,
         history_summaries=history_summary_context,
         skill=selected_skill,
-        available_tool_count=selection.total_accessible,
+        available_tool_count=selection.total_accessible + (2 if planning_enabled else 0),
         tool_selection_mode=selection.mode,
     )
     goal = latest_query.strip() or "Hoàn thành yêu cầu hiện tại."
@@ -666,6 +695,8 @@ async def run_agent_graph_stream(
 
     model_started_steps: set[int] = set()
     model_finished_steps: set[int] = set()
+    planning_reconciled = False
+    last_plan_snapshot = None
 
     async def publish(item: AgentStreamItem) -> None:
         if isinstance(item, AgentLoopEvent):
@@ -675,6 +706,277 @@ async def run_agent_graph_stream(
                 model_finished_steps.add(item.step_number)
             await _emit(event_handler, item)
         write_agent_stream_item(item)
+
+    async def publish_plan(snapshot, step, *, force=False):
+        nonlocal last_plan_snapshot
+        if not force and snapshot == last_plan_snapshot:
+            return
+        rows = [("plan.sync", "Kiểm tra kế hoạch", "completed")]
+        if snapshot:
+            rows = []
+            for task in snapshot["spec"]["tasks"]:
+                if worker_plan is not None and task["task_id"] != context.task_id:
+                    continue
+                status = snapshot["statuses"][task["task_id"]]
+                display = (
+                    "completed"
+                    if status == "succeeded"
+                    else "failed"
+                    if status in {"failed", "blocked", "cancelled"}
+                    else "running"
+                    if status == "running"
+                    else "pending"
+                )
+                rows.append(
+                    (
+                        f"plan.task.{task['task_id']}",
+                        f"{task['task_id']}: {task['goal'][:140]} · "
+                        + {
+                            "pending": "Đang chờ",
+                            "ready": "Sẵn sàng",
+                            "running": "Đang chạy",
+                            "succeeded": "Hoàn thành",
+                            "failed": "Thất bại",
+                            "blocked": "Bị chặn",
+                            "cancelled": "Đã dừng",
+                        }[status],
+                        display,
+                    )
+                )
+        for index, (key, label, status) in enumerate(rows):
+            await publish(
+                AgentLoopEvent(
+                    kind="pipeline_progress",
+                    step_number=step,
+                    progress={"id": key, "label": label, "state": status, "duration_ms": 0},
+                    planning_sync=index == 0,
+                    planning_snapshot=snapshot if index == 0 else None,
+                )
+            )
+        last_plan_snapshot = deepcopy(snapshot)
+
+    async def reconcile_planning(state):
+        nonlocal planning_reconciled
+        if planning_enabled and not planning_reconciled:
+            if persisted_checkpoint is not None:
+                await publish_plan(state.get("planning"), state["step_number"], force=True)
+            planning_reconciled = True
+
+    async def run_worker_waves(state):
+        """Fan out private ReAct graphs, then reduce only typed terminal results.
+
+        Step ranges and token caps are leased before launch. Running tasks never
+        share messages, ToolExecutor caches, SQL sessions or document contexts.
+        """
+        plan = deepcopy(state["planning"])
+        aggregate = _usage_from_state(state["usage"])
+        rows = []
+        step = state["step_number"]
+        final_reserve = plan.get("final_reserve", 0)
+        pool = workers.SharedWorkerBudget(
+            state["budget"]["max_total_tokens"]
+            - aggregate.total_tokens
+            - state.get("budget_held_tokens", 0)
+            - final_reserve
+        )
+        writer = get_stream_writer()
+        writer_context = copy_context()
+        event_lock = asyncio.Lock()
+
+        @asynccontextmanager
+        async def reserve(amount):
+            async with pool.reserve(amount, usage_reservation or unreserved_usage) as receipt:
+                yield receipt
+
+        @asynccontextmanager
+        async def default_registry(task):
+            yield registry.scoped(workers.names_for_task(task, registry))
+
+        @asynccontextmanager
+        async def capacity_slot():
+            if worker_capacity is None:
+                yield
+            else:
+                async with worker_capacity.slot(context.user_id):
+                    yield
+
+        while not plan.get("active_task"):
+            plan = dag.schedule(plan, {}, 0, activate=False)
+            wave = workers.ready_wave(plan, registry, parallel_max_workers)
+            if not wave or pool.stopped or deadline <= perf_counter():
+                break
+            # Re-check leases after actual provider usage, including overruns.
+            wave = [
+                t
+                for t in wave
+                if t.budget.max_tokens <= pool.available - pool.spent - pool.held
+                and step + t.budget.max_steps <= state["budget"]["max_steps"]
+            ]
+            if not wave:
+                break
+            leases = {}
+            for task in wave:
+                leases[task.task_id] = step
+                step += task.budget.max_steps
+                plan["statuses"][task.task_id] = "running"
+                plan.setdefault("attempts", {})[task.task_id] = {
+                    "first_step": leases[task.task_id],
+                    "tokens_start": aggregate.total_tokens,
+                    "observation_offset": len(state["tool_observations"]) + len(rows),
+                    "start_elapsed": _budget_with_elapsed(state, deadline)["elapsed_seconds"],
+                }
+            await publish_plan(plan, state["step_number"])
+            worker_timings = {}
+
+            async def execute_worker(task, leases=leases, plan=plan, timings=worker_timings):
+                first = leases[task.task_id]
+                captured = None
+                known_usage = TokenUsage()
+
+                async def capture(value):
+                    nonlocal captured
+                    captured = value
+
+                async def record(event):
+                    nonlocal known_usage
+                    clock = perf_counter() - started_at
+                    if event.kind == "model_started":
+                        timings.setdefault(
+                            task.task_id, {"start_seconds": clock, "end_seconds": clock}
+                        )
+                    elif event.kind in {"model_completed", "model_failed"}:
+                        timings[task.task_id]["end_seconds"] = clock
+                    if event.kind in {"model_completed", "model_failed", "tool_completed"}:
+                        known_usage += event.usage or TokenUsage()
+                    # Child snapshots cannot replace the root DAG projection.
+                    progress_row = (
+                        {
+                            **event.progress,
+                            "id": f"worker.{task.task_id}.{event.progress['id']}",
+                            "label": f"{task.task_id}: {event.progress.get('label', '')}",
+                            "task_id": task.task_id,
+                        }
+                        if event.progress
+                        else None
+                    )
+                    mapped = replace(
+                        event,
+                        step_number=first + event.step_number - 1,
+                        planning_sync=False,
+                        planning_snapshot=None,
+                        progress=progress_row,
+                    )
+                    async with event_lock:
+                        await _emit(event_handler, mapped)
+                        writer_context.run(
+                            writer, AgentGraphStreamEvent(channel="agent_status", item=mapped)
+                        )
+
+                failure = None
+                worker_started = perf_counter()
+                try:
+                    async with (
+                        asyncio.timeout(
+                            max(0.001, min(task.timeout_seconds, deadline - perf_counter()))
+                        ),
+                        capacity_slot(),
+                        (worker_registry_factory or default_registry)(task) as scoped,
+                    ):
+                        scoped = scoped.scoped(workers.names_for_task(task, scoped))
+                        async for _ in run_agent_graph_stream(
+                            model=model,
+                            messages=[
+                                *deepcopy([m for m in messages if m.get("role") == "system"]),
+                                {"role": "user", "content": task.goal},
+                            ],
+                            registry=scoped,
+                            context=replace(context, task_id=task.task_id),
+                            event_handler=record,
+                            limits=AgentLimits(
+                                # One host-only closing transition beyond paid task steps.
+                                max_steps=task.budget.max_steps + 1,
+                                max_total_tokens=task.budget.max_tokens,
+                                max_duration_seconds=max(
+                                    0.001,
+                                    min(
+                                        task.timeout_seconds - (perf_counter() - worker_started),
+                                        deadline - perf_counter(),
+                                    ),
+                                ),
+                                max_identical_tool_calls=limits.max_identical_tool_calls,
+                                max_repeated_observations=limits.max_repeated_observations,
+                            ),
+                            context_budget=context_budget,
+                            rag_context=tuple(
+                                b for b in rag_context if b.source == "selected_documents"
+                            ),
+                            execution_guard=execution_guard,
+                            react_enabled=True,
+                            planning_enabled=True,
+                            usage_reservation=reserve,
+                            web_search_estimated_tokens=web_search_estimated_tokens,
+                            planning_document_versions=planning_document_versions,
+                            worker_plan=workers.worker_seed(plan, task, 0),
+                            worker_done=capture,
+                        ):
+                            # Only the root synthesis is published as assistant prose.
+                            pass
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("Worker %s did not finish", task.task_id)
+                    failure = "worker_failed"
+                output = (captured or {}).get("planning", {}).get("results", {}).get(task.task_id)
+                if output is None:
+                    output = TaskResult(
+                        plan_version=plan["spec"]["plan_version"],
+                        task_id=task.task_id,
+                        attempt_id="attempt1",
+                        status="failed",
+                        summary="Worker chưa hoàn tất.",
+                        error=failure or "worker_incomplete",
+                        usage=TaskUsage(total_tokens=known_usage.total_tokens),
+                    ).model_dump(mode="json")
+                return task, output, captured, known_usage
+
+            # TaskGroup cancels and drains siblings if the parent is cancelled.
+            async with asyncio.TaskGroup() as group:
+                jobs = [group.create_task(execute_worker(t)) for t in wave]
+            for job in jobs:  # Declaration order, never completion-order precedence.
+                task, output, captured, known = job.result()
+                aggregate += known
+                attempt = plan["attempts"][task.task_id]
+                attempt["last_step"] = leases[task.task_id] + max(
+                    0, min(task.budget.max_steps, output["usage"]["model_steps"]) - 1
+                )
+                plan = workers.merge_result(plan, output, attempt)
+                rows.extend((captured or {}).get("tool_observations", []))
+            pairs = list(worker_timings.values())
+            plan.setdefault("worker_batches", []).append(
+                {
+                    "tasks": [t.task_id for t in wave],
+                    "overlapped": any(
+                        a["start_seconds"] < b["end_seconds"]
+                        and b["start_seconds"] < a["end_seconds"]
+                        for i, a in enumerate(pairs)
+                        for b in pairs[i + 1 :]
+                    ),
+                    "timings": worker_timings,
+                }
+            )
+            await publish_plan(plan, step)
+        return {
+            "planning": plan,
+            "usage": _usage_to_state(aggregate),
+            "step_number": step,
+            "budget_held_tokens": state.get("budget_held_tokens", 0) + pool.held,
+            "budget_stop_reason": "unknown_billing"
+            if pool.held
+            else "token_limit"
+            if pool.stopped
+            else state.get("budget_stop_reason"),
+            "tool_observations": rows,
+        }
 
     node_started_at: dict[str, float] = {}
 
@@ -744,6 +1046,7 @@ async def run_agent_graph_stream(
 
     async def restore_node_selection(state: AgentState) -> None:
         nonlocal active_choice
+        await reconcile_planning(state)
         if selection_policy is None:
             return
         # LangGraph can apply durable context task writes after a failed checkpoint
@@ -768,6 +1071,7 @@ async def run_agent_graph_stream(
         store: BaseStore | None,
     ) -> Mapping[str, Any]:
         nonlocal active_choice
+        await reconcile_planning(state)
         if execution_guard is not None and not react_enabled:
             await execution_guard("model")
         await validate_capabilities()
@@ -835,11 +1139,53 @@ async def run_agent_graph_stream(
                     )
                 )
             await validate_capabilities()
+        plan = state.get("planning")
+        worker_update = {}
+        if plan and parallel_enabled and not plan.get("active_task"):
+            worker_update = await run_worker_waves(state)
+            state = {
+                **state,
+                **worker_update,
+                "tool_observations": [
+                    *state["tool_observations"],
+                    *worker_update["tool_observations"],
+                ],
+            }
+            plan = state["planning"]
+        if plan:
+            elapsed = _budget_with_elapsed(state, deadline)["elapsed_seconds"]
+            for _ in range(9):
+                if worker_plan is not None and not plan.get("active_task"):
+                    break
+                plan = dag.schedule(plan, state, elapsed)
+                remaining = dag.task_remaining(plan, state, elapsed)
+                if remaining is None or all(
+                    remaining[k] > 0 for k in ("steps", "seconds", "tokens")
+                ):
+                    break
+                plan = dag.close_task(
+                    plan,
+                    state,
+                    summary="Task đã chạm giới hạn thực thi.",
+                    error="task_budget",
+                )
+            state = {**state, "planning": plan}
+            await publish_plan(plan, state["step_number"])
+        if worker_plan is not None and not plan.get("active_task"):
+            result = plan["results"].get(context.task_id)
+            return {
+                "planning": plan,
+                "prepared_messages": state["messages"],
+                "direct_answer": True,
+                "model_content": result["summary"] if result else "Worker đã dừng.",
+            }
         usage = _usage_from_state(state["usage"])
         current_budget = _budget_with_elapsed(state, deadline)
         status_block = _build_status_block(
-            goal=state["goal"],
-            progress=state["progress"],
+            goal=state["goal"][:160] if planning_enabled else state["goal"],
+            progress=[p[:90] for p in state["progress"][-3:]]
+            if planning_enabled
+            else state["progress"],
             step_number=state["step_number"],
             limits=_limits_from_budget(current_budget),
             used_tokens=usage.total_tokens,
@@ -869,14 +1215,32 @@ async def run_agent_graph_stream(
                 active_memory = ()
             memory_loaded = True
         try:
+            definitions = tool_definitions if planning_enabled else state["tool_definitions"]
+            context_messages = state["messages"]
+            if plan:
+                permitted = dag.allowed_names(plan, registry) | (
+                    {"finish_task"} if plan["active_task"] else set()
+                )
+                definitions = [d for d in tool_definitions if d["function"]["name"] in permitted]
+                context_messages = [
+                    *context_messages,
+                    HumanMessage(content=dag.task_prompt(plan, goal=state["goal"])),
+                ]
+            elif planning_enabled:
+                definitions = [
+                    d for d in tool_definitions if d["function"]["name"] != "finish_task"
+                ]
+            active_rag = _memory_blocks_from_state(state.get("rag_context", []))
+            if plan and not (
+                dag.allowed_names(plan, registry) & {"search_documents", "summarize_documents"}
+            ):
+                active_rag = tuple(b for b in active_rag if b.source == "selected_documents")
             prepared = context_middleware.prepare(
-                state["messages"],
+                context_messages,
                 status=status_block,
-                tool_definitions=tool_definitions
-                if selection_policy
-                else state["tool_definitions"],
+                tool_definitions=tool_definitions if selection_policy else definitions,
                 memory=active_memory,
-                rag=_memory_blocks_from_state(state.get("rag_context", [])),
+                rag=active_rag,
             )
         except ContextBudgetError as exc:
             raise AgentContextLimitError(str(exc)) from exc
@@ -897,12 +1261,14 @@ async def run_agent_graph_stream(
                 "plugin_runtime_version": plugin_runtime_version,
             }
         return {
+            **worker_update,
             **routing_update,
             "prepared_messages": prepared.messages,
             "tool_definitions": prepared.tools,
             "budget": _budget_with_elapsed(state, deadline),
             "memory_context": _memory_blocks_to_state(active_memory),
             "memory_loaded": memory_loaded,
+            **({"planning": plan} if planning_enabled else {}),
         }
 
     async def build_partial_node(state: AgentState) -> Mapping[str, Any]:
@@ -918,6 +1284,14 @@ async def run_agent_graph_stream(
                 )
             )
         reason = state.get("budget_stop_reason") or limit_reason(state) or "time_limit"
+        plan = state.get("planning")
+        if plan:
+            if plan.get("active_task"):
+                plan = dag.close_task(
+                    plan, state, summary="Dừng do giới hạn toàn run.", error=reason
+                )
+            plan = dag.cancel_pending(plan)
+            await publish_plan(plan, state["step_number"])
         content = partial_answer(state, reason)
         await publish(
             AgentLoopEvent(
@@ -939,6 +1313,7 @@ async def run_agent_graph_stream(
             "model_content": content,
             "pending_tool_calls": [],
             "budget_stop_reason": reason,
+            **({"planning": plan} if plan else {}),
         }
 
     async def budget_progress(step, key, estimate, actual, reason=None):
@@ -966,7 +1341,55 @@ async def run_agent_graph_stream(
         estimate = model_allowance(
             to_model_messages(state["prepared_messages"]), state["tool_definitions"], output_tokens
         )
-        available = state["budget"]["max_total_tokens"] - state["usage"]["total_tokens"]
+        available = (
+            state["budget"]["max_total_tokens"]
+            - state["usage"]["total_tokens"]
+            - state.get("budget_held_tokens", 0)
+        )
+        remaining = dag.task_remaining(
+            state.get("planning"), state, _budget_with_elapsed(state, deadline)["elapsed_seconds"]
+        )
+        if remaining and (estimate > remaining["tokens"] or remaining["seconds"] <= 0):
+            # No paid call: turn the host-validated failure into a task completion.
+            request = {
+                "id": f"host_budget_{state['step_number']}",
+                "name": "finish_task",
+                "arguments": {"status": "failed", "summary": "Không đủ ngân sách riêng của task."},
+                "raw_arguments": json.dumps(
+                    {"status": "failed", "summary": "Không đủ ngân sách riêng của task."}
+                ),
+                "parse_error_content": None,
+                "parse_error_code": None,
+            }
+            await publish(
+                AgentLoopEvent(
+                    kind="model_completed",
+                    step_number=state["step_number"],
+                    usage=TokenUsage(),
+                    finish_reason="task_budget",
+                )
+            )
+            return {
+                "model_content": "",
+                "pending_tool_calls": [request],
+                "messages": [
+                    AIMessage(
+                        content="",
+                        additional_kwargs={
+                            "tool_calls": [
+                                {
+                                    "id": request["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": "finish_task",
+                                        "arguments": request["raw_arguments"],
+                                    },
+                                }
+                            ]
+                        },
+                    )
+                ],
+            }
         reason = None
         if estimate > available:
             reason = "token_limit"
@@ -977,13 +1400,24 @@ async def run_agent_graph_stream(
                 if execution_guard is not None:
                     await execution_guard("model")
                 async with (usage_reservation or unreserved_usage)(estimate) as receipt:
-                    async with asyncio.timeout(max(0.001, deadline - perf_counter())):
+                    async with asyncio.timeout(
+                        max(
+                            0.001,
+                            min(
+                                deadline - perf_counter(),
+                                remaining["seconds"] if remaining else float("inf"),
+                            ),
+                        )
+                    ):
                         update = await call_model_unreserved(state, receipt=receipt)
                     await budget_progress(
                         state["step_number"],
                         f"model.{state['step_number']}",
                         estimate,
                         update["usage"]["total_tokens"] - state["usage"]["total_tokens"],
+                    )
+                    receipt.actual = (
+                        update["usage"]["total_tokens"] - state["usage"]["total_tokens"]
                     )
                     return update
             except AgentQuotaLimitError:
@@ -1048,6 +1482,23 @@ async def run_agent_graph_stream(
             raise
 
         cumulative = _usage_from_state(state["usage"]) + step_usage
+        if (
+            dag.active_spec(state.get("planning"))
+            and not call_buffers
+            and "".join(content_parts).strip()
+        ):
+            # A text-only task response is a proposal, not a root final answer.
+            call_buffers[0] = _ToolCallBuffer(
+                id=f"host_finish_{step_number}",
+                name="finish_task",
+                argument_parts=[
+                    json.dumps(
+                        {"status": "succeeded", "summary": "".join(content_parts)},
+                        ensure_ascii=False,
+                    )
+                ],
+            )
+            finish_reason = "tool_calls"
         await publish(
             AgentLoopEvent(
                 kind="model_completed",
@@ -1097,6 +1548,8 @@ async def run_agent_graph_stream(
                 index=index,
                 buffer=buffer,
             )
+            if worker_plan is not None:
+                request = replace(request, id=f"{context.task_id}.{step_number}.{request.id}")
             raw_tool_calls.append(
                 {
                     "id": request.id,
@@ -1141,8 +1594,20 @@ async def run_agent_graph_stream(
         if selection_policy is not None:
             await validate_capabilities()
         decisions: dict[str, bool] = {}
+        if (
+            planning_enabled
+            and any(c["name"] in dag.CONTROL_NAMES for c in state["pending_tool_calls"])
+            and len(state["pending_tool_calls"]) != 1
+        ):
+            return {"tool_approvals": {}}
         for call in state["pending_tool_calls"]:
             request = _tool_call_request(call)
+            if planning_enabled and (
+                request.name in dag.CONTROL_NAMES
+                or state.get("planning")
+                and request.name not in dag.allowed_names(state["planning"], registry)
+            ):
+                continue
             if call["parse_error_content"] is not None:
                 continue
             if not tool_executor.needs_approval(
@@ -1194,20 +1659,47 @@ async def run_agent_graph_stream(
         document_context = None
         direct_content = None
         budget_stop = None
+        plan = state.get("planning")
+        mixed_controls = (
+            planning_enabled
+            and len(state["pending_tool_calls"]) > 1
+            and any(c["name"] in dag.CONTROL_NAMES for c in state["pending_tool_calls"])
+        )
         final_reserve = (
             final_allowance(
                 to_model_messages(state["prepared_messages"]), getattr(model, "max_tokens", 2_048)
             )
-            if react_enabled
+            if react_enabled and worker_plan is None
             else 0
         )
 
         for call in state["pending_tool_calls"]:
             request = _tool_call_request(call)
+            control = planning_enabled and request.name in dag.CONTROL_NAMES
+            task_limits = dag.task_remaining(
+                plan,
+                {
+                    **state,
+                    "usage": _usage_to_state(_usage_from_state(state["usage"]) + tool_usage),
+                    "tool_observations": [*state["tool_observations"], *observations],
+                },
+                _budget_with_elapsed(state, deadline)["elapsed_seconds"],
+            )
+            task_error = None
+            if plan and not control:
+                if request.name not in dag.allowed_names(plan, registry):
+                    task_error = "task_capability_denied"
+                elif task_limits and (
+                    task_limits["tools"] <= 0
+                    or (web_search_estimated_tokens if request.name == "search_web" else 0)
+                    > task_limits["tokens"]
+                ):
+                    task_error = "task_budget"
             available = (
                 state["budget"]["max_total_tokens"]
                 - state["usage"]["total_tokens"]
                 - tool_usage.total_tokens
+                - state.get("budget_held_tokens", 0)
             )
             estimate = (
                 tool_allowance(request.name, available, final_reserve, web_search_estimated_tokens)
@@ -1229,7 +1721,11 @@ async def run_agent_graph_stream(
             )
             approval_granted = state["tool_approvals"].get(request.id)
             if request.id not in state["tool_approvals"]:
-                if execution_guard is not None and budget_stop is None:
+                if (
+                    execution_guard is not None
+                    and budget_stop is None
+                    and not (control or mixed_controls or task_error)
+                ):
                     try:
                         await execution_guard("tool")
                     except AgentQuotaLimitError:
@@ -1241,7 +1737,11 @@ async def run_agent_graph_stream(
                         tool_call=request,
                     )
                 )
-            elif execution_guard is not None and budget_stop is None:
+            elif (
+                execution_guard is not None
+                and budget_stop is None
+                and not (control or mixed_controls or task_error)
+            ):
                 try:
                     await execution_guard("tool")
                 except AgentQuotaLimitError:
@@ -1264,6 +1764,8 @@ async def run_agent_graph_stream(
                 approval_granted=approval_granted,
                 used=tool_usage.total_tokens,
                 child_calls=internal_model_calls,
+                task_limits=task_limits,
+                plan=plan,
             ):
                 return await _execute_tool(
                     tool_executor,
@@ -1272,25 +1774,95 @@ async def run_agent_graph_stream(
                         context,
                         remaining_tokens=max(
                             0,
-                            state["budget"]["max_total_tokens"]
-                            - state["usage"]["total_tokens"]
-                            - used
-                            - final_reserve,
+                            min(
+                                state["budget"]["max_total_tokens"]
+                                - state["usage"]["total_tokens"]
+                                - used
+                                - final_reserve,
+                                task_limits["tokens"] if task_limits else float("inf"),
+                            ),
                             # Delegated paid models must leave room for the root final turn.
                         ),
                         remaining_steps=max(
-                            0, state["budget"]["max_steps"] - step_number - child_calls
+                            0,
+                            min(
+                                state["budget"]["max_steps"] - step_number - child_calls,
+                                task_limits["steps"] - 1 if task_limits else 999,
+                            ),
                         ),
-                        remaining_seconds=max(0, deadline - perf_counter()),
+                        remaining_seconds=max(
+                            0,
+                            min(
+                                deadline - perf_counter(),
+                                task_limits["seconds"] if task_limits else float("inf"),
+                            ),
+                        ),
                         progress_callback=tool_progress,
                     ),
                     request,
                     parse_error,
                     approval_granted,
-                    frozenset(state["loaded_tool_names"]),
+                    dag.allowed_names(plan, registry)
+                    if plan
+                    else frozenset(state["loaded_tool_names"]),
                 )
 
-            if budget_stop is not None:
+            if mixed_controls or task_error:
+                result = ToolResult.failure(
+                    "Hành động chưa được thực hiện: không phù hợp task hiện tại "
+                    "hoặc control phải gọi riêng.",
+                    error_code=task_error or "planning_control_mixed",
+                )
+            elif control:
+                try:
+                    if parse_error:
+                        raise ValueError("Invalid control arguments")
+                    if request.name == "create_plan":
+                        if plan is not None:
+                            raise ValueError("Only one plan is allowed; no nested plan or replan")
+                        plan = dag.create_plan(
+                            request.arguments,
+                            goal=state["goal"],
+                            registry=registry,
+                            role=context.user_role,
+                            remaining_tokens=max(0, available - final_reserve),
+                            remaining_steps=state["budget"]["max_steps"] - step_number - 1,
+                            remaining_seconds=max(0.001, deadline - perf_counter()),
+                            document_versions=planning_document_versions,
+                        )
+                        plan["final_reserve"] = final_reserve
+                        result = ToolResult.success(
+                            "Kế hoạch hợp lệ. Host sẽ chọn task sẵn sàng theo dependency."
+                        )
+                    else:
+                        args = dag.FinishRequest.model_validate(request.arguments)
+                        plan = dag.close_task(
+                            plan,
+                            state,
+                            summary=args.summary,
+                            error=(
+                                "task_budget"
+                                if request.id.startswith("host_budget_")
+                                else "criteria_not_met"
+                            )
+                            if args.status == "failed"
+                            else None,
+                        )
+                        result = ToolResult.success(
+                            "Đã ghi kết quả task; scheduler sẽ chọn task tiếp theo."
+                        )
+                    await publish_plan(plan, step_number)
+                except (ValueError, TypeError, KeyError) as exc:
+                    result = ToolResult.failure(
+                        "Control chưa hợp lệ: "
+                        + (
+                            "schema/field validation"
+                            if isinstance(exc, ValidationError)
+                            else str(exc)[:220]
+                        ),
+                        error_code="planning_validation",
+                    )
+            elif budget_stop is not None:
                 result = ToolResult.failure(
                     "Chưa thực hiện: không đủ ngân sách cho hành động và câu trả lời cuối.",
                     error_code="agent_budget_skipped",
@@ -1301,9 +1873,17 @@ async def run_agent_graph_stream(
                         (usage_reservation or unreserved_usage)(estimate)
                         if estimate
                         else unreserved_usage(0)
-                    ):
+                    ) as receipt:
                         if react_enabled:
-                            async with asyncio.timeout(max(0.001, deadline - perf_counter())):
+                            async with asyncio.timeout(
+                                max(
+                                    0.001,
+                                    min(
+                                        deadline - perf_counter(),
+                                        task_limits["seconds"] if task_limits else float("inf"),
+                                    ),
+                                )
+                            ):
                                 result = await execute()
                         else:
                             result = await execute()
@@ -1325,6 +1905,11 @@ async def run_agent_graph_stream(
                             )
                         )
                         completion_published = True
+                        receipt.actual = (
+                            result.usage.total_tokens
+                            if result.usage is not None
+                            else (0 if not estimate else None)
+                        )
                 except AgentQuotaLimitError:
                     budget_stop = "quota_limit"
                     result = ToolResult.failure(
@@ -1413,7 +1998,33 @@ async def run_agent_graph_stream(
                 f"{'hoàn thành.' if not result.is_error else 'kết thúc với lỗi.'}"
             )
 
+        task_spec = dag.active_spec(plan)
+        if (
+            task_spec
+            and task_spec.agent_type == "web_researcher"
+            and len(observations) == 1
+            and not observations[0]["is_error"]
+            and task_spec.budget.max_tool_calls == 1
+            and len(task_spec.allowed_capability_ids) == 1
+            and observations[0]["tool_name"] == "search_web"
+            and registry.get("search_web").tool.return_direct
+        ):
+            # Native web already returns a synthesized answer with validated sources.
+            # Close this single-action task from that observation; root still synthesizes.
+            plan = dag.close_task(
+                plan,
+                {
+                    **state,
+                    "tool_observations": [*state["tool_observations"], *observations],
+                    "usage": _usage_to_state(_usage_from_state(state["usage"]) + tool_usage),
+                },
+                summary=observations[0]["content"][:4000],
+            )
+            await publish_plan(plan, step_number)
+
         current_budget = _budget_with_elapsed(state, deadline)
+        if worker_plan is not None and plan and not plan.get("active_task"):
+            direct_content = plan["results"][context.task_id]["summary"]
         return {
             "messages": tool_messages,
             "pending_tool_calls": [],
@@ -1425,6 +2036,7 @@ async def run_agent_graph_stream(
             "usage": _usage_to_state(_usage_from_state(state["usage"]) + tool_usage),
             "direct_answer": direct_content is not None,
             "budget_stop_reason": budget_stop,
+            **({"planning": plan} if planning_enabled else {}),
             **(
                 {"rag_context": _memory_blocks_to_state(document_context)}
                 if document_context is not None
@@ -1434,6 +2046,25 @@ async def run_agent_graph_stream(
         }
 
     async def build_final_node(state: AgentState) -> Mapping[str, Any]:
+        if (
+            worker_plan is None
+            and state.get("planning")
+            and any(v != "succeeded" for v in state["planning"]["statuses"].values())
+        ):
+            await publish(
+                AgentLoopEvent(
+                    kind="pipeline_progress",
+                    step_number=state["step_number"],
+                    progress={
+                        "id": "budget.partial",
+                        "label": "Kế hoạch có task chưa thành công",
+                        "state": "completed",
+                        "partial": True,
+                        "stop_reason": "task_failed",
+                        "duration_ms": 0,
+                    },
+                )
+            )
         if state.get("direct_answer", False):
             await restore_node_selection(state)
             await validate_capabilities()
@@ -1449,6 +2080,10 @@ async def run_agent_graph_stream(
     )
     initial_state.update(
         execution_mode="react" if react_enabled else "routed",
+        planning_enabled=planning_enabled,
+        parallel_enabled=parallel_enabled,
+        parallel_max_workers=parallel_max_workers,
+        planning=deepcopy(worker_plan),
         step_number=start_step,
         loaded_tool_names=sorted(selection.loaded_names),
         selected_skill=selected_skill.name if selected_skill is not None else None,
@@ -1627,6 +2262,8 @@ async def run_agent_graph_stream(
             graph_input = Command(resume=approved)
 
         final_snapshot = await graph.aget_state(graph_config)
+        if worker_done is not None:
+            await worker_done(dict(final_snapshot.values))
         if final_snapshot.values.get("phase") == "failed":
             _raise_graph_node_failure(final_snapshot.values)
     except NodeTimeoutError as exc:

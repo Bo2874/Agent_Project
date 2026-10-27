@@ -101,6 +101,324 @@ BUDGET_CASES = (
     ),
 )
 
+PLANNER_CASES = (
+    (
+        "P01",
+        "Chỉ trả lời đúng PLANNER_CHAT_OK; đây là câu hỏi đơn giản, "
+        "không lập kế hoạch, không gọi tool.",
+    ),
+    (
+        "P02",
+        "Hãy tạo và thực thi kế hoạch gồm hai task: a dùng demo__count_text đếm ký tự chuỗi "
+        '"abc def"; b phụ thuộc a, dùng demo__calculate nhân kết quả thực tế với 17. '
+        "Không tự đếm/tính thay tool. Để host phân bổ budget. Trả kết quả cuối.",
+    ),
+    (
+        "P03",
+        "Tạo và thực thi kế hoạch 3 task: book dùng search_documents tìm đúng một lần trong file "
+        "đã chọn về các chiến lược chunking cố định, đệ quy và ngữ nghĩa; web dùng search_web "
+        "đúng một lần tìm repository hnswlib chính thức trên GitHub về ANN/HNSW và thêm phần tử; "
+        "compare phụ thuộc book và web, không dùng tool, phân biệt vai trò chunking và ANN index "
+        "trong RAG từ hai kết quả, chỉ rõ nguồn sách/web. "
+        "Để host phân bổ budget, không chạy song song.",
+    ),
+    (
+        "P04",
+        "Tạo và thực thi kế hoạch: full dùng summarize_documents để tóm tắt toàn bộ file; "
+        "lookup phụ thuộc full, dùng search_web tìm thêm dựa trên bản tóm tắt đó; note độc lập "
+        "không dùng tool, giải thích rằng một bản tóm tắt toàn văn phải bao phủ tài liệu. "
+        "Nếu full thất bại thì đánh dấu failed, không thay bằng top-k; lookup phải blocked. "
+        "Để host phân bổ budget.",
+    ),
+)
+
+
+WORKER_CASES = (
+    (
+        "W01",
+        'Tạo và thực thi kế hoạch: count dùng demo__count_text đếm ký tự "abc def"; '
+        "calc độc lập dùng demo__calculate tính 7*17; join phụ thuộc count và calc, không dùng "
+        "tool, báo hai kết quả thực tế. Để host phân bổ budget và chạy các task độc lập song song. "
+        "Mỗi task dùng tool đúng một lần, không tự đếm/tính thay tool.",
+    ),
+    (
+        "W02",
+        "Tạo và thực thi kế hoạch hai task độc lập: book dùng search_documents đúng một lần "
+        "đọc file đã chọn, giải thích semantic chunking và ưu nhược điểm theo nội dung gốc; "
+        'count dùng demo__count_text đếm ký tự "abc def". Mỗi task có 2 model steps, '
+        "để host phân bổ token và chạy song song. Tổng hợp hai kết quả; không tìm web.",
+    ),
+)
+
+
+async def run_planner_live(owner_email, document_id, only_case=None, *, parallel=False):
+    import httpx
+    from sqlalchemy import select
+
+    from backend.core.config import PROJECT_ROOT, get_settings
+    from backend.core.security import create_access_token
+    from backend.database import SessionFactory
+    from backend.main import app
+    from backend.models import AgentRun, AgentTask, Document, RunStep, TaskAttempt, User
+
+    settings = get_settings()
+    if not owner_email or not document_id or not settings.v2_features.is_enabled("planning"):
+        raise SystemExit("Planner suite requires V2 planning/ReAct and the authorized owner/PDF.")
+    if parallel and not settings.v2_features.is_enabled("parallel"):
+        raise SystemExit("Worker suite requires V2_PARALLEL_ENABLED.")
+    async with SessionFactory() as session:
+        owner = await session.scalar(select(User).where(User.email == owner_email, User.is_active))
+        doc = await session.get(Document, UUID(document_id))
+        if not owner or not doc or doc.owner_user_id != owner.id or doc.status != "ready":
+            raise SystemExit("Ready owned PDF required.")
+        owner_id, role = owner.id, owner.role
+    folder = (
+        PROJECT_ROOT
+        / "data/agent-testing"
+        / (
+            datetime.now(UTC).strftime("%Y%m%d-%H%M%S-")
+            + ("workers-" if parallel else "planner-")
+            + uuid4().hex[:8]
+        )
+    )
+    folder.mkdir(parents=True)
+    path = folder / "REPORT.json"
+    report = {
+        "suite": "react-stage-5" if parallel else "react-stage-4",
+        "transport": "Real owner cookie, API/ASGI/SSE, DB and paid LLM; no browser",
+        "cases": [],
+        "passed": False,
+    }
+
+    async def api(client, method, url, **kwargs):
+        response = await client.request(method, url, **kwargs)
+        response.raise_for_status()
+        return response
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://agent-live.local",
+            trust_env=False,
+            timeout=720,
+        ) as client:
+            client.cookies.set("access_token", create_access_token(owner_id, role))
+            selected_cases = [
+                (k, q)
+                for k, q in (WORKER_CASES if parallel else PLANNER_CASES)
+                if only_case is None or k == only_case
+            ]
+            for key, question in selected_cases:
+                conversation = (
+                    await api(
+                        client,
+                        "POST",
+                        "/api/conversations",
+                        json={
+                            "title": ("Parallel worker" if parallel else "Sequential planner")
+                            + f" acceptance {key}"
+                        },
+                    )
+                ).json()["id"]
+                if key in {"P03", "P04", "W02"}:
+                    await api(
+                        client,
+                        "PUT",
+                        f"/api/conversations/{conversation}/documents",
+                        json={"document_ids": [document_id]},
+                    )
+                item = {"id": key, "question": question, "conversation_id": conversation}
+                report["cases"].append(item)
+                previous_tokens = settings.agent_max_total_tokens
+                if key in {"P02", "W01"}:
+                    # Deliberate test configuration for a multi-model DAG. The app default
+                    # remains20k; planner validation may reject/stop plans which cannot fit.
+                    settings.agent_max_total_tokens = 40_000
+                    item["test_token_cap_override"] = 40_000
+                started = perf_counter()
+                try:
+                    response = await api(
+                        client,
+                        "POST",
+                        f"/api/conversations/{conversation}/messages",
+                        json={"content": question, "rag_search_mode": "fast"},
+                    )
+                    events = parse_events(response.text)
+                    item["events"] = events
+                    item["answer"] = "".join(
+                        e["data"].get("content", "") for e in events if e["event"] == "delta"
+                    )
+                    item["run_id"] = next(
+                        e["data"]["run_id"] for e in events if e["event"] == "start"
+                    )
+                    assert not any(e["event"] == "error" for e in events), "Run failed"
+                    done = next(e["data"] for e in events if e["event"] == "done")
+                    tools = [
+                        e["data"]
+                        for e in events
+                        if e["event"] == "agent_status" and e["data"]["status"] == "tool_completed"
+                    ]
+                    successful = [t["tool"]["name"] for t in tools if t["success"]]
+                    async with SessionFactory() as session:
+                        run = await session.get(AgentRun, UUID(item["run_id"]))
+                        assert run.status == "completed"
+                        snapshot = (run.rag_trace or {}).get("planning")
+                        tasks = (
+                            await session.scalars(
+                                select(AgentTask).where(AgentTask.agent_run_id == run.id)
+                            )
+                        ).all()
+                        attempts = (
+                            await session.scalars(
+                                select(TaskAttempt)
+                                .join(AgentTask)
+                                .where(AgentTask.agent_run_id == run.id)
+                            )
+                        ).all()
+                        item["planning"] = snapshot
+                        item["tasks"] = [
+                            {"task_id": t.task_id, "status": t.status, "result": t.result}
+                            for t in tasks
+                        ]
+                        item["attempts"] = [
+                            {
+                                "task_id": next(
+                                    t.task_id for t in tasks if t.id == a.agent_task_id
+                                ),
+                                "first_step": a.first_step,
+                                "last_step": a.last_step,
+                            }
+                            for a in attempts
+                        ]
+                        if key == "P01":
+                            assert (
+                                not snapshot
+                                and not tasks
+                                and not tools
+                                and item["answer"].strip() == "PLANNER_CHAT_OK"
+                            )
+                        else:
+                            assert snapshot and len(tasks) == len(snapshot["spec"]["tasks"])
+                            assert successful.count("create_plan") == 1
+                            states = {t.task_id: t.status for t in tasks}
+                            assert states == snapshot["statuses"]
+                            mapping = {a["task_id"]: a for a in item["attempts"]}
+                            for task in snapshot["spec"]["tasks"]:
+                                if states[task["task_id"]] == "succeeded":
+                                    for dependency in task["depends_on"]:
+                                        assert states[dependency] == "succeeded"
+                                        assert (
+                                            mapping[task["task_id"]]["first_step"]
+                                            > mapping[dependency]["last_step"]
+                                        )
+                            if key in {"W01", "W02"}:
+                                assert all(s == "succeeded" for s in states.values())
+                                assert successful.count("demo__count_text") == 1
+                                assert "7" in item["answer"]
+                                steps = (
+                                    await session.scalars(
+                                        select(RunStep).where(RunStep.agent_run_id == run.id)
+                                    )
+                                ).all()
+                                intervals = {}
+                                for task_id, attempt in mapping.items():
+                                    subset = [
+                                        s
+                                        for s in steps
+                                        if attempt["first_step"]
+                                        <= s.step_number
+                                        <= attempt["last_step"]
+                                    ]
+                                    intervals[task_id] = {
+                                        "start": min(s.created_at for s in subset),
+                                        "end": max(s.finished_at for s in subset if s.finished_at),
+                                    }
+                                pair = ("count", "calc") if key == "W01" else ("book", "count")
+                                left, right = (intervals[k] for k in pair)
+                                assert (
+                                    left["start"] < right["end"] and right["start"] < left["end"]
+                                ), "Independent worker intervals did not overlap"
+                                item["worker_intervals"] = {
+                                    k: {n: t.isoformat() for n, t in v.items()}
+                                    for k, v in intervals.items()
+                                }
+                                if key == "W01":
+                                    assert successful.count("demo__calculate") == 1
+                                    assert "119" in item["answer"]
+                                else:
+                                    assert successful.count("search_documents") == 1
+                                    assert done["citations"]
+                                    assert all(
+                                        h["document_id"] == document_id for h in done["citations"]
+                                    )
+                                    assert snapshot["results"]["book"]["evidence_refs"]
+                                    assert len(snapshot["results"]["book"]["summary"]) > 100
+                            elif key == "P02":
+                                assert all(s == "succeeded" for s in states.values())
+                                assert successful.index("demo__count_text") < successful.index(
+                                    "demo__calculate"
+                                )
+                                assert "119" in item["answer"]
+                            elif key == "P03":
+                                assert all(s == "succeeded" for s in states.values())
+                                assert (
+                                    successful.count("search_documents")
+                                    == successful.count("search_web")
+                                    == 1
+                                )
+                                assert done["citations"] and "github.com" in item["answer"]
+                                assert all(
+                                    h["document_id"] == document_id for h in done["citations"]
+                                )
+                            else:
+                                assert sorted(states.values()) == ["blocked", "failed", "succeeded"]
+                                assert (
+                                    "search_web" not in successful
+                                    and "search_documents" not in successful
+                                )
+                                assert done["partial"] and run.stop_reason == "partial_task_failed"
+                    history = (
+                        await api(client, "GET", f"/api/conversations/{conversation}/messages")
+                    ).json()
+                    assert (
+                        next(m for m in history if m["id"] == done["message_id"])["content"]
+                        == item["answer"]
+                    )
+                    timeline = (
+                        await api(client, "GET", f"/api/conversations/{conversation}/runs")
+                    ).json()
+                    assert (
+                        next(r for r in timeline if r["id"] == item["run_id"])["planning"]
+                        == item["planning"]
+                    )
+                    item["passed"] = True
+                except Exception as exc:
+                    item.update(passed=False, failure_type=type(exc).__name__)
+                    if isinstance(exc, AssertionError):
+                        item["check"] = str(exc)[:200]
+                finally:
+                    settings.agent_max_total_tokens = previous_tokens
+                item["seconds"] = round(perf_counter() - started, 3)
+                path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+                print(
+                    json.dumps(
+                        {
+                            k: item.get(k)
+                            for k in ("id", "passed", "run_id", "seconds", "failure_type", "check")
+                        }
+                    ),
+                    flush=True,
+                )
+                if not item["passed"]:
+                    break
+    report["passed"] = len(report["cases"]) == len(selected_cases) and all(
+        c["passed"] for c in report["cases"]
+    )
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps({"passed": report["passed"], "report": str(path)}), flush=True)
+    if not report["passed"]:
+        raise SystemExit(1)
+
 
 async def run_budget_live(owner_email, document_id):
     import httpx
@@ -805,13 +1123,23 @@ def main():
     parser.add_argument(
         "--live", action="store_true", help="Call real paid APIs and create fixtures"
     )
-    parser.add_argument("--suite", choices=("react", "documents", "budget"), default="react")
+    parser.add_argument(
+        "--suite", choices=("react", "documents", "budget", "planner", "workers"), default="react"
+    )
     parser.add_argument("--owner-email")
     parser.add_argument("--document-id")
-    parser.add_argument("--case", choices=tuple(k for k, _ in DOCUMENT_CASES))
+    parser.add_argument(
+        "--case", choices=tuple(k for k, _ in (*DOCUMENT_CASES, *PLANNER_CASES, *WORKER_CASES))
+    )
     args = parser.parse_args()
     if args.live:
-        if args.suite == "budget":
+        if args.suite in {"planner", "workers"}:
+            asyncio.run(
+                run_planner_live(
+                    args.owner_email, args.document_id, args.case, parallel=args.suite == "workers"
+                )
+            )
+        elif args.suite == "budget":
             asyncio.run(run_budget_live(args.owner_email, args.document_id))
         elif args.suite == "documents":
             asyncio.run(run_documents_live(args.owner_email, args.document_id, args.case))
@@ -825,6 +1153,10 @@ def main():
                     for key, value in (
                         DOCUMENT_CASES
                         if args.suite == "documents"
+                        else WORKER_CASES
+                        if args.suite == "workers"
+                        else PLANNER_CASES
+                        if args.suite == "planner"
                         else BUDGET_CASES
                         if args.suite == "budget"
                         else CASES

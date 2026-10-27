@@ -87,7 +87,7 @@ def build_agent_graph(
     builder.add_conditional_edges(
         "context",
         route_after_context,
-        {"model": "model", "limit": "limit"},
+        {"model": "model", "limit": "limit", "final": "final"},
     )
     builder.add_conditional_edges(
         "model",

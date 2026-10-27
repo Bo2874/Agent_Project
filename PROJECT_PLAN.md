@@ -8,7 +8,7 @@ Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, 
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần
 [Lộ trình mở rộng V2](#lộ-trình-mở-rộng-v2) bên dưới. Đây là kế hoạch triển khai, chưa phải các chức năng đã có.
 
-Tiến độ 2026-10-27: **M3 document_qa đã được user chấp nhận tạm thời. ReAct đợt1–3 đã có vòng chung, doc tools, lịch sử hành động, dự trù/đối soát token và kết quả một phần. Kiểm thử LLM thật trên Hiểu sâu về AI Agent.pdf. Tiếp theo đợt4: planner và DAG tuần tự; sub-agent/song song chưa triển khai. Ngày87 và connector/Skill Ngày86 tiếp tục hoãn**.
+Tiến độ 2026-10-27: **M3 document_qa đã được user chấp nhận tạm thời. ReAct đợt1–5 đã có vòng chung, doc tools, lịch sử hành động, budget/partial, planner/DAG và worker đọc có context riêng, chạy song song giới hạn. Hai case LLM thật đợt5 đạt, gồm Hiểu sâu về AI Agent.pdf. Tiếp theo đợt6: background/checkpoint worker/cancel/replay/task UI. Lỗi web missing usage còn ghi nhận. Ngày87 và connector/Skill Ngày86 tiếp tục hoãn**.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),
 [mapping module](#4-mapping-module-và-dữ-liệu-dự-kiến),
@@ -1141,8 +1141,18 @@ Triển khai từng đợt nhỏ, report và commit riêng; không tick checklis
   Hết token/step/time/quota trả kết quả một phần, giữ nguồn và không mời resume run đã hết budget.
   B01–B05 gọi LLM thật đạt; PostgreSQL kiểm giữ chỗ chồng lấn/settle/unknown. Native web chỉ
   dự trù, không có hard cap input ẩn; lỗi mất usage giữ dự trù tới hết cửa sổ ngày.
-- [ ] Đợt 4: planner/PlanSpec/TaskResult, DAG validator/storage và scheduler tuần tự.
-- [ ] Đợt 5: worker context riêng, song song có giới hạn và root budget.
+- [x] Đợt 4: PlanSpec/TaskResult; LLM đề xuất plan bằng control create_plan trong vòng ReAct;
+  validator cycle/dependency/quyền/budget, scheduler ready-set tuần tự và block dependency lỗi.
+  Checkpoint giữ state; agent_tasks/task_attempts là projection idempotent, migration0028 đã chạy.
+  Task có scope tool, token/step/tool/time budget; không nhân ngân sách root. Nguồn task do host
+  giữ, không nhận citation tự khai. Gọi thử LLM thật trên chat/MCP/PDF/web/nhánh lỗi; không coi
+  đây là benchmark chất lượng hoặc nghiệm thu crash recovery/song song. Theo yêu cầu user,
+  dừng mở rộng kiểm thử; xem report đợt4 và giới hạn retrieval/provider còn ghi nhận.
+- [x] Đợt 5: worker đọc dùng graph ReAct riêng, chỉ nhận task/dep results/tool scope; tối đa3/run,
+  3/user và8/process mặc định. Task ghi/approval/unknown giữ đường root tuần tự. Atomic admission
+  chung với final reserve, quota PostgreSQL và receipt ContextVar; giảm kết quả theo task ID.
+  Hai case LLM/API/SSE thật đạt (MCP độc lập→join và PDF+MCP), xác nhận overlap bằng DB timestamps.
+  Worker checkpoint hiện chỉ in-memory trong lượt fan-out; durable child resume thuộc đợt6.
 - [ ] Đợt 6: background/checkpoint/cancel/approval, event replay và UI task.
 
 Từ đợt2, hội thoại có file dùng cùng vòng ReAct khi flag bật; tắt flag giữ nhánh M3/routing cũ.
@@ -1400,9 +1410,11 @@ Không mặc định các số liệu hiệu năng trong sách áp dụng cho pr
 
 ## Task tiếp theo
 
-Ngày 2026-10-27: hoàn thành ReAct đợt1–3; live R01–R05, D01–D06 và B01–B05 có report.
-Tiếp theo đợt4: planner/PlanSpec/TaskResult, DAG validator/storage và scheduler tuần tự;
-đợt5–6 xây worker/song song/background. JEV/routing giữ khi tắt flag và checkpoint cũ;
+Ngày 2026-10-27: hoàn thành ReAct đợt1–5; có report LLM thật cho baseline, RAG, budget, planner và worker.
+Đợt5 đã có worker đọc với context riêng và song song giới hạn; hai case LLM thật đạt luồng,
+gồm PDF đã upload. Tiếp theo đợt6 background/checkpoint worker bền vững/events/task UI.
+Planner tuần tự bật bằng V2_PLANNING_ENABLED cùng ReAct/master flag, không bắt buộc JEV.
+JEV/routing giữ khi tắt flag và checkpoint cũ;
 flag ReAct không tự migrate run. File1389 chunk vẫn vượt giới hạn tóm tắt toàn văn64 chunk.
 Ngày 93/95 vẫn chưa nghiệm thu; regression/probe fixture không thay thế benchmark chất lượng.
 

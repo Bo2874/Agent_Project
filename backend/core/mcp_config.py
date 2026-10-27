@@ -151,6 +151,27 @@ def load_stdio_configs(settings: Settings) -> tuple[MCPStdioConfig, ...]:
                     args=profile.args,
                     cwd=str(PROJECT_ROOT) if profile.cwd == "@project" else profile.cwd,
                     bindings=bindings,
+                    # Reviewed host descriptors for bundled legacy aliases. Keep
+                    # their existing names, execution policies and feature gating.
+                    legacy_capabilities=tuple(
+                        (
+                            tool.remote_name,
+                            next(
+                                cap
+                                for cap in manifest.capabilities()
+                                if cap.kind == "tool" and cap.name == tool.name
+                            ).model_copy(
+                                update={
+                                    "capability_id": f"demo__{tool.remote_name}",
+                                    "name": tool.remote_name,
+                                    "plugin_id": None,
+                                }
+                            ),
+                        )
+                        for tool in server.tools
+                    )
+                    if legacy
+                    else (),
                     expected_remote_names=remote_names,
                     expected_release=profile.release,
                     tool_timeout_seconds=settings.tool_timeout_seconds,

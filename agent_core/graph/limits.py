@@ -31,7 +31,10 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
     if phase == "context_ready":
         if state["step_number"] > budget["max_steps"]:
             return "step_limit"
-        if state["usage"]["total_tokens"] >= budget["max_total_tokens"]:
+        if (
+            state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
+            >= budget["max_total_tokens"]
+        ):
             return "token_limit"
         if any(
             count > budget["max_identical_tool_calls"]
@@ -49,7 +52,10 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
     if phase == "model_completed" and state["pending_tool_calls"]:
         if state["step_number"] >= budget["max_steps"]:
             return "step_limit"
-        if state["usage"]["total_tokens"] >= budget["max_total_tokens"]:
+        if (
+            state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
+            >= budget["max_total_tokens"]
+        ):
             return "token_limit"
         if budget["elapsed_seconds"] >= budget["max_duration_seconds"]:
             return "time_limit"
@@ -62,7 +68,10 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
     if phase == "tools_completed":
         if state["step_number"] > budget["max_steps"]:
             return "step_limit"
-        if state["usage"]["total_tokens"] >= budget["max_total_tokens"]:
+        if (
+            state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
+            >= budget["max_total_tokens"]
+        ):
             return "token_limit"
         if any(
             count > budget["max_repeated_observations"]
@@ -75,7 +84,9 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
     return None
 
 
-def route_after_context(state: AgentState) -> Literal["model", "limit"]:
+def route_after_context(state: AgentState) -> Literal["model", "limit", "final"]:
+    if state.get("direct_answer"):
+        return "final"
     return "limit" if limit_reason(state) is not None else "model"
 
 

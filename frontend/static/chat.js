@@ -371,13 +371,14 @@ if (chatApp) {
     row.root.classList.toggle("is-substage", data.id.endsWith("_model") || data.id.endsWith(".citations"));
     row.clockStarted = performance.now() - (data.duration_ms || 0);
     row.root.dataset.state = data.state;
-    row.icon.textContent = { running: "●", completed: "✓", failed: "×", cancelled: "–" }[data.state];
+    row.icon.textContent = { pending: "○", running: "●", completed: "✓", failed: "×", cancelled: "–" }[data.state] || "○";
     const count = Number.isInteger(data.count) ? ` · ${data.count} đoạn` : "";
     row.label.textContent = `${data.label}${count}`;
     const duration = data.state === "running"
       ? formatElapsed(data.duration_ms || 0) : formatDuration(data.duration_ms || 0);
     row.time.textContent = `${duration}${
       data.state === "running" ? " · Đang chạy" : data.state === "failed" ? " · Lỗi"
+        : data.state === "pending" ? " · Đang chờ"
         : data.state === "cancelled" ? " · Đã dừng" : ""
     }`;
     if (data.state === "running") timeline.titleText.textContent = data.label;

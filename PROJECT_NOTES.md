@@ -1484,3 +1484,113 @@
   worker/không --reload và refresh trang; không chạy migration. Đợt4 planner/DAG chưa làm.
 - Hai lượt nghiệm thu đợt3 có4 paid host web call/4 native searches,0.05923390 USD; chưa cộng
   DeepSeek/memory. Có thêm2 yêu cầu web bị budget chặn trước dispatch, không tính thành paid call.
+
+### 2026-10-27 — ReAct đợt4: planner và DAG tuần tự
+
+- Bổ sung PlanSpec/TaskResult/TaskUsage trên TaskSpec hiện có. LLM đề xuất JSON qua control
+  create_plan trong model step gốc, không gọi một planner riêng bắt buộc cho câu chat đơn giản.
+  Proposal nhỏ chỉ có task/goal/agent_type/tools/depends_on/criteria và budget tùy chọn; host
+  tạo input refs tới dependency/current document versions, output schema summary và phân loại
+  side effect từ catalog. Không nhận quyền/UUID nguồn/artifact tự khai của model làm authority.
+- agent_core/planning.py kiểm tối đa8 task, ID trùng, cycle, dependency thiếu, capability vượt
+  quyền và tổng token/step/time không khả thi. Budget mặc định chia trong phần root còn lại,
+  ưu tiên task có tool và chừa final; không nâng default20k/60k. Chỉ một plan, không nested/replan.
+  Plan/control phải gọi riêng; batch trộn control với tool thật bị chặn trước approval/dispatch.
+- Scheduler ready-set chạy tuần tự trong graph hiện có. Task chỉ thấy/call được tools đã khai báo,
+  vẫn dùng ToolExecutor/allowlist/role/current authorization/approval gốc. Step/token/tool/time
+  theo task và root cùng được kiểm; task_results không charge thêm usage. Task lỗi làm dependency
+  blocked, task độc lập còn budget tiếp tục. Worker tags chưa tạo worker/context hoặc graph con.
+- finish_task ghi typed result, schema/observation/evidence refs và usage từ host. Text-only task
+  được đưa qua cùng kiểm tra, không phát thành root final. Không chấp nhận success khi chưa có
+  tool observation cần thiết, thiếu nguồn tài liệu/web hoặc outcome chưa rõ. Web task đơn hành
+  động với tool return_direct có answer/nguồn hợp lệ được đóng trực tiếp từ observation; root
+  vẫn tổng hợp, tránh model confirmation trùng. Acceptance chưa có semantic verifier riêng.
+- Task brief/dependency results nằm trong history budget. Trạng thái lặp lại được rút gọn khi
+  bật planning để không tràn system budget2k; không cắt câu hỏi gốc. Task không cần doc capability
+  và final synthesis dùng kết quả task thay passages thô; lineage các nguồn đã đọc được giữ và
+  validate lại trước bind citation. Contract citation_id nay chấp nhận nhãn S1/S2 hiện có của RAG,
+  ngoài ID chữ thường; không mở quyền đọc nguồn khác owner/version/chunk.
+- Migration20261027_0028 đã áp dụng vào PostgreSQL host: agent_tasks và task_attempts, FK cascade
+  theo run/task, identity unique theo plan/task/attempt. Đây là projection UPSERT idempotent;
+  state điều phối nằm trong LangGraph checkpoint. Resume đối soát projection từ state trước
+  dispatch, không phát lại task đã succeeded trong controlled resume test. Chưa nghiệm thu
+  process kill/exactly-once API ngoài; không coi projection là queue/scheduler thứ hai.
+- Recorder nhận planning snapshot qua field host riêng, không đọc authority từ tool progress.
+  GET runs trả plan/result trong cùng owner-filtered endpoint. UI có các hàng task pending/running/
+  succeeded/blocked và reload qua progress snapshot; chưa có task tree/event replay của đợt6.
+  Audit giữa lượt bỏ control create_plan/finish_task để giữ chỗ cho các hành động tool thật.
+- V2_PLANNING_ENABLED dùng cùng master/ReAct; bỏ dependency bắt buộc planning→JEV routing,
+  giữ parallel→planning. Checkpoint cũ không tự bật planning. Env mẫu/Compose có cờ tương ứng;
+  host bật riêng V2_PLANNING_ENABLED=true sau setup, không đổi key hoặc ngân sách mặc định.
+- Đã chạy LLM thật qua owner cookie/API/ASGI/SSE/DB, tạo chat test mới: P01 chat trực tiếp không
+  plan/tool; P02 DAG count_text→calculate ra119, lưu hai TaskResult và dependency đúng; P04
+  summary PDF1389 chunk bị cap64, lookup blocked, note độc lập hoàn tất và root partial.
+  P02 tạm cấu hình40k trong tiến trình test rồi khôi phục, không phải mặc định mới của web.
+  PDF dùng đúng Hiểu sâu về AI Agent.pdf đã upload của user@personalagent.vn, không reindex.
+- P03 có retrieval/web thật nhưng chưa đạt trọn luồng success ba task: có lượt thiếu ô bảng nên
+  task book failed; có lượt provider không xác nhận native search hoặc không trả usage hợp lệ.
+  Hệ thống giữ known usage/unknown reservation, không bịa thành công và chặn compare. Các lần
+  thử đều giữ trong data/agent-testing/stage4-20261027/REPORT.md/.json; không che kết quả partial.
+  Không gọi thêm LLM hoặc mở rộng test theo yêu cầu user cuối lượt.
+- Lần hồi quy đã chạy305 đạt/1 lỗi S1; sửa contract rồi31 test liên quan đạt, gồm DAG/scope/budget/
+  dependency/resume/lineage và atomic web. Kiểm Ruff, Node syntax, Compose config, diff. Không
+  chạy lại toàn suite sau các chỉnh nhỏ cuối, không browser E2E/Docker build, không gửi email.
+  Cập nhật plan/manual/notes; chưa stage/commit/push hoặc restart web. Đợt5 worker riêng/song
+  song và đợt6 background/cancel/replay/idempotency vẫn chưa làm.
+
+### 2026-10-27 — ReAct đợt5: worker đọc riêng, song song giới hạn và ngân sách chung
+
+- Thêm agent_core/task_workers.py và tests/test_task_workers.py. Graph root phát các task đọc
+  ready vào những graph ReAct riêng; mỗi graph có messages, context middleware, executor/cache
+  và checkpoint in-memory riêng. Chỉ nhận goal, TaskSpec, dependency TaskResult và tool scope;
+  không nhận toàn bộ hội thoại, transcript/evidence của task độc lập hoặc tạo nested plan.
+- Giữ LangGraph điều phối; async TaskGroup quản lý các graph con trong node fan-out và hủy/drain
+  children khi parent bị hủy. Join theo dependency, failure block nhánh phụ thuộc, nhánh độc lập
+  tiếp tục; reducer typed theo plan/task/attempt bỏ kết quả cũ/trùng và giữ thứ tự plan.
+  Cấp dải step riêng trước dispatch, prefix tool call IDs theo task/step để audit không trùng.
+- V2_PARALLEL_ENABLED cùng master/planning/ReAct bật worker riêng. Checkpoint root pin flag và
+  giới hạn/run, không tự chuyển checkpoint cũ sang parallel. AGENT_PARALLEL_MAX_WORKERS=3/run,
+  AGENT_PARALLEL_WORKERS_PER_USER=3 và AGENT_PARALLEL_WORKERS_PER_PROCESS=8 mặc định. Hai giới hạn
+  sau là semaphore trong process, chưa phải distributed lease; quota ngày PostgreSQL vẫn chung.
+  Task write/destructive/unknown hoặc cần approval giữ đường root tuần tự; MCP giữ semaphore
+  riêng hiện có. Chưa song song nhiều tool call bên trong một task.
+- Task token/step lấy trong tổng root còn lại, chừa final; worker không nhân20k/60k. Admission
+  paid call dùng lock chung, giữ cả dự trù đang in-flight; settle actual đúng một lần. Actual
+  vượt dự trù được đếm đầy đủ và chặn call sau, không hứa hard cap request đã gửi provider.
+  Usage chưa rõ giữ reservation và dừng paid calls tiếp theo. Token held tách usage thực để
+  không biến dự trù thành actual. AgentQuotaGuard dùng ContextVar thay một mutable receipt
+  chung, tránh charge nhầm giữa các sibling; collector summary tiếp tục dùng receipt hiện hành.
+- DocumentToolSession fork trạng thái truy xuất/actions/evidence cho worker, mỗi request mở
+  AsyncSession riêng. Nhãn S1/S2 do parent cấp đồng bộ theo chunk ID, không đổi owner/version
+  hoặc trao nội dung worker khác. Merge lineage/actions khi child drain, persist có lock.
+  Recorder progress khóa row run để tránh mất trace khi source merge đồng thời. Current step
+  giữ max khi worker trả sự kiện khác thứ tự. Child snapshot không thay authority của root DAG.
+- Chẩn đoán bổ sung lỗi book đợt4: task mặc định data_analyst nhưng có search_documents đã bị
+  lọc passages theo agent_type, chỉ còn metadata. Đã đổi lọc theo capability thực; W02 đợt5
+  xác nhận đọc được nguyên văn để giải thích semantic chunking, không còn metadata-only.
+  Lỗi web_search_missing_usage vẫn để nguyên theo thống nhất, không gọi lại web trong đợt5.
+- Lượt live W01 đầu trả đúng7/119 nhưng chưa overlap: binding demo legacy không có descriptor,
+  nên host xếp side effect unknown và chạy riêng. Bổ sung legacy_capabilities từ manifest host
+  đã duyệt, giữ alias cũ/plugin flag/quyền/approval/retry. Không dùng remote annotation để tự
+  hạ unknown thành read_only. Thay đổi ở backend/core/mcp_config.py và agent_core/mcp/client.py.
+- Hai case LLM thật qua owner cookie/API/ASGI/SSE/history/DB sau sửa đạt: W01 count và calc
+  overlap, join chạy sau;15.217s,23.092 token (test override40k rồi khôi phục20k). W02 book đọc
+  Hiểu sâu về AI Agent.pdf đã tải của user@personalagent.vn song song count;55.001s,30.079 token,
+  10 nguồn, dùng cap tài liệu60k. Không upload/reindex, không email/web; không browser E2E.
+  Run IDs f2d90531-1009-4213-a06a-9d642b6a745a và190d438c-5c73-4911-a175-1e58b3a6fdba.
+  Raw report data/agent-testing/20261027-162907-workers-2250ccc0/REPORT.json; tổng hợp ở
+  data/agent-testing/stage5-20261027/REPORT.md. Giữ cả lượt đầu không overlap, không che lỗi.
+- Trong hai lượt live, prompt cũ còn khẳng định tool luôn tuần tự nên prose nói nhầm cách chạy
+  dù timestamp DB chứng minh overlap. Đã thay bằng promptv7, thêm execution metadata/worker batch
+  timings cho HOST_FINAL; không gọi thêm LLM để kiểm diễn đạt theo yêu cầu chỉ vài case.
+- Kiểm tra có mục tiêu109 test đạt: worker isolation/dependency/partial failure, budget/quota
+  context-local, capacity cancellation, document context/source labels, planner và MCP. Lần
+  sandbox bị WinError5 khi mở MCP pipe; chạy lại ngoài sandbox đạt. Không chạy toàn bộ test suite.
+  Kiểm Ruff/format/Node syntax/Compose/diff; không Docker build hoặc crash/restart test.
+- Host đã bật V2_PARALLEL_ENABLED=true, không đổi key/default budget. Restart web một worker,
+  không --reload để nhận code. Không thêm migration/dependency trong đợt5; migration0028 đợt4
+  đã áp dụng. Cập nhật plan/manual/Docker guide; chưa stage/commit/push.
+- Giới hạn: checkpoint con chỉ in-memory và root commit kết quả sau node fan-out. Process chết
+  giữa node có thể chạy lại tác vụ đọc/paid call; chưa có durable child resume/lease fencing,
+  subscriber replay/task tree hoặc exactly-once. Các phần đó thuộc đợt6; không tick nghiệm thu
+  toàn M4 Ngày109–119 chỉ từ hai case này.
