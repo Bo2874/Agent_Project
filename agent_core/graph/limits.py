@@ -12,6 +12,7 @@ AgentLimitReason = Literal[
     "repeated_observation",
     "quota_limit",
     "unknown_billing",
+    "unknown_tool_outcome",
 ]
 
 

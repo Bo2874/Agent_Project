@@ -251,6 +251,9 @@ class DocumentToolSession:
         if self._source_owner is not None:
             return
         async with SessionFactory() as session:
+            from backend.services.run_events import fence
+
+            await fence(session)
             run = await session.scalar(
                 select(AgentRun)
                 .join(Conversation)
@@ -287,6 +290,30 @@ class DocumentToolSession:
         visible = self.current_chunks | self.summary_chunks
         self.result.evidence = [h for h in self.result.evidence if h.chunk_id in visible]
         await self.persist()
+
+    async def restore_references(self, result):
+        """Adopt journal-replayed host evidence after checking the live document scope."""
+        refs = result.data.get("document_references", [])
+        if not refs:
+            return
+        await self.validate()
+        if result.data.get("document_scope") != self.scope_data:
+            raise DocumentServiceError(
+                "Phạm vi tài liệu đã thay đổi.", code="document_scope_changed"
+            )
+        async with SessionFactory() as session:
+            rows = (
+                await session.execute(
+                    scoped_chunks(self.owner, list(self.result.versions)).where(
+                        DocumentChunk.id.in_([UUID(r["chunk_id"]) for r in refs])
+                    )
+                )
+            ).all()
+        if len(rows) != len({r["chunk_id"] for r in refs}):
+            raise DocumentServiceError("Nguồn không còn khả dụng.", code="document_scope_changed")
+        accepted = self.accept([_hit(chunk, title, 1.0, "coverage") for chunk, title in rows])
+        self.used = True
+        self.summary_chunks.update(h.chunk_id for h in accepted)
 
     async def retain_task_sources(self, snapshot):
         """Task summaries retain host-verified lineage just like full-document summaries."""

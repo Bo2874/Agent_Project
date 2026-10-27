@@ -10,9 +10,10 @@ from time import perf_counter
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from sqlalchemy import select
 
 from agent_core.context_budget import (
     ContextBlock,
@@ -49,7 +50,7 @@ from backend.dependencies_decisions import DecisionProviderDependency
 from backend.dependencies_llm import ChatModelDependency
 from backend.dependencies_skills import SkillRegistryDependency
 from backend.dependencies_tools import ToolRegistryDependency
-from backend.models import AgentRun, Message
+from backend.models import AgentRun, Conversation, Message
 from backend.schemas.chat import (
     AgentRunTimelineResponse,
     ConversationCreate,
@@ -265,6 +266,8 @@ async def stream_assistant_response(
     query_messages: Sequence[dict[str, str]] | None = None,
     run_created_at: datetime | None = None,
     rag_search_mode: RagSearchMode = "fast",
+    operation_journal=None,
+    elapsed_seconds_floor=0,
 ) -> AsyncIterator[str]:
     recorder = AgentRunRecorder(
         agent_run_id=agent_run_id,
@@ -292,6 +295,16 @@ async def stream_assistant_response(
             partial_reason = event.progress.get("stop_reason")
         await quota_guard.record_event(event)
         await recorder(event)
+        if (
+            operation_journal is not None
+            and document_tools is not None
+            and event.kind == "tool_completed"
+            and event.tool_call
+            and event.tool_call.name in DOCUMENT_TOOLS
+            and event.tool_result
+            and not event.tool_result.is_error
+        ):
+            await document_tools.restore_references(event.tool_result)
 
     async def extract_memories() -> None:
         if not resume and settings.memory_extraction_enabled:
@@ -421,6 +434,26 @@ async def stream_assistant_response(
             plugin_runtime(registry, skill_registry, tool_context)
         )
         execution_registry = runtime.registry
+        base_guard = runtime.context.authorization_guard
+
+        async def lease_guard(name):
+            from backend.services.run_events import runtime_session
+
+            async with runtime_session() as guard_session:
+                if operation_journal is not None:
+                    from backend.models import User
+
+                    current = await guard_session.get(User, user_id)
+                    if (
+                        current is None
+                        or not current.is_active
+                        or current.role != runtime.context.user_role
+                    ):
+                        raise ToolAuthorizationError("tool_permission_denied")
+            if base_guard:
+                await base_guard(name)
+
+        runtime.context = replace(runtime.context, authorization_guard=lease_guard)
         rag_context = ()
         if react_enabled:
             rag_context = (
@@ -466,6 +499,10 @@ async def stream_assistant_response(
                 original_guard = runtime.context.authorization_guard
 
                 async def document_guard(name):
+                    from backend.services.run_events import runtime_session
+
+                    async with runtime_session():
+                        pass
                     if original_guard:
                         await original_guard(name)
                     if name in DOCUMENT_TOOLS:
@@ -545,6 +582,8 @@ async def stream_assistant_response(
                 settings.agent_parallel_workers_per_process,
                 settings.agent_parallel_workers_per_user,
             ),
+            operation_journal=operation_journal,
+            elapsed_seconds_floor=elapsed_seconds_floor,
         ):
             if isinstance(item, RoutingDecision):
                 yield sse_event("routing", {**item.model_dump(mode="json"), "resumed": resume})
@@ -553,6 +592,8 @@ async def stream_assistant_response(
                 continue
             encoded_event = agent_stream_sse(item)
             if isinstance(item, AgentLoopEvent):
+                if item.planning_sync and item.planning_snapshot:
+                    yield sse_event("plan", item.planning_snapshot)
                 if encoded_event is not None:
                     yield encoded_event
                 continue
@@ -606,12 +647,15 @@ async def stream_assistant_response(
             },
         )
     except asyncio.CancelledError:
-        await fail_agent_run(
-            agent_run_id,
-            "cancelled",
-            "Client đã ngắt kết nối",
-            stop_reason="client_disconnected",
-        )
+        from backend.services.run_events import current_job
+
+        if current_job.get() is None:
+            await fail_agent_run(
+                agent_run_id,
+                "cancelled",
+                "Client đã ngắt kết nối",
+                stop_reason="client_disconnected",
+            )
         raise
     except DocumentServiceError as exc:
         await fail_agent_run(agent_run_id, "failed", exc.detail, stop_reason=exc.code)
@@ -646,7 +690,12 @@ async def stream_assistant_response(
             stop_reason=exc.code,
         )
         yield sse_event(
-            "error", {"message": str(exc), "code": exc.code, "resumable": not used_document_qa}
+            "error",
+            {
+                "message": str(exc),
+                "code": exc.code,
+                "resumable": not used_document_qa and exc.code != "agent_operation_unknown",
+            },
         )
     except SelectionPolicyError as exc:
         await fail_agent_run(agent_run_id, "failed", str(exc), stop_reason=exc.code)
@@ -675,6 +724,84 @@ async def stream_assistant_response(
             await plugin_stack.aclose()
         finally:
             await model.aclose()
+
+
+async def build_assistant_response(**arguments):
+    from backend.services.agent_jobs import enqueue_run
+    from backend.services.run_events import subscribe
+
+    settings = get_settings()
+    durable = settings.agent_react_enabled and settings.v2_features.is_enabled("events")
+    if arguments.get("resume"):
+        async with SessionFactory() as session:
+            saved = await session.get(AgentRun, arguments["agent_run_id"])
+            durable = durable or bool(saved and (saved.rag_trace or {}).get("durable"))
+    if durable:
+        try:
+            after = await enqueue_run(arguments)
+        except Exception:
+            await arguments["model"].aclose()
+            await fail_agent_run(
+                arguments["agent_run_id"],
+                "failed",
+                "Không thể xếp hàng yêu cầu.",
+                stop_reason="agent_enqueue_failed",
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Không thể xếp hàng yêu cầu; hội thoại có thể đang xử lý yêu cầu khác.",
+            ) from None
+        stream = subscribe(
+            arguments["user_id"], arguments["conversation_id"], arguments["agent_run_id"], after
+        )
+    else:
+        stream = stream_assistant_response(**arguments)
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Accel-Buffering": "no",
+            "X-Agent-Run-ID": str(arguments["agent_run_id"]),
+        },
+    )
+
+
+@router.get("/{conversation_id}/runs/{run_id}/events")
+async def replay_run_events(
+    conversation_id: UUID, run_id: UUID, request: Request, session: DbSession, user: CurrentUser
+):
+    from backend.services.run_events import event_cursor, subscribe
+
+    run = await session.scalar(
+        select(AgentRun)
+        .join(Conversation)
+        .where(
+            AgentRun.id == run_id,
+            Conversation.id == conversation_id,
+            Conversation.user_id == user.id,
+        )
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lần chạy")
+    try:
+        after = event_cursor(run_id, request.headers.get("Last-Event-ID"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StreamingResponse(
+        subscribe(user.id, conversation_id, run_id, after),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "private, no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/{conversation_id}/runs/{run_id}/cancel")
+async def cancel_agent_run(conversation_id: UUID, run_id: UUID, user: CurrentUser):
+    from backend.services.agent_jobs import cancel_run
+
+    if not await cancel_run(user.id, conversation_id, run_id):
+        raise HTTPException(status_code=404, detail="Không tìm thấy lần chạy")
+    return {"status": "cancel_requested"}
 
 
 @router.get("", response_model=list[ConversationResponse])
@@ -812,13 +939,21 @@ async def decide_tool_approval(
             detail="Không tìm thấy hội thoại",
         )
     try:
-        tool_approval_manager.resolve(
+        resolved = await tool_approval_manager.resolve_durable(
             approval_id=approval_id,
             run_id=run_id,
             conversation_id=conversation.id,
             user_id=user.id,
             approved=data.approved,
         )
+        if not resolved:
+            tool_approval_manager.resolve(
+                approval_id=approval_id,
+                run_id=run_id,
+                conversation_id=conversation.id,
+                user_id=user.id,
+                approved=data.approved,
+            )
     except ToolApprovalForbiddenError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ToolApprovalNotFoundError as exc:
@@ -929,32 +1064,28 @@ async def resume_agent_run(
         minimum_score=settings.skill_selection_min_score,
         ambiguity_margin=settings.skill_selection_ambiguity_margin,
     )
-    return StreamingResponse(
-        stream_assistant_response(
-            agent_run_id=agent_run.id,
-            conversation_id=conversation.id,
-            run_created_at=agent_run.last_resumed_at or agent_run.created_at,
-            user_message_id=user_message.id,
-            user_id=user.id,
-            user_message_content=user_message.content,
-            user_message_observed_at=user_message.created_at,
-            model_messages=[],
-            model=model,
-            registry=registry,
-            skill_registry=skill_registry,
-            tool_context=tool_context,
-            limits=limits,
-            context_budget=context_budget,
-            tool_selection_config=tool_selection_config,
-            skill_selection_config=skill_selection_config,
-            history_summary_context=(),
-            graph_checkpointer=graph_checkpointer,
-            resume=True,
-            rag_search_mode=(agent_run.rag_trace or {}).get("search_mode", "fast"),
-            decision_provider=decision_provider,
-        ),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    return await build_assistant_response(
+        agent_run_id=agent_run.id,
+        conversation_id=conversation.id,
+        run_created_at=agent_run.last_resumed_at or agent_run.created_at,
+        user_message_id=user_message.id,
+        user_id=user.id,
+        user_message_content=user_message.content,
+        user_message_observed_at=user_message.created_at,
+        model_messages=[],
+        model=model,
+        registry=registry,
+        skill_registry=skill_registry,
+        tool_context=tool_context,
+        limits=limits,
+        context_budget=context_budget,
+        tool_selection_config=tool_selection_config,
+        skill_selection_config=skill_selection_config,
+        history_summary_context=(),
+        graph_checkpointer=graph_checkpointer,
+        resume=True,
+        rag_search_mode=(agent_run.rag_trace or {}).get("search_mode", "fast"),
+        decision_provider=decision_provider,
     )
 
 
@@ -1056,33 +1187,29 @@ async def post_message(
         ambiguity_margin=settings.skill_selection_ambiguity_margin,
     )
 
-    return StreamingResponse(
-        stream_assistant_response(
-            agent_run_id=agent_run.id,
-            conversation_id=conversation.id,
-            run_created_at=agent_run.last_resumed_at or agent_run.created_at,
-            user_message_id=user_message.id,
-            user_id=user.id,
-            user_message_content=user_message.content,
-            user_message_observed_at=user_message.created_at,
-            model_messages=model_messages,
-            model=model,
-            registry=registry,
-            skill_registry=skill_registry,
-            tool_context=tool_context,
-            limits=limits,
-            context_budget=context_budget,
-            tool_selection_config=tool_selection_config,
-            skill_selection_config=skill_selection_config,
-            history_summary_context=history_context.summaries,
-            query_messages=[
-                {"role": item.role, "content": item.content}
-                for item in history_context.messages[-settings.chat_history_limit :]
-            ],
-            graph_checkpointer=get_langgraph_checkpointer(),
-            decision_provider=decision_provider,
-            rag_search_mode=data.rag_search_mode,
-        ),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    return await build_assistant_response(
+        agent_run_id=agent_run.id,
+        conversation_id=conversation.id,
+        run_created_at=agent_run.last_resumed_at or agent_run.created_at,
+        user_message_id=user_message.id,
+        user_id=user.id,
+        user_message_content=user_message.content,
+        user_message_observed_at=user_message.created_at,
+        model_messages=model_messages,
+        model=model,
+        registry=registry,
+        skill_registry=skill_registry,
+        tool_context=tool_context,
+        limits=limits,
+        context_budget=context_budget,
+        tool_selection_config=tool_selection_config,
+        skill_selection_config=skill_selection_config,
+        history_summary_context=history_context.summaries,
+        query_messages=[
+            {"role": item.role, "content": item.content}
+            for item in history_context.messages[-settings.chat_history_limit :]
+        ],
+        graph_checkpointer=get_langgraph_checkpointer(),
+        decision_provider=decision_provider,
+        rag_search_mode=data.rag_search_mode,
     )

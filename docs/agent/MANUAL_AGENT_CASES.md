@@ -230,8 +230,61 @@ Worker checkpoint riêng hiện là in-memory, được hủy khi worker hoàn t
 node fan-out; process chết giữa node có thể làm chạy lại tác vụ đọc. Chưa có durable worker
 checkpoint/lease/replay; không coi đây là đảm bảo exactly-once hoặc resume giữa một batch.
 
-## Đợt tiếp theo — Chưa nghiệm thu
+## Đợt6 — Job nền, checkpoint worker và replay
 
-- Đợt6: background, checkpoint worker bền vững, cancel/resume/replay và task UI.
+Bật `V2_EVENTS_ENABLED=true` cùng master/ReAct/planning/parallel. Host đã chạy migration0029
+và bật flag; máy khác chạy `alembic upgrade head`. Không cài dependency mới hoặc reindex PDF.
+Docker dùng `DEV_V2_EVENTS_ENABLED=true`. Khởi động lại cả web và worker, hai terminal:
+
+```powershell
+.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
+
+```powershell
+.venv\Scripts\python.exe -m scripts.run_background_worker
+```
+
+Worker xử lý cả document ingestion và Agent qua queue hiện có. Web chỉ trả SSE sau khi input,
+job và queued event được commit. Nếu chỉ mở web, run sẽ chờ worker. Đóng tab không hủy job;
+mở lại cùng hội thoại xem tiến trình và kết quả. UI có cây task/dependency/status/summary/usage,
+mở task để xem kết quả; nút **Dừng yêu cầu** hủy job và children. Không hiển thị chain of thought.
+
+Approval lưu DB theo run/tool/task/hash tham số/thời hạn; reload hoặc worker mới đọc lại được.
+Chỉ owner quyết định, run đã dừng không nhận approval mới. RPC bên ngoài đã gửi có thể chưa rõ
+kết quả; hệ thống không tự gửi mail/lời gọi trả phí lần nữa khi chưa biết outcome.
+
+`GET /api/conversations/{conversation}/runs/{run}/events` yêu cầu owner; header
+`Last-Event-ID: {run_id}:{sequence}` lấy phần tiếp theo. UI reconnect/dedup trong phiên; reload
+dựng bubble mới và phát lại attempt mới nhất. Resume bắt đầu sau event cũ và reset phần text
+chưa chốt, tránh nối lặp answer khi crash giữa các delta. Snapshot cuối đọc answer đã lưu.
+
+Worker checkpoint PostgreSQL riêng theo run/plan/task/attempt. Root fan-in khôi phục worker đã
+terminal thay vì gọi lại. Journal pin input và cached model/tool result giữa các checkpoint;
+operation started chưa có kết quả hoặc input đổi sẽ chặn auto-resume/retry, giữ quota dự trù.
+Lease kiểm generation/start/expiry/cancel trước dispatch và persistence. Không bảo đảm exactly-once
+API ngoài nếu provider không có idempotency. Task ghi/approval/unknown vẫn chạy riêng ở root.
+
+| Test tay | Kỳ vọng |
+| --- | --- |
+| Đóng tab giữa yêu cầu nhiều task, mở lại | Worker tiếp tục; thấy tiến trình và answer |
+| Dừng worker, gửi yêu cầu, reload rồi bật worker | Đang chờ → chạy đúng một job |
+| Bấm Dừng khi queued hoặc đang chạy | Run/task dừng, giữ audit; không tự resume |
+| Reload ở card approval rồi từ chối | Quyết định tới worker, không thực hiện tool |
+| Hai task độc lập rồi join | Hai nhánh overlap, dependency chờ; cây task cập nhật |
+
+Runner kiểm vài case có phí, dùng queue thử riêng và worker trong tiến trình test:
+
+```powershell
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite durable
+.venv\Scripts\python.exe -X utf8 -m scripts.test_agent_live --suite durable --case W01 --owner-email user@personalagent.vn --document-id bf811f8e-bce3-4119-86a9-f72e75de6002 --live
+```
+
+Đợt6 W01 đạt13.635s/65 event, kiểm Last-Event-ID; cap40k chỉ trong test rồi khôi phục20k.
+W02 dùng60k tài liệu, truy xuất10 nguồn nhưng quota ngày chặn model đọc nguồn, trả partial;
+chưa đạt trọn câu trả lời. Counter lúc kiểm994.413/1.000.000 token; không nâng quota hoặc gọi
+thêm LLM. Chỉ chạy lại W02 khi quota đủ. Report: `data/agent-testing/stage6-20261027/REPORT.md`.
+
+Đã kiểm fan-in resume có kiểm soát, journal/cancel/approval/owner/lease bằng fixture; chưa
+hard-kill process, browser E2E, Docker build hoặc distributed load. Chưa nghiệm thu toàn M4.
 
 Không chạy lại paid suite chỉ để kiểm tra một thay đổi tài liệu hoặc định dạng report.

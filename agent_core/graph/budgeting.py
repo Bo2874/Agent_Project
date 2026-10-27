@@ -60,6 +60,7 @@ def partial_answer(state, reason: str) -> str:
         "time_limit": "thời gian cho phép",
         "quota_limit": "quota sử dụng",
         "unknown_billing": "giới hạn an toàn khi trạng thái tính phí chưa xác định",
+        "unknown_tool_outcome": "giới hạn an toàn khi kết quả hành động chưa xác định",
         "repeated_tool_call": "giới hạn lặp hành động",
         "repeated_observation": "giới hạn lặp kết quả",
     }

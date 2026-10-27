@@ -54,6 +54,10 @@ class AgentRun(Base):
         String(24), default="running", server_default="running", index=True
     )
     current_step: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    event_sequence: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    assistant_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
     stop_reason: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     context_estimator: Mapped[str | None] = mapped_column(String(40), nullable=True)

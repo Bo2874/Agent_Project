@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from contextvars import copy_context
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, NoReturn
@@ -282,6 +282,9 @@ async def run_agent_graph_stream(
     worker_capacity=None,
     worker_plan: dict | None = None,
     worker_done=None,
+    operation_journal=None,
+    checkpoint_id=None,
+    elapsed_seconds_floor=0,
 ) -> AsyncIterator[AgentStreamItem | RoutingDecision]:
     """Execute model/tool turns with LangGraph as the only orchestrator."""
 
@@ -292,9 +295,9 @@ async def run_agent_graph_stream(
         raise ValueError("Resume yêu cầu LangGraph checkpointer dùng chung")
     checkpointer = graph_checkpointer or InMemorySaver()
     run_id = context.run_id or uuid4()
-    thread_id = agent_thread_id(run_id)
+    thread_id = agent_thread_id(checkpoint_id or run_id)
     graph_config = agent_checkpoint_config(
-        run_id,
+        checkpoint_id or run_id,
         recursion_limit=max(25, limits.max_steps * 4 + 5),
     )
     if trace_config is not None:
@@ -329,7 +332,7 @@ async def run_agent_graph_stream(
             if isinstance(restored_budget, Mapping)
             else 0
         )
-        started_at = perf_counter() - max(0, elapsed_seconds)
+        started_at = perf_counter() - max(0, elapsed_seconds, elapsed_seconds_floor)
         start_step = int(restored.get("step_number", 1))
         progress = list(restored.get("progress", []))
         memory_context = _memory_blocks_from_state(restored.get("memory_context", []))
@@ -773,9 +776,21 @@ async def run_agent_graph_stream(
         rows = []
         step = state["step_number"]
         final_reserve = plan.get("final_reserve", 0)
+        past_workers = {}
+        if operation_journal:
+            for task in plan["spec"]["tasks"]:
+                if task["task_id"] not in plan["results"]:
+                    key = f"{run_id}:plan{plan['spec']['plan_version']}:{task['task_id']}:attempt1"
+                    saved = await checkpointer.aget_tuple(agent_checkpoint_config(key))
+                    if saved:
+                        past_workers[task["task_id"]] = saved.checkpoint["channel_values"]
+        prior_spend = max(
+            aggregate.total_tokens + sum(v["usage"]["total_tokens"] for v in past_workers.values()),
+            await operation_journal.total_spent() if operation_journal else 0,
+        )
         pool = workers.SharedWorkerBudget(
             state["budget"]["max_total_tokens"]
-            - aggregate.total_tokens
+            - prior_spend
             - state.get("budget_held_tokens", 0)
             - final_reserve
         )
@@ -809,7 +824,10 @@ async def run_agent_graph_stream(
             wave = [
                 t
                 for t in wave
-                if t.budget.max_tokens <= pool.available - pool.spent - pool.held
+                if (
+                    t.task_id in past_workers
+                    or t.budget.max_tokens <= pool.available - pool.spent - pool.held
+                )
                 and step + t.budget.max_steps <= state["budget"]["max_steps"]
             ]
             if not wave:
@@ -918,6 +936,10 @@ async def run_agent_graph_stream(
                             planning_document_versions=planning_document_versions,
                             worker_plan=workers.worker_seed(plan, task, 0),
                             worker_done=capture,
+                            graph_checkpointer=checkpointer if operation_journal else None,
+                            checkpoint_id=f"{run_id}:plan{plan['spec']['plan_version']}:{task.task_id}:attempt1",
+                            resume=task.task_id in past_workers,
+                            operation_journal=operation_journal,
                         ):
                             # Only the root synthesis is published as assistant prose.
                             pass
@@ -937,7 +959,8 @@ async def run_agent_graph_stream(
                         error=failure or "worker_incomplete",
                         usage=TaskUsage(total_tokens=known_usage.total_tokens),
                     ).model_dump(mode="json")
-                return task, output, captured, known_usage
+                full_usage = _usage_from_state(captured["usage"]) if captured else known_usage
+                return task, output, captured, full_usage
 
             # TaskGroup cancels and drains siblings if the parent is cancelled.
             async with asyncio.TaskGroup() as group:
@@ -1337,6 +1360,33 @@ async def run_agent_graph_stream(
     async def call_model_node(state: AgentState) -> Mapping[str, Any]:
         if not react_enabled:
             return await call_model_unreserved(state)
+        operation_key = f"{context.task_id or 'root'}.model.{state['step_number']}"
+        digest = _fingerprint(
+            {
+                "messages": to_model_messages(state["prepared_messages"]),
+                "tools": state["tool_definitions"],
+            }
+        )
+        if operation_journal:
+            cached = await operation_journal.load(operation_key, digest)
+            if cached is not None:
+                update = {**cached, "messages": to_langchain_messages(cached["messages"])}
+                await publish(
+                    AgentLoopEvent(
+                        kind="model_completed",
+                        step_number=state["step_number"],
+                        usage=TokenUsage(),
+                        finish_reason=update.get("finish_reason"),
+                    )
+                )
+                if not update["pending_tool_calls"]:
+                    await publish(
+                        LLMChunk(
+                            content=update["model_content"],
+                            usage=_usage_from_state(update["usage"]),
+                        )
+                    )
+                return update
         output_tokens = getattr(model, "max_tokens", 2_048)
         estimate = model_allowance(
             to_model_messages(state["prepared_messages"]), state["tool_definitions"], output_tokens
@@ -1400,6 +1450,8 @@ async def run_agent_graph_stream(
                 if execution_guard is not None:
                     await execution_guard("model")
                 async with (usage_reservation or unreserved_usage)(estimate) as receipt:
+                    if operation_journal:
+                        await operation_journal.begin(operation_key, digest)
                     async with asyncio.timeout(
                         max(
                             0.001,
@@ -1410,6 +1462,12 @@ async def run_agent_graph_stream(
                         )
                     ):
                         update = await call_model_unreserved(state, receipt=receipt)
+                    if operation_journal:
+                        await operation_journal.finish(
+                            operation_key,
+                            {**update, "messages": to_model_messages(update["messages"])},
+                            update["usage"]["total_tokens"] - state["usage"]["total_tokens"],
+                        )
                     await budget_progress(
                         state["step_number"],
                         f"model.{state['step_number']}",
@@ -1634,7 +1692,7 @@ async def run_agent_graph_stream(
 
     async def execute_tools_node(state: AgentState) -> Mapping[str, Any]:
         await restore_node_selection(state)
-        if selection_policy is not None:
+        if react_enabled or selection_policy is not None:
             await validate_capabilities()
         step_number = state["step_number"]
         # Capture before LangChain replaces the tool RunnableConfig context.
@@ -1676,6 +1734,13 @@ async def run_agent_graph_stream(
         for call in state["pending_tool_calls"]:
             request = _tool_call_request(call)
             control = planning_enabled and request.name in dag.CONTROL_NAMES
+            op_key = f"{context.task_id or 'root'}.tool.{step_number}.{request.id}"
+            op_digest = _fingerprint({"name": request.name, "arguments": request.arguments})
+            cached_result = (
+                await operation_journal.load(op_key, op_digest)
+                if operation_journal and not control
+                else None
+            )
             task_limits = dag.task_remaining(
                 plan,
                 {
@@ -1706,6 +1771,8 @@ async def run_agent_graph_stream(
                 if react_enabled
                 else 0
             )
+            if cached_result is not None:
+                estimate = 0
             if react_enabled and budget_stop is None:
                 if deadline <= perf_counter():
                     budget_stop = "time_limit"
@@ -1725,6 +1792,7 @@ async def run_agent_graph_stream(
                     execution_guard is not None
                     and budget_stop is None
                     and not (control or mixed_controls or task_error)
+                    and cached_result is None
                 ):
                     try:
                         await execution_guard("tool")
@@ -1741,6 +1809,7 @@ async def run_agent_graph_stream(
                 execution_guard is not None
                 and budget_stop is None
                 and not (control or mixed_controls or task_error)
+                and cached_result is None
             ):
                 try:
                     await execution_guard("tool")
@@ -1874,6 +1943,8 @@ async def run_agent_graph_stream(
                         if estimate
                         else unreserved_usage(0)
                     ) as receipt:
+                        if operation_journal and cached_result is None:
+                            await operation_journal.begin(op_key, op_digest)
                         if react_enabled:
                             async with asyncio.timeout(
                                 max(
@@ -1884,7 +1955,23 @@ async def run_agent_graph_stream(
                                     ),
                                 )
                             ):
-                                result = await execute()
+                                if cached_result is not None:
+                                    result = ToolResult(
+                                        **{
+                                            k: v
+                                            for k, v in cached_result.items()
+                                            if k not in {"usage", "context_blocks"}
+                                        },
+                                        usage=TokenUsage(**cached_result["usage"])
+                                        if cached_result["usage"] is not None
+                                        else None,
+                                        context_blocks=tuple(
+                                            ContextBlock(**b)
+                                            for b in cached_result["context_blocks"]
+                                        ),
+                                    )
+                                else:
+                                    result = await execute()
                         else:
                             result = await execute()
                         if (
@@ -1893,6 +1980,21 @@ async def run_agent_graph_stream(
                             and result.error_code in UNBILLED_TOOL_ERRORS
                         ):
                             result = replace(result, usage=TokenUsage())
+                        if result.usage is not None and cached_result is None:
+                            receipt.known_tokens = max(
+                                receipt.known_tokens, result.usage.total_tokens
+                            )
+                        if (
+                            operation_journal
+                            and cached_result is None
+                            and not (estimate and result.usage is None)
+                            and result.error_code not in {"tool_timeout", "tool_outcome_unknown"}
+                        ):
+                            await operation_journal.finish(
+                                op_key,
+                                asdict(result),
+                                result.usage.total_tokens if result.usage else 0,
+                            )
                         # Settle inside the reservation, before the next paid call.
                         await publish(
                             AgentLoopEvent(
@@ -1901,12 +2003,14 @@ async def run_agent_graph_stream(
                                 duration_ms=round((perf_counter() - tool_started_at) * 1000),
                                 tool_call=request,
                                 tool_result=result,
-                                usage=result.usage,
+                                usage=TokenUsage() if cached_result is not None else result.usage,
                             )
                         )
                         completion_published = True
                         receipt.actual = (
-                            result.usage.total_tokens
+                            0
+                            if cached_result is not None
+                            else result.usage.total_tokens
                             if result.usage is not None
                             else (0 if not estimate else None)
                         )
@@ -1937,6 +2041,8 @@ async def run_agent_graph_stream(
                 tool_usage += result.usage
             elif react_enabled and estimate and result.is_error and budget_stop is None:
                 budget_stop = "unknown_billing"
+            if operation_journal and result.error_code in {"tool_timeout", "tool_outcome_unknown"}:
+                budget_stop = "unknown_tool_outcome"
             if react_enabled and estimate:
                 await budget_progress(
                     step_number,
@@ -2264,6 +2370,13 @@ async def run_agent_graph_stream(
         final_snapshot = await graph.aget_state(graph_config)
         if worker_done is not None:
             await worker_done(dict(final_snapshot.values))
+        if persisted_checkpoint is not None and final_snapshot.values.get("phase") == "completed":
+            # A terminal checkpoint may be ahead of answer/event persistence after a crash.
+            if not model_started_steps and final_snapshot.values.get("final_answer"):
+                yield LLMChunk(
+                    content=final_snapshot.values["final_answer"],
+                    usage=_usage_from_state(final_snapshot.values["usage"]),
+                )
         if final_snapshot.values.get("phase") == "failed":
             _raise_graph_node_failure(final_snapshot.values)
     except NodeTimeoutError as exc:

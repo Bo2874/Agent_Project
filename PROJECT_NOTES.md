@@ -1594,3 +1594,59 @@
   giữa node có thể chạy lại tác vụ đọc/paid call; chưa có durable child resume/lease fencing,
   subscriber replay/task tree hoặc exactly-once. Các phần đó thuộc đợt6; không tick nghiệm thu
   toàn M4 Ngày109–119 chỉ từ hai case này.
+
+### 2026-10-28 — ReAct đợt6: job nền, checkpoint worker, journal và replay
+
+- Thêm backend/models/agent_runtime.py (RunEvent/AgentOperation/AgentApproval), services/agent_jobs.py,
+  services/run_events.py, migration20261027_0029_agent_runtime.py và tests/test_agent_jobs.py.
+  Migration0029 đã áp dụng PostgreSQL host: event sequence, assistant message FK, event/operation/
+  approval rows unique theo run; cascade khi xóa run. Không thêm dependency hoặc reindex PDF.
+- V2_EVENTS_ENABLED cùng master/ReAct chọn chạy Agent qua queue PostgreSQL hiện có. Input snapshot
+  và job enqueue commit cùng transaction, serialize theo hội thoại; chỉ sau commit mới trả SSE.
+  Worker agent.run tạo model/đọc role phía server; request cookie chỉ dùng xem/điều khiển run.
+  Đóng subscriber không hủy job. Bật host flag, Compose nhận DEV_V2_EVENTS_ENABLED; cần restart
+  cả web và scripts.run_background_worker. Worker giờ mở checkpoint/tool connections và đóng sạch.
+- Root và worker task có PostgreSQL checkpoint theo run/plan/task/attempt. Root fan-in resume
+  đọc lại worker terminal, không gọi model/tool của worker đó nữa. Usage root gom cả usage trước
+  checkpoint con, pool admission đối chiếu actual journal; elapsed floor không reset deadline
+  root khi recover. Task ghi/approval/unknown vẫn chạy riêng qua root, không fan-out side effect.
+- Journal pin fingerprint input và kết quả model/tool; replay cached observation/state update
+  không charge usage ngày lần hai. Operation started chưa có kết quả hoặc fingerprint đổi bị
+  chặn auto-retry/resume. Timeout/outcome không rõ chặn loop tiếp theo; giữ dự trù chưa rõ,
+  kể cả usage known floor khi callback/persistence lỗi. Không cam kết exactly-once API ngoài.
+- Lease fencing kiểm status/worker/generation/start/expiry/cancel ở dispatch, checkpoint writes,
+  recorder/journal/final persistence. Queue ownership cũng kiểm generation/expiry. Worker mất
+  lease không ghi đè attempt mới; recover hết attempts/cancel cập nhật trạng thái run/event.
+  Revalidate active owner/role trước tool và selected document scope trước/sau retrieval/final.
+  Một RPC đã gửi ra ngoài vẫn có thể hoàn tất sau cancel; không tự gửi lại khi chưa đối soát.
+- Approval chuyển sang DB cho job nền, gắn run/tool/task/arguments hash, decision và expiry;
+  owner endpoint ghi quyết định một lần. Worker/manager mới đọc lại được; cancelled/terminal
+  run không nhận approval mới. Legacy request giữ manager in-process. Test không gửi email.
+- API events theo owner, ID run:sequence, Last-Event-ID và heartbeat. Event commit trước khi
+  subscriber thấy; replay theo thứ tự và UI dedup. Terminal snapshot khôi phục answer từ DB
+  nếu stream packet cuối chưa ghi được. Final message gắn trực tiếp run và complete idempotent.
+  Xóa hội thoại dọn cả checkpoint root và task đã khai báo; run events/ops/approvals cascade.
+- UI có cây task/dependency/status/result/usage, giữ accordion mở, nút Dừng yêu cầu và reconnect.
+  Reload run đang queued/running/waiting_approval nhận lại event vào bubble mới. Approval card
+  không block reader; quyết định/timeout từ server khóa card. Không hiển thị chain of thought.
+- Khi run lỗi/hủy, projection task được terminal hóa và giữ kết quả child terminal đã checkpoint;
+  không để task tree còn báo running sau run dừng. Completed worker không tự phát lại tool.
+- Chỉ gọi hai case LLM thật qua owner cookie/API/ASGI/queue/worker/SSE/history/PostgreSQL:
+  W01 count+calc song song rồi join đạt,13.635s/22.803 token/65 replay events, kiểm Last-Event-ID.
+  Run604f4353-21ac-46a0-b115-bd38b376d65c; W01 dùng40k trong test rồi khôi phục20k.
+  W02 dùng Hiểu sâu về AI Agent.pdf đã upload: retrieval10 nguồn, count succeeded, book failed
+  quota_limit trước model step2; root trả partial có nguồn,36.209s/18.077 token. Không ghi case
+  này thành success. Run815ad19c-d4d8-4f20-86a3-fc4a6dfed6d3. Counter ngày lúc kiểm994.413/1.000.000;
+  không nâng/bỏ quota và không gọi thêm LLM. Lỗi web missing usage giữ nguyên, không test web.
+- Kiểm không LLM: fan-in bị gián đoạn rồi resume không lặp worker/tool; journal chặn unknown/
+  fingerprint đổi; cursor bound run. PostgreSQL thật kiểm subscriber đóng vẫn giữ job, queued
+  cancel, owner khác không hủy/duyệt được, attempt cũ bị fencing, cached operation và denial
+  được manager mới xử lý. Enqueue/SSE response đã kiểm lại sau khi chuyển commit ra trước stream.
+-91 test có mục tiêu đạt (graph/planner/worker/budget/recorder/queue/checkpoint/approval/document).
+  Ruff/format, Node syntax, Compose config, diff và scan secrets; không gọi lại toàn suite.
+  Không browser E2E/Docker build/hard-kill/load test. Raw reports và controls ở data/agent-testing;
+  tổng hợp data/agent-testing/stage6-20261027/REPORT.md. Không tự commit/push hoặc restart app.
+- Giới hạn nghiệm thu: W02 chưa đạt trọn do quota; chưa thử hard-kill giữa RPC ngoài hay giữa
+  settle/checkpoint, multi-process throughput/lease contention hoặc browser reconnect thật.
+  Các semaphore worker vẫn per-process, quota token PostgreSQL dùng chung. Memory/history chuẩn
+  bị trước graph vẫn ngoài journal/budget graph như đợt3; không coi đây là hoàn tất mọi mục M4.

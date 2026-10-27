@@ -88,6 +88,11 @@ async def delete_conversation(
             )
         for run_id in run_ids:
             await checkpointer.adelete_thread(agent_thread_id(run_id))
+            run = next(r for r in runs if r.id == run_id)
+            plan = (run.rag_trace or {}).get("planning") or {}
+            for task in plan.get("spec", {}).get("tasks", []):
+                key = f"{run_id}:plan{plan['spec']['plan_version']}:{task['task_id']}:attempt1"
+                await checkpointer.adelete_thread(agent_thread_id(key))
         await session.execute(delete(BackgroundJob).where(BackgroundJob.agent_run_id.in_(run_ids)))
     # Messages, summaries, runs, tool calls, routing traces and their memory sources cascade.
     await session.delete(conversation)

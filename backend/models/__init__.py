@@ -1,4 +1,5 @@
 from backend.models.agent import AgentRun, RunStep, ToolCall
+from backend.models.agent_runtime import AgentApproval, AgentOperation, RunEvent
 from backend.models.audit import AuditLog
 from backend.models.background_job import BackgroundJob
 from backend.models.base import Base
@@ -30,6 +31,9 @@ from backend.models.user import User
 
 __all__ = [
     "AgentRun",
+    "AgentApproval",
+    "AgentOperation",
+    "RunEvent",
     "AgentTask",
     "TaskAttempt",
     "AuditLog",

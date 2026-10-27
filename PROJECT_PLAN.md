@@ -8,7 +8,7 @@ Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, 
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần
 [Lộ trình mở rộng V2](#lộ-trình-mở-rộng-v2) bên dưới. Đây là kế hoạch triển khai, chưa phải các chức năng đã có.
 
-Tiến độ 2026-10-27: **M3 document_qa đã được user chấp nhận tạm thời. ReAct đợt1–5 đã có vòng chung, doc tools, lịch sử hành động, budget/partial, planner/DAG và worker đọc có context riêng, chạy song song giới hạn. Hai case LLM thật đợt5 đạt, gồm Hiểu sâu về AI Agent.pdf. Tiếp theo đợt6: background/checkpoint worker/cancel/replay/task UI. Lỗi web missing usage còn ghi nhận. Ngày87 và connector/Skill Ngày86 tiếp tục hoãn**.
+Tiến độ 2026-10-28: **ReAct đợt1–6 đã có vòng chung, document tools, planner/DAG, worker đọc riêng/song song, queue nền, checkpoint root/worker PostgreSQL, cancel, approval bền vững, replay SSE và task UI. Đợt6 W01 LLM thật đạt; W02 truy xuất được nguồn nhưng dừng do quota ngày, chưa đạt trọn câu trả lời. Chưa nghiệm thu hard-kill/distributed load/toàn bộ M4. Lỗi web missing usage và Ngày87/connector Skill Ngày86 tiếp tục hoãn**.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),
 [mapping module](#4-mapping-module-và-dữ-liệu-dự-kiến),
@@ -1153,7 +1153,10 @@ Triển khai từng đợt nhỏ, report và commit riêng; không tick checklis
   chung với final reserve, quota PostgreSQL và receipt ContextVar; giảm kết quả theo task ID.
   Hai case LLM/API/SSE thật đạt (MCP độc lập→join và PDF+MCP), xác nhận overlap bằng DB timestamps.
   Worker checkpoint hiện chỉ in-memory trong lượt fan-out; durable child resume thuộc đợt6.
-- [ ] Đợt 6: background/checkpoint/cancel/approval, event replay và UI task.
+- [x] Đợt 6 (code nền): queue PostgreSQL, checkpoint riêng root/task, journal/fencing/cancel,
+  approval DB, replay SSE có Last-Event-ID và UI task. Migration0029 đã chạy, host bật events.
+  W01 LLM/API/queue/replay đạt; W02 có nguồn nhưng quota ngày chặn model đọc nguồn nên partial.
+  Controlled fan-in resume không gọi lại worker đã xong; chưa hard-kill/browser/Docker/load test.
 
 Từ đợt2, hội thoại có file dùng cùng vòng ReAct khi flag bật; tắt flag giữ nhánh M3/routing cũ.
 Run có file có hạn mức riêng60.000 token/deadline600 giây mặc định; run không file giữ20.000/120.
@@ -1410,9 +1413,9 @@ Không mặc định các số liệu hiệu năng trong sách áp dụng cho pr
 
 ## Task tiếp theo
 
-Ngày 2026-10-27: hoàn thành ReAct đợt1–5; có report LLM thật cho baseline, RAG, budget, planner và worker.
-Đợt5 đã có worker đọc với context riêng và song song giới hạn; hai case LLM thật đạt luồng,
-gồm PDF đã upload. Tiếp theo đợt6 background/checkpoint worker bền vững/events/task UI.
+Ngày 2026-10-28: đã triển khai code ReAct đợt1–6. Xem report đợt6 cho W01 đạt và W02 partial do
+quota ngày; không tăng quota hoặc gọi thêm LLM. Tiếp theo: user test UI/worker nền, chạy lại W02
+khi quota đủ, xử lý lỗi web riêng và nghiệm thu hard-kill/replay/load trước khi tick toàn M4.
 Planner tuần tự bật bằng V2_PLANNING_ENABLED cùng ReAct/master flag, không bắt buộc JEV.
 JEV/routing giữ khi tắt flag và checkpoint cũ;
 flag ReAct không tự migrate run. File1389 chunk vẫn vượt giới hạn tóm tắt toàn văn64 chunk.

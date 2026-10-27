@@ -255,3 +255,12 @@ và `DEV_AGENT_PARALLEL_WORKERS_PER_PROCESS=8` giới hạn trong một process.
 Task ghi/approval/unknown chạy riêng ở root; MCP vẫn giữ giới hạn server. Không thêm migration,
 không reindex. Worker con dùng checkpoint in-memory; durable child resume/background/replay
 chưa triển khai. Restart/rebuild để nhận code; chưa build/test Docker cho đợt5.
+
+Đợt6: `DEV_V2_EVENTS_ENABLED=true` cùng các flag ReAct/planning/parallel bật Agent jobs/replay.
+Host dùng `V2_EVENTS_ENABLED=true` và chạy migration0029. Cần restart/rebuild cả app và worker;
+worker hiện mở checkpoint/tool connections và xử lý `agent.run` cùng ingestion. Nếu không có
+worker, chat sẽ chờ queue. Đóng browser chỉ ngắt subscriber; nút Dừng gửi cancel xuống job.
+Root/task checkpoints, operation journal, run events và approval dùng PostgreSQL; không cài
+thêm dependency/reindex. Host chạy `python -m scripts.run_background_worker` ở terminal riêng.
+Lease/journal chặn phát lại mù khi outcome chưa rõ; không bảo đảm exactly-once API ngoài.
+Chưa build/test Docker hoặc hard-kill/distributed load; xem manual/report đợt6.

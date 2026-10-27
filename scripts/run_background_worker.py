@@ -17,7 +17,13 @@ from backend.core.config import get_settings
 from backend.core.logging import install_log_redaction
 from backend.core.worker_health import write_worker_heartbeat
 from backend.database import engine
+from backend.dependencies_tools import close_tool_connections, start_tool_connections
 from backend.services.document_indexing import close_embedding_client
+from backend.services.document_query import close_reranker_client
+from backend.services.langgraph_checkpoints import (
+    close_langgraph_checkpoints,
+    start_langgraph_checkpoints,
+)
 
 
 def default_worker_id() -> str:
@@ -54,6 +60,8 @@ async def run(*, once: bool) -> None:
         heartbeat_handler=heartbeat,
     )
     try:
+        await start_langgraph_checkpoints()
+        await start_tool_connections()
         if once:
             processed = await worker.run_once()
             print("Đã xử lý một job." if processed else "Queue hiện không có job sẵn sàng.")
@@ -64,6 +72,9 @@ async def run(*, once: bool) -> None:
             )
             await worker.run_forever(stop)
     finally:
+        await close_tool_connections()
+        await close_langgraph_checkpoints()
+        await close_reranker_client()
         await close_embedding_client()
         if heartbeat_path is not None:
             heartbeat_path.unlink(missing_ok=True)

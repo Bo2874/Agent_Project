@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import json
 import secrets
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from time import perf_counter
 from uuid import UUID, uuid4
@@ -151,7 +152,39 @@ WORKER_CASES = (
 )
 
 
-async def run_planner_live(owner_email, document_id, only_case=None, *, parallel=False):
+@asynccontextmanager
+async def live_durable_worker(enabled):
+    if not enabled:
+        yield
+        return
+    from backend.background import BackgroundWorker, PostgresJobQueue, build_background_job_registry
+    from backend.core.config import get_settings
+
+    settings = get_settings()
+    previous = settings.background_queue_name
+    settings.background_queue_name = "agent-live-" + uuid4().hex[:8]
+    stop = asyncio.Event()
+    worker = BackgroundWorker(
+        queue=PostgresJobQueue(),
+        registry=build_background_job_registry(),
+        queue_name=settings.background_queue_name,
+        worker_id="agent-live-check",
+        poll_seconds=0.1,
+        control_poll_seconds=0.5,
+        lease_seconds=30,
+    )
+    task = asyncio.create_task(worker.run_forever(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        await task
+        settings.background_queue_name = previous
+
+
+async def run_planner_live(
+    owner_email, document_id, only_case=None, *, parallel=False, durable=False
+):
     import httpx
     from sqlalchemy import select
 
@@ -166,6 +199,8 @@ async def run_planner_live(owner_email, document_id, only_case=None, *, parallel
         raise SystemExit("Planner suite requires V2 planning/ReAct and the authorized owner/PDF.")
     if parallel and not settings.v2_features.is_enabled("parallel"):
         raise SystemExit("Worker suite requires V2_PARALLEL_ENABLED.")
+    if durable and not settings.v2_features.is_enabled("events"):
+        raise SystemExit("Durable suite requires V2_EVENTS_ENABLED.")
     async with SessionFactory() as session:
         owner = await session.scalar(select(User).where(User.email == owner_email, User.is_active))
         doc = await session.get(Document, UUID(document_id))
@@ -177,14 +212,14 @@ async def run_planner_live(owner_email, document_id, only_case=None, *, parallel
         / "data/agent-testing"
         / (
             datetime.now(UTC).strftime("%Y%m%d-%H%M%S-")
-            + ("workers-" if parallel else "planner-")
+            + ("durable-" if durable else "workers-" if parallel else "planner-")
             + uuid4().hex[:8]
         )
     )
     folder.mkdir(parents=True)
     path = folder / "REPORT.json"
     report = {
-        "suite": "react-stage-5" if parallel else "react-stage-4",
+        "suite": "react-stage-6" if durable else "react-stage-5" if parallel else "react-stage-4",
         "transport": "Real owner cookie, API/ASGI/SSE, DB and paid LLM; no browser",
         "cases": [],
         "passed": False,
@@ -195,7 +230,7 @@ async def run_planner_live(owner_email, document_id, only_case=None, *, parallel
         response.raise_for_status()
         return response
 
-    async with app.router.lifespan_context(app):
+    async with app.router.lifespan_context(app), live_durable_worker(durable):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url="https://agent-live.local",
@@ -391,6 +426,31 @@ async def run_planner_live(owner_email, document_id, only_case=None, *, parallel
                         next(r for r in timeline if r["id"] == item["run_id"])["planning"]
                         == item["planning"]
                     )
+                    if durable:
+                        assert next(r for r in timeline if r["id"] == item["run_id"])["durable"]
+                        replay = await api(
+                            client,
+                            "GET",
+                            f"/api/conversations/{conversation}/runs/{item['run_id']}/events",
+                        )
+                        ids = [
+                            line[4:] for line in replay.text.splitlines() if line.startswith("id: ")
+                        ]
+                        sequences = [int(i.rsplit(":", 1)[1]) for i in ids]
+                        assert sequences == sorted(set(sequences)) and sequences
+                        middle = ids[len(ids) // 2]
+                        tail = await api(
+                            client,
+                            "GET",
+                            f"/api/conversations/{conversation}/runs/{item['run_id']}/events",
+                            headers={"Last-Event-ID": middle},
+                        )
+                        assert all(
+                            int(line[4:].rsplit(":", 1)[1]) > int(middle.rsplit(":", 1)[1])
+                            for line in tail.text.splitlines()
+                            if line.startswith("id: ")
+                        )
+                        item["replay_event_count"] = len(ids)
                     item["passed"] = True
                 except Exception as exc:
                     item.update(passed=False, failure_type=type(exc).__name__)
@@ -1124,7 +1184,9 @@ def main():
         "--live", action="store_true", help="Call real paid APIs and create fixtures"
     )
     parser.add_argument(
-        "--suite", choices=("react", "documents", "budget", "planner", "workers"), default="react"
+        "--suite",
+        choices=("react", "documents", "budget", "planner", "workers", "durable"),
+        default="react",
     )
     parser.add_argument("--owner-email")
     parser.add_argument("--document-id")
@@ -1133,10 +1195,14 @@ def main():
     )
     args = parser.parse_args()
     if args.live:
-        if args.suite in {"planner", "workers"}:
+        if args.suite in {"planner", "workers", "durable"}:
             asyncio.run(
                 run_planner_live(
-                    args.owner_email, args.document_id, args.case, parallel=args.suite == "workers"
+                    args.owner_email,
+                    args.document_id,
+                    args.case,
+                    parallel=args.suite in {"workers", "durable"},
+                    durable=args.suite == "durable",
                 )
             )
         elif args.suite == "budget":
@@ -1154,7 +1220,7 @@ def main():
                         DOCUMENT_CASES
                         if args.suite == "documents"
                         else WORKER_CASES
-                        if args.suite == "workers"
+                        if args.suite in {"workers", "durable"}
                         else PLANNER_CASES
                         if args.suite == "planner"
                         else BUDGET_CASES

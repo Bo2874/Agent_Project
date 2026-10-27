@@ -20,6 +20,7 @@ from backend.models import (
     ToolCall,
 )
 from backend.schemas.document import RagSearchMode
+from backend.services.run_events import fence
 
 
 class AgentRunResumeError(RuntimeError):
@@ -89,6 +90,7 @@ class AgentRunTimeline:
     started_at: datetime | None = None
     rag_search_mode: RagSearchMode | None = None
     planning: dict | None = None
+    durable: bool = False
 
 
 async def create_agent_run(
@@ -138,6 +140,7 @@ class AgentRunRecorder:
         if not event.progress:
             return
         async with SessionFactory() as session:
+            await fence(session)
             run = await session.scalar(
                 select(AgentRun)
                 .where(
@@ -170,6 +173,7 @@ class AgentRunRecorder:
         step_id = uuid.uuid4()
         model_call_id = uuid.uuid4()
         async with SessionFactory() as session:
+            await fence(session)
             model_call = ModelCall(
                 id=model_call_id,
                 conversation_id=self.conversation_id,
@@ -230,6 +234,7 @@ class AgentRunRecorder:
         step_id, model_call_id = self._steps[event.step_number]
         now = datetime.now(UTC)
         async with SessionFactory() as session:
+            await fence(session)
             run_step = await session.get(RunStep, step_id)
             model_call = await session.get(ModelCall, model_call_id)
             if run_step is None or model_call is None:
@@ -257,6 +262,7 @@ class AgentRunRecorder:
         step_id, model_call_id = self._steps[event.step_number]
         now = datetime.now(UTC)
         async with SessionFactory() as session:
+            await fence(session)
             run_step = await session.get(RunStep, step_id)
             model_call = await session.get(ModelCall, model_call_id)
             if run_step is not None:
@@ -285,6 +291,7 @@ class AgentRunRecorder:
         step_id, _ = self._steps[event.step_number]
         tool_call_id = uuid.uuid4()
         async with SessionFactory() as session:
+            await fence(session)
             session.add(
                 ToolCall(
                     id=tool_call_id,
@@ -303,6 +310,7 @@ class AgentRunRecorder:
             raise RuntimeError("Event tool_completed thiếu dữ liệu")
         tool_call_id = self._tool_calls[(event.step_number, event.tool_call.id)]
         async with SessionFactory() as session:
+            await fence(session)
             tool_call = await session.get(ToolCall, tool_call_id)
             if tool_call is None:
                 raise RuntimeError("Không tìm thấy tool call")
@@ -351,6 +359,7 @@ class AgentRunRecorder:
             raise RuntimeError("Event approval thiếu dữ liệu")
         tool_call_id = self._tool_calls[(event.step_number, event.tool_call.id)]
         async with SessionFactory() as session:
+            await fence(session)
             tool_call = await session.get(ToolCall, tool_call_id)
             agent_run = await session.get(AgentRun, self.agent_run_id)
             if tool_call is None or agent_run is None:
@@ -367,6 +376,7 @@ class AgentRunRecorder:
             raise RuntimeError("Event approval resolved thiếu dữ liệu")
         tool_call_id = self._tool_calls[(event.step_number, event.tool_call.id)]
         async with SessionFactory() as session:
+            await fence(session)
             tool_call = await session.get(ToolCall, tool_call_id)
             agent_run = await session.get(AgentRun, self.agent_run_id)
             if tool_call is None or agent_run is None:
@@ -397,6 +407,15 @@ async def prepare_agent_run_resume(
         raise AgentRunResumeError("Không tìm thấy agent run")
     if agent_run.status != "failed":
         raise AgentRunResumeError("Chỉ có thể resume agent run đang ở trạng thái failed")
+    from backend.models import AgentOperation
+
+    unknown = await session.scalar(
+        select(AgentOperation.id)
+        .where(AgentOperation.agent_run_id == agent_run_id, AgentOperation.status == "started")
+        .limit(1)
+    )
+    if unknown:
+        raise AgentRunResumeError("Lời gọi trước chưa rõ kết quả; không tự gọi lại khi resume.")
     checkpoint = await checkpointer.aget_tuple(agent_checkpoint_config(agent_run_id))
     if checkpoint is None:
         raise AgentRunResumeError("Agent run chưa có LangGraph checkpoint để resume")
@@ -423,6 +442,12 @@ async def complete_agent_run(
     document_owner: UUID | None = None,
 ) -> Message:
     async with SessionFactory() as session:
+        await fence(session)
+        locked_run = await session.scalar(
+            select(AgentRun).where(AgentRun.id == agent_run_id).with_for_update()
+        )
+        if locked_run and locked_run.assistant_message_id:
+            return await session.get(Message, locked_run.assistant_message_id)
         if document_result is not None:
             from backend.services.document_qa import lock_document_answer_scope
 
@@ -450,6 +475,7 @@ async def complete_agent_run(
         if agent_run is None:
             raise RuntimeError("Không tìm thấy agent run")
         agent_run.status = "completed"
+        agent_run.assistant_message_id = assistant_message.id
         if document_result is not None:
             agent_run.rag_trace = document_result.trace
         agent_run.stop_reason = "final_answer"
@@ -497,6 +523,7 @@ async def fail_agent_run(
 
     now = datetime.now(UTC)
     async with SessionFactory() as session:
+        await fence(session, allow_cancel=True)
         agent_run = await session.get(AgentRun, agent_run_id)
         if agent_run is None:
             return
@@ -507,6 +534,57 @@ async def fail_agent_run(
         agent_run.finished_at = now
 
         trace = dict(agent_run.rag_trace or {})
+        if trace.get("durable") and trace.get("planning"):
+            from agent_core.contracts import TaskResult
+            from agent_core.graph.checkpointing import agent_checkpoint_config
+            from backend.services.agent_tasks import project_tasks
+            from backend.services.run_events import current_job
+
+            plan = dict(trace["planning"])
+            plan["statuses"], plan["results"] = dict(plan["statuses"]), dict(plan["results"])
+            for task in plan["spec"]["tasks"]:
+                key = task["task_id"]
+                if plan["statuses"][key] not in {"pending", "ready", "running", "waiting_approval"}:
+                    continue
+                recovered = None
+                if current_job.get() is not None:
+                    from backend.services.langgraph_checkpoints import get_langgraph_checkpointer
+
+                    child = await get_langgraph_checkpointer().aget_tuple(
+                        agent_checkpoint_config(
+                            f"{agent_run_id}:plan{plan['spec']['plan_version']}:{key}:attempt1"
+                        )
+                    )
+                    if child:
+                        recovered = (
+                            child.checkpoint["channel_values"]
+                            .get("planning", {})
+                            .get("results", {})
+                            .get(key)
+                        )
+                result = (
+                    TaskResult.model_validate(recovered)
+                    if recovered
+                    else TaskResult(
+                        plan_version=plan["spec"]["plan_version"],
+                        task_id=key,
+                        attempt_id="attempt1",
+                        status="cancelled" if status == "cancelled" else "failed",
+                        summary="Task đã dừng cùng run.",
+                        error=stop_reason,
+                    )
+                )
+                plan["statuses"][key] = result.status
+                plan["results"][key] = result.model_dump(mode="json")
+            if plan.get("active_task") and plan.get("attempt"):
+                plan.setdefault("attempts", {})[plan["active_task"]] = {
+                    **plan["attempt"],
+                    "last_step": agent_run.current_step,
+                }
+            plan["active_task"], plan["attempt"] = None, None
+            trace["planning"] = plan
+            await project_tasks(session, agent_run_id, plan)
+            agent_run.rag_trace = trace
         if trace.get("progress"):
             rows = []
             for entry in trace["progress"]:
@@ -646,7 +724,7 @@ async def list_agent_run_timelines(
 
     timelines: list[AgentRunTimeline] = []
     for run in runs:
-        assistant_message_id: UUID | None = None
+        assistant_message_id: UUID | None = run.assistant_message_id
         total_tokens = 0
         cached_input_tokens = 0
         cache_miss_input_tokens = 0
@@ -762,6 +840,7 @@ async def list_agent_run_timelines(
                 ],
                 started_at=run.last_resumed_at or run.created_at,
                 planning=(run.rag_trace or {}).get("planning"),
+                durable=bool((run.rag_trace or {}).get("durable")),
                 rag_search_mode=(run.rag_trace or {}).get("search_mode")
                 if (run.rag_trace or {}).get("execution_mode") != "react"
                 or (run.rag_trace or {}).get("document_search_used")

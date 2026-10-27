@@ -1496,3 +1496,10 @@ nav {
 .citation-dialog h2 { overflow-wrap: anywhere; padding-right: 65px; }
 .citation-dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
 .citation-close { float: right; }
+/* Host task snapshots; no model-generated HTML. */
+.agent-task-tree { margin: 12px 0; display: grid; gap: 8px; }
+.agent-task-tree[hidden] { display: none; }
+.agent-task-tree > details { padding: 10px 12px; border: 1px solid var(--border, #dce1e8); border-radius: 10px; overflow-wrap: anywhere; }
+.agent-task-tree summary { cursor: pointer; font-weight: 600; }
+.agent-task-tree p { margin: 8px 0; line-height: 1.5; }
+.agent-task-tree small { opacity: .75; }

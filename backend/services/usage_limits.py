@@ -246,6 +246,11 @@ class AgentQuotaGuard:
                 )
 
     async def before_execution(self, action: Literal["model", "tool"]) -> None:
+        from backend.services.run_events import current_job, runtime_session
+
+        if current_job.get() is not None:
+            async with runtime_session():
+                pass
         if action == "tool":
             try:
                 await consume_usage_limits(

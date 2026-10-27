@@ -117,6 +117,7 @@ class PostgresJobQueue:
         agent_run_id: UUID | None = None,
         max_attempts: int = 1,
         idempotency_key: str | None = None,
+        session=None,
     ) -> BackgroundJob:
         if not _JOB_TYPE_PATTERN.fullmatch(job_type):
             raise ValueError("job_type không hợp lệ")
@@ -163,6 +164,16 @@ class PostgresJobQueue:
             idempotency_key=idempotency_key,
             idempotency_fingerprint=fingerprint if idempotency_key else None,
         )
+        if session is not None:
+            if idempotency_key:
+                existing = await self._find_by_idempotency(
+                    session, queue_name=queue_name, scope=scope, key=idempotency_key
+                )
+                if existing is not None:
+                    return self._resolve_idempotent_job(existing, fingerprint)
+            session.add(job)
+            await session.flush()
+            return job
         async with SessionFactory() as session:
             if idempotency_key:
                 existing = await self._find_by_idempotency(
@@ -395,6 +406,32 @@ class PostgresJobQueue:
                     job.finished_at = now
                     job.error_code = "worker_lease_expired"
                     job.error_message = "Worker mất lease và job đã hết số lần thử."
+                if job.job_type == "agent.run" and job.status in {"failed", "cancelled"}:
+                    from backend.models import AgentRun, RunEvent
+
+                    run = await session.scalar(
+                        select(AgentRun).where(AgentRun.id == job.agent_run_id).with_for_update()
+                    )
+                    if run and run.status in {"running", "queued", "waiting_approval"}:
+                        run.status = job.status
+                        run.stop_reason = (
+                            "user_cancelled"
+                            if job.status == "cancelled"
+                            else "worker_lease_expired"
+                        )
+                        run.finished_at = now
+                        run.event_sequence += 1
+                        session.add(
+                            RunEvent(
+                                agent_run_id=run.id,
+                                sequence=run.event_sequence,
+                                kind="cancelled" if job.status == "cancelled" else "error",
+                                data={
+                                    "message": "Job đã dừng sau gián đoạn worker.",
+                                    "resumable": False,
+                                },
+                            )
+                        )
             await session.commit()
             return len(jobs)
 
@@ -402,7 +439,15 @@ class PostgresJobQueue:
     async def _owned_job(session: Any, claimed: ClaimedJob) -> BackgroundJob:
         statement = select(BackgroundJob).where(BackgroundJob.id == claimed.id).with_for_update()
         job = (await session.execute(statement)).scalar_one_or_none()
-        if job is None or job.status != "running" or job.worker_id != claimed.worker_id:
+        if (
+            job is None
+            or job.status != "running"
+            or job.worker_id != claimed.worker_id
+            or job.attempt_count != claimed.attempt_count
+            or job.started_at != claimed.started_at
+            or job.lease_expires_at is None
+            or job.lease_expires_at <= datetime.now(UTC)
+        ):
             await session.rollback()
             raise BackgroundJobOwnershipError("Worker không sở hữu background job")
         return job

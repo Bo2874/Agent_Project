@@ -51,13 +51,12 @@ class AsyncPostgresSaverAdapter(BaseCheckpointSaver[Any]):
         metadata: Any,
         new_versions: Any,
     ) -> Any:
-        return await asyncio.to_thread(
-            self._saver.put,
-            config,
-            checkpoint,
-            metadata,
-            new_versions,
-        )
+        from backend.services.run_events import runtime_session
+
+        async with runtime_session():
+            return await asyncio.to_thread(
+                self._saver.put, config, checkpoint, metadata, new_versions
+            )
 
     async def aput_writes(
         self,
@@ -66,13 +65,10 @@ class AsyncPostgresSaverAdapter(BaseCheckpointSaver[Any]):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        await asyncio.to_thread(
-            self._saver.put_writes,
-            config,
-            writes,
-            task_id,
-            task_path,
-        )
+        from backend.services.run_events import runtime_session
+
+        async with runtime_session():
+            await asyncio.to_thread(self._saver.put_writes, config, writes, task_id, task_path)
 
     async def adelete_thread(self, thread_id: str) -> None:
         await asyncio.to_thread(self._saver.delete_thread, thread_id)

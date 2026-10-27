@@ -125,3 +125,4 @@ class AgentRunTimelineResponse(BaseModel):
     started_at: datetime | None = None
     rag_search_mode: RagSearchMode | None = None
     planning: dict[str, object] | None = None
+    durable: bool = False
