@@ -8,6 +8,7 @@ from sqlalchemy import URL
 
 from agent_core.contracts.features import FeatureFlags
 from agent_core.tools.email import SMTPConfig
+from agent_core.tools.web_search import WebSearchConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -70,6 +71,10 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = False
 
     openrouter_api_key: SecretStr | None = None
+    web_search_enabled: bool = False
+    web_search_model: str = "openai/gpt-5.4-mini"
+    web_search_timeout_seconds: float = Field(default=60, gt=0, le=90)
+    web_search_max_output_tokens: int = Field(default=2000, ge=256, le=8000)
     jev_base_url: str = "https://openrouter.ai/api"
     jev_model: str = "typesafe/jev-1.14"
     jev_timeout_seconds: float = Field(default=15, gt=0, le=120)
@@ -165,7 +170,7 @@ class Settings(BaseSettings):
     tool_allowlist: str = (
         "demo__get_server_time,demo__calculate,demo__count_text,"
         "demo__convert_temperature,demo__simulate_sensitive_action,"
-        "demo__get_admin_runtime_info,run_python_code,send_email"
+        "demo__get_admin_runtime_info,run_python_code,send_email,search_web"
     )
     tool_approval_timeout_seconds: float = Field(default=300, gt=0, le=3600)
     tool_lazy_load_threshold: int = Field(default=4, ge=1, le=1000)
@@ -226,6 +231,17 @@ class Settings(BaseSettings):
         if section_total > self.context_max_input_tokens:
             raise ValueError("Tổng context section budget vượt CONTEXT_MAX_INPUT_TOKENS")
         return self
+
+    @property
+    def web_search_config(self) -> WebSearchConfig | None:
+        if not self.web_search_enabled or not self.openrouter_api_key:
+            return None
+        return WebSearchConfig(
+            api_key=self.openrouter_api_key,
+            model=self.web_search_model,
+            timeout_seconds=self.web_search_timeout_seconds,
+            max_output_tokens=self.web_search_max_output_tokens,
+        )
 
     @property
     def email_config(self) -> SMTPConfig | None:

@@ -1288,3 +1288,62 @@
 - Cập nhật PROJECT_PLAN.md và MANUAL_M3_CASES.md (Q02/J01–J04/T02/trace) theo thiết kế mới,
   giữ ghi chú/report/run lịch sử. Không tạo thêm file tracked, dependency; không restart dịch vụ
   hoặc stage/commit/push thay user. User restart web (Windows không --reload) và Ctrl+F5 để test.
+
+## 2026-10-27 — Tool search_web dùng OpenRouter key và OpenAI native search
+
+- User duyệt triển khai và dùng key thật test. Tạo đúng một file code tracked mới:
+  agent_core/tools/web_search.py; dùng httpx hiện có, không thêm SDK/dependency/migration.
+  Tool nội bộ read_only, user/admin dùng được khi bật và allowlist, không cần approval gửi mail.
+  SearchWebInput chỉ có query; mô tả yêu cầu query độc lập, giải nghĩa history, giữ ngôn ngữ user.
+- WebSearchConfig dùng SecretStr, model riêng mặc định openai/gpt-5.4-mini, timeout60 giây,
+  max_output_tokens2000. URL API cố định https://openrouter.ai/api/v1, không lấy endpoint/key
+  từ tool input; trust_env=false, không follow redirect. Giữ key ngoài prompt/output/trace.
+- Trước paid request kiểm endpoint tag=openai có native_tools.openrouter:web_search. Request
+  pin provider.only=[openai], allow_fallbacks=false, engine=native, tool_choice=required;
+  max_tool_calls2 là giới hạn server-tool yêu cầu, không khẳng định native luôn tôn trọng hard cap.
+  Chỉ trả kết quả khi provider=OpenAI, có web_search_requests, output hoàn chỉnh và URL annotations
+  hợp lệ. Chuẩn hóa sources URL/title, số token/cache/cost/latency/số search; giữ citation Markdown
+  của provider, không tạo lại S1/sources bằng model chat. Nguồn web không nhập vào document_qa.
+- Lỗi timeout/key/credit/quyền/rate limit/provider/thiếu search hoặc nguồn có mã và thông báo an
+  toàn. Không lộ response body/credential, không retry request có phí. Timeout/connection ghi
+  billing_status=unknown khi chưa có usage. Không coi chỉ thêm engine=native là bằng chứng đủ.
+- Bổ sung return_direct tùy chọn cho create_context_tool và direct_answer trong AgentState.
+  Với đúng một call của host tool được đánh dấu này, graph chuyển tool→final và phát nguyên
+  câu trả lời/citation; lỗi cũng trả thông báo an toàn, không chạy thêm LLM để lặp paid search.
+  Trường hợp nhiều call giữ luồng thường. Tool/approval/authorization và kiểm catalog vẫn chạy;
+  checkpoint cũ thiếu direct_answer mặc định false. Các tool hiện có mặc định không return_direct.
+- ToolResult có usage tùy chọn; runner cộng token tool vào budget/stream tổng, quota ngày tính
+  event tool_completed, kể cả output đã dùng token rồi lỗi. Recorder tạo ModelCall riêng cho
+  model trong tool và giữ cost/usage/source trong ToolCall.result_data. API/history timeline cộng
+  native tokens vào tổng, hiển thị token/cost USD/search count ở live và reload; metadata dài
+  xuống dòng riêng để tránh chèn nội dung. Không trộn native token vào model DeepSeek cũ.
+- Executor khi thu hồi quyền sau RPC vẫn loại nội dung/nguồn private nhưng giữ known usage và
+  metadata billing cần thiết; không xóa dấu vết phí đã phát sinh. Có test kiểm nội dung không lộ.
+- Settings/dependencies_tools/.env.example đăng ký tool theo cấu hình. Đã bật WEB_SEARCH_ENABLED
+  trong .env host và thêm search_web nếu có TOOL_ALLOWLIST override; giữ nguyên API key hiện có.
+  .env vẫn Git ignore. .env.docker.example/compose.yaml/README có DEV_WEB_SEARCH_* default-off;
+  kiểm compose config đạt, chưa build/test live Docker. Không thay config JEV/DeepSeek/RAG.
+- Probe key thật: HTTP200, native OpenAI, một search, đúng Python3.14.0 ngày7/10/2025/link chính
+  thức Python.org;4,548s/0,0152929 USD. Hai lượt backend đầu đã giữ link/history nhưng câu trả lời
+  tiếng Anh do args dịch sang Anh. Sửa mô tả/schema giữ ngôn ngữ rồi kiểm hai lượt thật mới:
+  3.14.0 ngày7/10/2025 (9,378s/0,0156739 USD/8959 native token); câu nối tiếp3.13.0 ngày7/10/2024
+  (7,817s/0,01539415 USD/8756 native token). Cả hai trả tiếng Việt, đúng link và một tool call.
+- Live test qua FastAPI auth/message/SSE/history/run với DB/JEV/DeepSeek/OpenRouter thật trên
+  tài khoản fixture riêng, không chọn/đọc tài liệu hoặc chat của user. DB xác nhận query và
+  capability đều provider=jev, selection policy bind search_web, không fallback; history giải
+  “ngôn ngữ đó” thành Python. Run cuối fca228bc-2202-48ae-bd9a-930788384cb6 và
+  0556e09d-2d79-4be1-aa93-8ab84d03c98c. Nguồn/message/model usage đều đọc lại được.
+- Tổng5 native searches/probe: OpenRouter báo0,07718375 USD, gồm inference/search của những
+  request này, chưa gồm JEV/DeepSeek. Không gọi thêm model khi xác minh DB cuối. Sandbox proxy
+  từng làm SDK JEV không kết nối; test thật ngoài sandbox đạt, không sửa transport JEV sản phẩm.
+  Harness từng nhầm provider của selection row phải là jev; sửa assertion theo đúng phase rồi
+  xác minh chỉ đọc, không chạy lại paid calls để chữa assertion.
+- 343 test graph/tool/quota/recorder/SSE/RAG/auth/routing/plugin/MCP/checkpoint đạt. Ba fixture
+  MCP ban đầu bị chặn subprocess/temp/TLS bởi sandbox, rerun ngoài sandbox và bộ cuối đều đạt.
+  Node DOM host kiểm cost/token/search count live/reload, timer, session renewal, nguồn RAG cũ;
+  Ruff format/check, JS syntax, diff check và Compose config đạt. Chưa thao tác browser thật.
+- PROJECT_PLAN.md và MANUAL_JEV_CASES.md có W01–W06. Report/artifacts Git ignore ở
+  data/web-search-testing/20261027/REPORT.md. Helper Git ignore trong .tools/runtime-setup gồm
+  probe_web_search_live.py, enable_web_search.py, test_web_search_e2e.py,
+  diagnose_jev_web_search.py, verify_web_search_saved.py; không lưu mật khẩu fixture/key/cookie.
+  Không restart dịch vụ hoặc stage/commit/push thay user; user restart web và Ctrl+F5 để dùng.

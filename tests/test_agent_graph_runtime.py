@@ -32,6 +32,70 @@ from agent_core.tools import (
 )
 
 
+@pytest.mark.parametrize(("direct", "failed"), [(True, False), (False, False), (True, True)])
+async def test_host_direct_tool_preserves_final_text_and_counts_api_tokens(direct, failed):
+    answer = (
+        "Web search unavailable."
+        if failed
+        else "Native answer ([Python](https://www.python.org/))."
+    )
+
+    async def handler(context, arguments):
+        if failed:
+            return ToolResult.failure(
+                answer,
+                error_code="web_search_missing_sources",
+                usage=TokenUsage(prompt_tokens=50, completion_tokens=10, total_tokens=60),
+            )
+        return ToolResult.success(
+            answer, usage=TokenUsage(prompt_tokens=50, completion_tokens=10, total_tokens=60)
+        )
+
+    registry = ToolRegistry()
+    registry.register(
+        create_context_tool(
+            name="native_lookup",
+            description="Native lookup",
+            args_schema={"type": "object", "properties": {}},
+            coroutine=handler,
+            return_direct=direct,
+        )
+    )
+    model = FakeModel(
+        [
+            [
+                LLMChunk(
+                    finish_reason="tool_calls",
+                    usage=TokenUsage(total_tokens=5),
+                    tool_call_deltas=(
+                        LLMToolCallDelta(
+                            index=0, id="call_1", name="native_lookup", arguments="{}"
+                        ),
+                    ),
+                )
+            ],
+            [LLMChunk(content="Rewritten", finish_reason="stop", usage=TokenUsage(total_tokens=2))],
+        ]
+    )
+    items = [
+        item
+        async for item in stream_agent_graph(
+            model=model,
+            messages=[{"role": "user", "content": "Look up information"}],
+            registry=registry,
+            context=make_context(),
+        )
+    ]
+    chunks = [item for item in items if isinstance(item, LLMChunk)]
+    assert "".join(chunk.content for chunk in chunks) == (answer if direct else "Rewritten")
+    assert len(model.requests) == (1 if direct else 2)
+    assert chunks[-1].usage.total_tokens == (65 if direct else 67)
+    completed = next(
+        item for item in items if isinstance(item, AgentLoopEvent) and item.kind == "tool_completed"
+    )
+    assert completed.usage.total_tokens == 60
+
+
 class FakeModel:
     provider = "fake"
     model = "fake-model"
@@ -375,7 +439,7 @@ async def test_agent_graph_accepts_memory_and_rag_sections() -> None:
 
     _ = [
         item
-            async for item in stream_agent_graph(
+        async for item in stream_agent_graph(
             model=model,
             messages=[
                 {"role": "system", "content": "system"},

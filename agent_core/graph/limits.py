@@ -56,6 +56,8 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
             return "repeated_tool_call"
 
     if phase == "tools_completed":
+        if state["usage"]["total_tokens"] >= budget["max_total_tokens"]:
+            return "token_limit"
         if any(
             count > budget["max_repeated_observations"]
             for count in state["observation_counts"].values()
@@ -77,8 +79,10 @@ def route_after_model(state: AgentState) -> Literal["approval", "final", "limit"
     return "limit" if limit_reason(state) is not None else "approval"
 
 
-def route_after_tool(state: AgentState) -> Literal["context", "limit"]:
-    return "limit" if limit_reason(state) is not None else "context"
+def route_after_tool(state: AgentState) -> Literal["context", "final", "limit"]:
+    if limit_reason(state) is not None:
+        return "limit"
+    return "final" if state.get("direct_answer", False) else "context"
 
 
 async def limit_node(state: AgentState) -> Never:

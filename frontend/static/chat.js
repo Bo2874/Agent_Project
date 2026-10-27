@@ -442,8 +442,11 @@ if (chatApp) {
 
     item.querySelector(".timeline-item-name").textContent = data.name;
     item.querySelector(".timeline-item-description").textContent = data.description;
+    item.classList.toggle("has-api-usage", Number.isFinite(data.costUsd) || Number.isInteger(data.searchRequests));
     const metadata = [formatDuration(data.durationMs)];
     if (data.totalTokens) metadata.push(`${data.totalTokens} token`);
+    if (Number.isFinite(data.costUsd)) metadata.push(`${data.costUsd.toFixed(6)} USD`);
+    if (Number.isInteger(data.searchRequests)) metadata.push(`${data.searchRequests} lượt tìm web`);
     if (data.cacheHitRate !== undefined && data.cacheHitRate !== null) {
       metadata.push(`cache ${(data.cacheHitRate * 100).toFixed(1)}%`);
     }
@@ -474,6 +477,8 @@ if (chatApp) {
       durationMs: event.duration_ms,
       totalTokens: event.total_tokens,
       cacheHitRate: event.prompt_cache_hit_rate,
+      costUsd: event.web_search?.cost_usd,
+      searchRequests: event.web_search?.search_requests,
     });
     timeline.titleText.textContent = event.message;
     timeline.root.classList.toggle("has-failure", state === "failed");
@@ -650,6 +655,9 @@ if (chatApp) {
               : `Tool ${tool.tool_name} ${tool.status}.`,
           state: tool.status === "completed" ? "completed" : "failed",
           durationMs: tool.duration_ms,
+          totalTokens: tool.total_tokens,
+          costUsd: tool.cost_usd,
+          searchRequests: tool.search_requests,
         });
       }
     }

@@ -36,6 +36,9 @@ class ToolCallTimeline:
     approval_decision: str | None
     created_at: datetime
     finished_at: datetime | None
+    total_tokens: int | None = None
+    cost_usd: float | None = None
+    search_requests: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +307,30 @@ class AgentRunRecorder:
             )
             tool_call.duration_ms = event.duration_ms
             tool_call.finished_at = datetime.now(UTC)
+            if event.usage is not None:
+                # API-backed host tools have their own inference usage, separate from the caller.
+                usage = event.usage
+                session.add(
+                    ModelCall(
+                        conversation_id=self.conversation_id,
+                        user_message_id=self.user_message_id,
+                        provider=str(event.tool_result.data.get("provider", "tool"))[:40],
+                        model_name=str(event.tool_result.data.get("model", event.tool_call.name))[
+                            :100
+                        ],
+                        status="failed" if event.tool_result.is_error else "completed",
+                        prompt_tokens=usage.prompt_tokens,
+                        completion_tokens=usage.completion_tokens,
+                        total_tokens=usage.total_tokens,
+                        cached_input_tokens=usage.cached_input_tokens,
+                        cache_miss_input_tokens=usage.cache_miss_input_tokens,
+                        prompt_version="web-search-v1"
+                        if event.tool_call.name == "search_web"
+                        else None,
+                        latency_ms=event.duration_ms,
+                        finished_at=tool_call.finished_at,
+                    )
+                )
             await session.commit()
 
     async def _record_tool_approval_required(self, event: AgentLoopEvent) -> None:
@@ -612,6 +639,12 @@ async def list_agent_run_timelines(
             step_cache_misses = (model_call.cache_miss_input_tokens or 0) if model_call else 0
             cached_input_tokens += step_cache_hits
             cache_miss_input_tokens += step_cache_misses
+            for tool_call in tools_by_step.get(step.id, []):
+                if tool_call.tool_name == "search_web":
+                    tool_usage = (tool_call.result_data or {}).get("usage") or {}
+                    total_tokens += tool_usage.get("total_tokens", 0)
+                    cached_input_tokens += tool_usage.get("cached_input_tokens", 0)
+                    cache_miss_input_tokens += tool_usage.get("cache_miss_input_tokens", 0)
             if model_call and model_call.prompt_version and prompt_version is None:
                 prompt_version = model_call.prompt_version
             step_cache_total = step_cache_hits + step_cache_misses
@@ -643,6 +676,17 @@ async def list_agent_run_timelines(
                             approval_decision=tool_call.approval_decision,
                             created_at=tool_call.created_at,
                             finished_at=tool_call.finished_at,
+                            total_tokens=((tool_call.result_data or {}).get("usage") or {}).get(
+                                "total_tokens"
+                            )
+                            if tool_call.tool_name == "search_web"
+                            else None,
+                            cost_usd=(tool_call.result_data or {}).get("cost_usd")
+                            if tool_call.tool_name == "search_web"
+                            else None,
+                            search_requests=(tool_call.result_data or {}).get("search_requests")
+                            if tool_call.tool_name == "search_web"
+                            else None,
                         )
                         for tool_call in tools_by_step.get(step.id, [])
                     ],

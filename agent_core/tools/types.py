@@ -11,6 +11,8 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, ValidationInfo, create_model, model_validator
 
+from agent_core.llm.types import TokenUsage
+
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
@@ -82,6 +84,7 @@ class ToolResult:
     data: Mapping[str, Any] = field(default_factory=dict)
     is_error: bool = False
     error_code: str | None = None
+    usage: TokenUsage | None = None
 
     def __post_init__(self) -> None:
         if not self.content.strip():
@@ -90,8 +93,10 @@ class ToolResult:
             raise ValueError("ToolResult thành công không được có error_code")
 
     @classmethod
-    def success(cls, content: str, *, data: Mapping[str, Any] | None = None) -> "ToolResult":
-        return cls(content=content, data=data or {})
+    def success(
+        cls, content: str, *, data: Mapping[str, Any] | None = None, usage: TokenUsage | None = None
+    ) -> "ToolResult":
+        return cls(content=content, data=data or {}, usage=usage)
 
     @classmethod
     def failure(
@@ -100,8 +105,11 @@ class ToolResult:
         *,
         error_code: str,
         data: Mapping[str, Any] | None = None,
+        usage: TokenUsage | None = None,
     ) -> "ToolResult":
-        return cls(content=content, data=data or {}, is_error=True, error_code=error_code)
+        return cls(
+            content=content, data=data or {}, is_error=True, error_code=error_code, usage=usage
+        )
 
 
 ContextToolCoroutine = Callable[[ToolContext, Mapping[str, Any]], Awaitable[ToolResult]]
@@ -175,6 +183,7 @@ def create_context_tool(
     description: str,
     args_schema: type[BaseModel] | Mapping[str, Any],
     coroutine: ContextToolCoroutine,
+    return_direct: bool = False,
 ) -> StructuredTool:
     """Create a LangChain tool while keeping trusted request context out of model input."""
     if not _TOOL_NAME_PATTERN.fullmatch(name):
@@ -207,4 +216,5 @@ def create_context_tool(
         description=clean_description,
         args_schema=pydantic_schema,
         coroutine=invoke,
+        return_direct=return_direct,
     )

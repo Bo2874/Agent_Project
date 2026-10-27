@@ -70,6 +70,9 @@ class ToolCallTimelineResponse(BaseModel):
     approval_decision: str | None
     created_at: datetime
     finished_at: datetime | None
+    total_tokens: int | None = None
+    cost_usd: float | None = None
+    search_requests: int | None = None
 
 
 class RunStepTimelineResponse(BaseModel):

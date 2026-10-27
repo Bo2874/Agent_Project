@@ -210,7 +210,7 @@ class AgentQuotaGuard:
             raise AgentQuotaLimitError(str(exc)) from exc
 
     async def record_event(self, event: AgentLoopEvent) -> None:
-        if event.kind != "model_completed" or event.usage is None:
+        if event.kind not in {"model_completed", "tool_completed"} or event.usage is None:
             return
         if event.usage.total_tokens > 0:
             await self.record_tokens(event.usage.total_tokens)

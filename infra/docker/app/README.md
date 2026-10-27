@@ -23,6 +23,12 @@ Không có key, auth/UI/memory API và MCP vẫn khởi động; gửi chat tớ
 `DEV_MEMORY_EXTRACTION_ENABLED` mặc định false cho startup offline; có thể bật cùng key hợp lệ.
 Không truyền key bằng build arg hoặc thêm `.env` vào image. Các mật khẩu mẫu chỉ dành cho dev local.
 
+Để dùng tool `search_web`, đặt `DEV_OPENROUTER_API_KEY` và `DEV_WEB_SEARCH_ENABLED=true` trong
+`.env.docker`, rồi recreate app. Model riêng mặc định `DEV_WEB_SEARCH_MODEL=openai/gpt-5.4-mini`,
+timeout60 giây/output2000 token. Tool kiểm endpoint hỗ trợ native search và chỉ chọn provider OpenAI;
+token model và chi phí search dùng số dư OpenRouter. Chưa chạy kiểm live trong Docker ở bước này;
+kiểm thật đã chạy qua backend/API trên Windows. Host Windows dùng các tên tương ứng không có `DEV_`.
+
 ## Service và thứ tự khởi động
 
 ```mermaid

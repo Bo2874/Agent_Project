@@ -636,6 +636,24 @@ Jev + fallback + LLM/tool; chỉ mở mặc định nếu chất lượng không
 Tham khảo cách phân tầng candidate của [Skill suggestion cookbook](https://docs.typesafe.ai/cookbooks/skill_suggestion),
 nhưng vẫn benchmark catalog riêng của project.
 
+Ngày 2026-10-27 — Tool search_web qua OpenRouter/OpenAI native:
+- [x] Tool nội bộ `agent_core/tools/web_search.py`, input một query độc lập theo ngôn ngữ user;
+  đăng ký runtime catalog/allowlist để JEV chọn trong tool_task. Dùng OPENROUTER_API_KEY của admin.
+- [x] Kiểm metadata native endpoint trước request có phí, pin provider openai và engine native,
+  chặn fallback provider; kiểm web_search_requests/nguồn URL/finish_reason trước khi trả kết quả.
+- [x] Giữ câu trả lời/citation Markdown của provider bằng host return_direct cho một tool call,
+  không gọi DeepSeek viết lại; lỗi cũng kết thúc bằng thông báo an toàn, không tự lặp paid search.
+- [x] ToolResult có usage tùy chọn; token tool được cộng run budget/quota, ModelCall riêng và
+  history total. Chi phí/số search lưu trong ToolCall và hiển thị timeline live/reload.
+- [x] Kiểm API thật với key hiện có: JEV query/capability, DeepSeek tạo args, OpenAI native search,
+  câu nối tiếp hiểu Python, nguồn và câu trả lời tiếng Việt được lưu/mở lại. 5 search thử,
+  chi phí search/model do OpenRouter báo tổng0,07718375 USD; không gồm JEV/DeepSeek.
+- [ ] User nghiệm thu trên web theo W01–W06 trong docs/routing/MANUAL_JEV_CASES.md sau restart;
+  chưa benchmark chất lượng tổng quát hoặc so sánh định lượng với ChatGPT.
+
+Đã bật WEB_SEARCH_ENABLED và allowlist trên .env host, giữ key hiện có. Config mẫu/Compose mặc định
+tắt tính năng; admin tự bật. Không thêm dependency/migration hoặc đổi lõi document_qa/planned_task.
+
 ### M3 — Upload tài liệu, hybrid RAG và citation
 
 Phạm vi đầu tiên: tài liệu riêng theo `user_id`, chọn một/nhiều tài liệu trong chat; tìm kiếm tài liệu

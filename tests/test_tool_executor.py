@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
+from agent_core.llm.types import TokenUsage
 from agent_core.tools import (
     ContextToolCoroutine,
     ToolContext,
@@ -12,6 +13,34 @@ from agent_core.tools import (
     ToolResult,
     create_context_tool,
 )
+from agent_core.tools.types import ToolAuthorizationError
+
+
+async def test_revoke_suppresses_private_output_but_preserves_known_api_spend():
+    revoked = False
+
+    async def authorize(name):
+        if revoked:
+            raise ToolAuthorizationError()
+
+    async def handler(context, arguments):
+        nonlocal revoked
+        revoked = True
+        return ToolResult.success(
+            "PRIVATE CONTENT",
+            data={"private": "PRIVATE", "provider": "OpenAI", "model": "test", "cost_usd": 0.01},
+            usage=TokenUsage(prompt_tokens=10, total_tokens=10),
+        )
+
+    registry = ToolRegistry()
+    registry.register(make_tool(handler))
+    context = ToolContext(
+        user_id=uuid4(), conversation_id=uuid4(), user_role="user", authorization_guard=authorize
+    )
+    result = await ToolExecutor().execute(registry, context, "test_tool", {"value": 1})
+    assert result.is_error and "PRIVATE" not in repr(result)
+    assert result.usage.total_tokens == 10
+    assert result.data["usage"]["total_tokens"] == 10 and result.data["cost_usd"] == 0.01
 
 
 def make_context() -> ToolContext:

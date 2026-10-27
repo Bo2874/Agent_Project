@@ -157,6 +157,10 @@ def agent_status_payload(event: AgentLoopEvent) -> dict[str, object]:
         }
     if event.tool_result is not None:
         payload["success"] = not event.tool_result.is_error
+        if event.tool_call and event.tool_call.name == "search_web":
+            payload["web_search"] = {
+                key: event.tool_result.data.get(key) for key in ("cost_usd", "search_requests")
+            }
         if event.tool_result.error_code:
             payload["error_code"] = event.tool_result.error_code
     if event.approval_id is not None:

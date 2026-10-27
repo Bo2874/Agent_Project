@@ -41,6 +41,31 @@ def test_tool_status_payload_contains_safe_progress_only() -> None:
     assert "private data" not in serialized
 
 
+def test_web_search_progress_exposes_cost_and_usage_without_query_or_sources():
+    payload = agent_status_payload(
+        AgentLoopEvent(
+            kind="tool_completed",
+            step_number=1,
+            tool_call=ToolCallRequest(
+                id="c1", name="search_web", arguments={"query": "PRIVATE"}, raw_arguments="{}"
+            ),
+            usage=TokenUsage(total_tokens=120),
+            tool_result=ToolResult.success(
+                "PRIVATE answer",
+                data={
+                    "cost_usd": 0.0101,
+                    "search_requests": 1,
+                    "sources": ["PRIVATE"],
+                    "query": "PRIVATE",
+                },
+            ),
+        )
+    )
+    assert payload["total_tokens"] == 120
+    assert payload["web_search"] == {"cost_usd": 0.0101, "search_requests": 1}
+    assert "PRIVATE" not in json.dumps(payload)
+
+
 def test_agent_status_is_encoded_as_named_sse_event() -> None:
     payload = agent_status_payload(AgentLoopEvent(kind="model_started", step_number=1))
 

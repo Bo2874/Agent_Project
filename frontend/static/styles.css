@@ -887,6 +887,12 @@ nav {
 .timeline-item-name { display: block; color: #dce7e3; font-size: 0.74rem; }
 .timeline-item-description { display: block; margin-top: 3px; color: #81938d; font-size: 0.68rem; }
 .timeline-item-meta { padding-left: 8px; color: #71837e; font-size: 0.65rem; white-space: nowrap; }
+.timeline-item.has-api-usage .timeline-item-meta {
+  grid-column: 2 / -1;
+  padding-left: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .resume-run-button {
   align-self: flex-start;
   margin: 6px 0 2px 20px;

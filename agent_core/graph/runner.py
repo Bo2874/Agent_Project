@@ -996,6 +996,8 @@ async def run_agent_graph_stream(
         tool_messages: list[BaseMessage] = []
         observations: list[dict[str, Any]] = []
         progress_updates: list[str] = []
+        tool_usage = TokenUsage()
+        direct_content = None
 
         for call in state["pending_tool_calls"]:
             request = _tool_call_request(call)
@@ -1022,6 +1024,9 @@ async def run_agent_graph_stream(
                 await execution_guard("tool")
 
             tool_started_at = perf_counter()
+            registered = registry.get(request.name) if request.name in registry else None
+            if registered and registered.tool.return_direct and execution_guard is not None:
+                await execution_guard("model")
             result = await _execute_tool(
                 tool_executor,
                 registry,
@@ -1031,6 +1036,14 @@ async def run_agent_graph_stream(
                 approval_granted,
                 frozenset(state["loaded_tool_names"]),
             )
+            if result.usage is not None:
+                tool_usage += result.usage
+            if (
+                len(state["pending_tool_calls"]) == 1
+                and registered
+                and registered.tool.return_direct
+            ):
+                direct_content = result.content
 
             await publish(
                 AgentLoopEvent(
@@ -1039,6 +1052,7 @@ async def run_agent_graph_stream(
                     duration_ms=round((perf_counter() - tool_started_at) * 1000),
                     tool_call=request,
                     tool_result=result,
+                    usage=result.usage,
                 )
             )
             tool_messages.extend(to_langchain_messages([_tool_result_message(request, result)]))
@@ -1076,9 +1090,18 @@ async def run_agent_graph_stream(
             "progress": progress_updates,
             "observation_counts": result_counts,
             "budget": current_budget,
+            "usage": _usage_to_state(_usage_from_state(state["usage"]) + tool_usage),
+            "direct_answer": direct_content is not None,
+            **({"model_content": direct_content} if direct_content is not None else {}),
         }
 
     async def build_final_node(state: AgentState) -> Mapping[str, Any]:
+        if state.get("direct_answer", False):
+            await restore_node_selection(state)
+            await validate_capabilities()
+            await publish(
+                LLMChunk(content=state["model_content"], usage=_usage_from_state(state["usage"]))
+            )
         return {"final_answer": state["model_content"]}
 
     initial_state = create_initial_agent_state(

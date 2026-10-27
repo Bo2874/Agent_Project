@@ -6,6 +6,7 @@ import pytest
 from agent_core.context_budget import ContextTokenUsage
 from agent_core.graph import AgentLoopEvent, ToolCallRequest
 from agent_core.llm.types import TokenUsage
+from agent_core.tools import ToolResult
 from backend.models import AgentRun, ModelCall, RunStep, ToolCall
 from backend.services import agent_runs
 from backend.services.agent_runs import AgentRunRecorder
@@ -45,6 +46,45 @@ class FakeSession:
 
     async def commit(self) -> None:
         self.operations.append("commit")
+
+
+async def test_api_tool_usage_and_cost_are_persisted_separately_from_deepseek(monkeypatch):
+    session = FakeSession()
+    monkeypatch.setattr(agent_runs, "SessionFactory", lambda: session)
+    recorder = AgentRunRecorder(
+        agent_run_id=uuid4(),
+        conversation_id=uuid4(),
+        user_message_id=uuid4(),
+        provider="deepseek",
+        model_name="deepseek-flash",
+    )
+    request = ToolCallRequest(
+        id="c1", name="search_web", arguments={"query": "Public question"}, raw_arguments="{}"
+    )
+    await recorder(AgentLoopEvent(kind="model_started", step_number=1))
+    await recorder(AgentLoopEvent(kind="tool_started", step_number=1, tool_call=request))
+    await recorder(
+        AgentLoopEvent(
+            kind="tool_completed",
+            step_number=1,
+            tool_call=request,
+            duration_ms=1500,
+            usage=TokenUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120),
+            tool_result=ToolResult.success(
+                "Answer with source",
+                data={
+                    "provider": "OpenAI",
+                    "model": "openai/gpt-5.4-mini",
+                    "cost_usd": 0.0101,
+                    "usage": {"total_tokens": 120},
+                },
+            ),
+        )
+    )
+    assert session.records[ModelCall].provider == "OpenAI"
+    assert session.records[ModelCall].model_name == "openai/gpt-5.4-mini"
+    assert session.records[ModelCall].total_tokens == 120
+    assert session.records[ToolCall].result_data["cost_usd"] == 0.0101
 
 
 async def test_recorder_flushes_model_call_before_inserting_run_step(

@@ -142,3 +142,32 @@ nhánh chat hiện có thể hỏi rõ trực tiếp dựa trên hội thoại.
 và cờ preview đã gỡ. Chat dùng nhánh hiện có; tool_task giữ bộ chọn hiện có để tiếp tục bàn
 thiết kế Choice động/một hoặc nhiều tool. Hai nhánh chưa có lõi trả thông báo tương ứng.
 Trace/admin vẫn lưu kết quả routing; không xóa hội thoại hoặc trace đã tạo.
+
+## Tool search_web — test thực thi và history
+
+Host hiện đã bật `WEB_SEARCH_ENABLED=true`, có `OPENROUTER_API_KEY` và allowlist `search_web`.
+Restart web, Ctrl+F5, đăng nhập tài khoản thường. Mở chat mới, không chọn tài liệu khi test tra cứu
+web độc lập. Tool dùng model riêng `openai/gpt-5.4-mini`, provider OpenAI qua OpenRouter; giữ model
+chat/JEV hiện tại. Key/chi phí do admin quản lý, user không cần kết nối thêm tài khoản.
+
+| Case | Thao tác | Mong đợi |
+| --- | --- | --- |
+| W01 | “Tìm thông tin trên website Python.org: Python 3.14.0 được phát hành ngày nào? Cho tôi nguồn chính thức.” | tool_task → search_web; trả 7/10/2025 bằng tiếng Việt, link Python.org bấm được; có tool_started/completed |
+| W02 | Trong cùng chat W01: “Còn phiên bản 3.13.0 của ngôn ngữ đó thì sao? Hãy tra ngày phát hành và nguồn chính thức.” | History giải nghĩa Python; trả 7/10/2024 kèm nguồn; không hỏi lại ngôn ngữ nào |
+| W03 | Reload chat W01/W02 rồi bấm link nguồn | Nội dung/link giữ nguyên trong message; timeline có token, chi phí USD và số lượt tìm kiếm được provider báo |
+| W04 | Chat mới: “Xin chào, bạn có thể giúp gì?” | Chat thông thường; không tự chạy search_web chỉ vì tool đã được bật |
+| W05 | Chọn Atlas và yêu cầu “Đọc bảo hành trong file rồi đối chiếu chính sách mới nhất trên web.” | planned_task theo policy hiện tại; lõi workflow chưa triển khai thì báo rõ, không tự nhận đã so sánh xong |
+| W06 | Chạy kiểm local với timeout,401/402/403/429, thiếu nguồn/không search có kiểm soát | Lỗi an toàn, không lộ key/body provider; không gọi lại tool trả trực tiếp để lặp phí. Không cần cố ý làm hỏng key trên môi trường đang sử dụng |
+
+Timeline hiển thị chi phí API được báo, không suy đoán chi phí khi thiếu dữ liệu. Một lần gọi
+`search_web` của project có thể gồm nhiều thao tác tìm web bên provider; metadata ghi số search
+thực tế. `max_tool_calls` không được xem là bảo đảm chặn mọi thao tác trong native provider;
+deadline/output budget và usage được theo dõi độc lập. Bản đầu không tự retry request có phí.
+
+Nguồn web lấy từ annotations của API, câu trả lời giữ nguyên các link citation; không dùng nhãn
+chunk S1 của document_qa. Đây là tool đọc thông tin, không cần approval gửi mail. Kết quả/search
+query chỉ gửi lên API khi user yêu cầu và hệ thống chọn tool; không gửi toàn bộ history vào web search.
+
+Kiểm thật ngày27/10/2026 đã qua các route/API/SSE qua ASGI với DB/JEV/DeepSeek/OpenRouter thật,
+gồm W01/W02 và đọc lại message/run. Chưa thao tác browser thật hoặc chạy live trong Docker.
+Chi tiết local Git ignore: `data/web-search-testing/20261027/REPORT.md`.

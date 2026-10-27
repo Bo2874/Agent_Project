@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -138,7 +138,20 @@ class ToolExecutor:
                 if context.authorization_guard is not None:
                     await context.authorization_guard(tool_name)
             except ToolAuthorizationError as exc:
-                return ToolResult.failure(str(exc), error_code=exc.code)
+                # Discard private content, but do not erase known spend from an API-backed tool.
+                billing = {
+                    key: result.data[key]
+                    for key in ("provider", "model", "cost_usd", "search_requests")
+                    if key in result.data
+                }
+                if result.usage is not None:
+                    billing["usage"] = asdict(result.usage)
+                return ToolResult.failure(
+                    str(exc),
+                    error_code=exc.code,
+                    data=billing if result.usage is not None else None,
+                    usage=result.usage,
+                )
 
             should_retry = (
                 result.is_error

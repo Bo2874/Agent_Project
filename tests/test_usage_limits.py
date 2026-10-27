@@ -3,10 +3,35 @@ from uuid import uuid4
 
 import pytest
 
-from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError
+from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError, ToolCallRequest
 from agent_core.llm.types import TokenUsage
+from agent_core.tools import ToolResult
 from backend.services import usage_limits
 from backend.services.usage_limits import AgentQuotaGuard, UsageLimit, _window
+
+
+async def test_api_tool_tokens_count_once_in_daily_quota_even_if_output_validation_fails(
+    monkeypatch,
+):
+    captured = []
+
+    async def add(user_id, *, metric, amount, **kwargs):
+        captured.append((metric, amount))
+
+    monkeypatch.setattr(usage_limits, "add_usage", add)
+    guard = AgentQuotaGuard(user_id=uuid4(), token_limit=1000, tool_call_limit=10)
+    await guard.record_event(
+        AgentLoopEvent(
+            kind="tool_completed",
+            step_number=1,
+            tool_call=ToolCallRequest(id="c1", name="search_web", arguments={}, raw_arguments="{}"),
+            tool_result=ToolResult.failure(
+                "Missing sources", error_code="web_search_missing_sources"
+            ),
+            usage=TokenUsage(total_tokens=120),
+        )
+    )
+    assert captured == [("llm_token", 120)]
 
 
 def test_fixed_window_is_anchored_and_returns_retry_after() -> None:
