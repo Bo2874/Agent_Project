@@ -34,6 +34,7 @@ async def test_login_page_is_available_without_database_connection() -> None:
     assert response.status_code == 200
     assert "Đăng nhập" in response.text
     assert "/api/auth/login" in response.text
+    assert 'data-authenticated="true"' not in response.text
 
 
 async def test_admin_page_redirects_anonymous_user_to_login() -> None:
@@ -75,6 +76,8 @@ async def test_chat_page_loads_markdown_renderer_before_chat_script() -> None:
     markdown_position = response.text.index("/static/markdown.js")
     chat_position = response.text.index("/static/chat.js")
     assert markdown_position < chat_position
+    assert response.text.index("/static/app.js") < chat_position
+    assert 'data-authenticated="true"' in response.text
 
 
 async def test_invalid_email_error_is_returned_in_vietnamese() -> None:

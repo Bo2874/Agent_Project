@@ -60,6 +60,21 @@ Mỗi case độc lập nên dùng hội thoại mới hoặc xóa lựa chọn 
 **phải giữ cùng hội thoại** và có câu trả lời AI thật trước khi hỏi tiếp.
 Chỉ upload/chọn những file được chỉ định trong từng case; đừng upload cả thư mục một lượt.
 
+### Gia hạn phiên khi test lâu
+
+Sau khi cập nhật code, restart web và Ctrl+F5 trang đang mở. Nếu phiên cũ đã hết hạn,
+đăng nhập lại một lần. Không cần sửa `.env` hoặc chạy migration cho cơ chế gia hạn.
+
+- Mở DevTools → Network, lọc `auth/refresh`: khi vào trang có đăng nhập sẽ có một POST trả `204`.
+  Khi tiếp tục gõ, bấm hoặc cuộn trang, request gia hạn được gửi khoảng mỗi 60 giây.
+- Trong khi AI đang trả lời, phiên vẫn được gia hạn, kể cả chuyển sang tab khác. Kết thúc câu trả
+  lời thì quay về quy tắc theo hoạt động của user; resume cũng sử dụng cùng cơ chế.
+- Để trang không thao tác và không có AI đang chạy: sau cửa sổ hoạt động 90 giây sẽ ngừng gửi
+  refresh. Polling trạng thái tài liệu vẫn có thể chạy nhưng không gia hạn cookie. Phiên hết hạn
+  theo `AUTH_TOKEN_EXPIRE_MINUTES` tính từ lần gia hạn cuối (hiện là 60 phút).
+- Đăng xuất phải ngừng refresh; các tab khác cùng trình duyệt cũng dừng qua sự kiện storage.
+  Chặn cookie, mất mạng lâu hơn thời hạn phiên hoặc token đã hết hạn vẫn cần đăng nhập lại.
+
 ## 2. Công cụ xem bên trong pipeline
 
 ### Local: parsed text, chunk và index

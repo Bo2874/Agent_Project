@@ -34,6 +34,9 @@ Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-v
 ## Phần nền tảng đã hoàn thành
 
 - [x] Đăng ký, đăng nhập và đăng xuất.
+- [x] Tự gia hạn cookie/JWT khi user thao tác hoặc đang chờ AI trả lời; polling tài liệu không
+  giữ phiên sống khi ngừng sử dụng. API refresh chỉ chấp nhận phiên còn hợp lệ, không phục hồi
+  token đã hết hạn. Bổ sung ngày 2026-10-27; kiểm tra auth/API và mô phỏng timer giao diện.
 - [x] Phân quyền `user` và `admin`.
 - [x] PostgreSQL lưu user, phiên chat và message.
 - [x] Mỗi user có nhiều phiên chat và chỉ thấy dữ liệu của mình.

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, Response, status
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, Response, status
 from sqlalchemy.exc import IntegrityError
 
 from backend.core.config import get_settings
@@ -54,6 +56,22 @@ async def login(data: LoginRequest, response: Response, session: DbSession) -> L
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(response: Response) -> None:
     response.delete_cookie(key="access_token", path="/")
+
+
+@router.post("/refresh", status_code=status.HTTP_204_NO_CONTENT)
+async def refresh(
+    response: Response,
+    user: CurrentUser,
+    x_session_activity: Annotated[str | None, Header()] = None,
+) -> None:
+    # A dedicated request prevents background API polling from extending the session.
+    # The custom header also prevents cross-site HTML forms from renewing the cookie.
+    if x_session_activity != "1":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Thiếu xác nhận hoạt động"
+        )
+    response.headers["Cache-Control"] = "no-store"
+    set_auth_cookie(response, create_access_token(user.id, user.role))
 
 
 @router.get("/me", response_model=UserResponse)

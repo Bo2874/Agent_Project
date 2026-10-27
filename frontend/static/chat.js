@@ -29,6 +29,7 @@ if (chatApp) {
 
   function setBusy(isBusy) {
     streamInProgress = isBusy;
+    window.agentSession?.setBusy(isBusy);
     updateConversationControls();
     if (isBusy) status.textContent = "Agent đang bắt đầu xử lý…";
   }

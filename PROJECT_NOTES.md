@@ -1201,3 +1201,35 @@
   phản ánh một query/8000. Giữ ghi chép và báo cáo lịch sử có multi-query/4000, không sửa dữ liệu cũ.
   Không thêm file tracked/dependency/migration; user restart web rồi test lại, không --reload trên Windows.
   Ruff check/format9 file Python và git diff --check đạt; không stage/commit/push thay user.
+
+## 2026-10-27 — Tự gia hạn phiên đăng nhập khi đang sử dụng
+
+- Bổ sung POST /api/auth/refresh: yêu cầu cookie còn hợp lệ và header X-Session-Activity=1;
+  kiểm tra user hiện tại trong DB, dùng role hiện tại để tạo JWT mới. Giữ HttpOnly, SameSite=Lax,
+  Path=/, Secure theo config và Max-Age theo AUTH_TOKEN_EXPIRE_MINUTES (hiện 60 phút).
+  Response 204/no-store, không trả JWT cho JavaScript. Token hết hạn/sai, user bị khóa/xóa đều 401.
+- base.html đánh dấu trang có đăng nhập; app.js chỉ khởi tạo heartbeat trên các trang này.
+  Gia hạn ngay khi mở trang đang hiển thị và tối đa một lần/phút khi có thao tác trong 90 giây gần
+  nhất; tick kiểm tra mỗi 15 giây. Gõ/bấm/cuộn, quay lại tab và focus được tính là hoạt động;
+  event DOM giả, polling tài liệu và sự kiện mạng trở lại không tự mở cửa sổ hoạt động mới.
+- chat.js nối setBusy với session manager: chờ AI/stream/resume vẫn gia hạn cả khi tab ẩn.
+  Khi AI xong thì trở lại quy tắc hoạt động/idle. Không sửa pipeline RAG, không gửi lại message
+  hoặc retry tool để gia hạn; lỗi mạng tạm thời ở heartbeat không làm gián đoạn câu trả lời.
+- Request gia hạn có timeout 10 giây, không chạy song song trong một tab. Đăng xuất dừng heartbeat,
+  chờ refresh đang chạy trước khi xóa cookie; Web Locks tuần tự hóa thay đổi cookie giữa các tab
+  khi trình duyệt hỗ trợ. Cờ localStorage không chứa token báo đăng xuất cho tab khác và chặn
+  refresh còn trong hàng đợi; đăng nhập/đăng ký thành công xóa cờ. Storage bị chặn vẫn dùng được
+  gia hạn trong tab, nhưng không có phối hợp logout bằng storage giữa các tab.
+- pagehide dừng timer, pageshow persisted khôi phục khi quay lại bằng back/forward cache.
+  Phiên đã hết hạn hoặc mất mạng quá thời hạn vẫn phải đăng nhập lại; đây là gia hạn bằng phiên
+  đang hợp lệ, chưa thêm refresh token dài hạn hoặc bảng session/revocation phía server.
+- 27 test security/public pages/agent status/streaming đạt: gia hạn expiry và cookie ở cả Secure
+  true/false, role từ DB, từ chối phiên không hợp lệ/thiếu header, polling không Set-Cookie,
+  logout xóa cookie, marker/script đúng trang và regression SSE. Không dùng DB/LLM thật.
+- Helper Git ignore .tools/runtime-setup/check_session_renewal.cjs chạy app.js thật trong Node VM
+  với DOM/fetch/timer giả: active/idle, event giả, AI tab ẩn, phục hồi mạng/401, BFCache, logout
+  đang refresh/queued Web Lock và mô phỏng 65 phút chờ AI đều đạt. Đây không phải kiểm tra tương
+  tác bằng browser thật hoặc chờ thực tế 65 phút. Node syntax, Ruff check/format và diff check đạt.
+- Cập nhật PROJECT_PLAN.md và hướng dẫn gia hạn trong docs/rag/MANUAL_M3_CASES.md. Không thêm file
+  tracked, dependency, migration hay sửa .env; không restart dịch vụ, stage/commit/push thay user.
+  User restart web (Windows không --reload), Ctrl+F5; phiên cũ hết hạn thì đăng nhập lại một lần.
