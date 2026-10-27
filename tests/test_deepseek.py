@@ -275,9 +275,7 @@ def test_json_mode_still_requires_schema_and_valid_citation_bindings() -> None:
 
 def test_schema_diagnostics_exclude_values_and_untrusted_field_names() -> None:
     with pytest.raises(ValidationError) as raised:
-        QueryPlan.model_validate(
-            {"query": "x", "queries": ["x"], "mode": "qa", "private_name": "private_value"}
-        )
+        QueryPlan.model_validate({"query": "x", "mode": "qa", "private_name": "private_value"})
     error = DocumentOutputError.from_schema_error(raised.value)
     assert error.code == "invalid_schema"
     assert error.details["count"] == 1
@@ -339,3 +337,19 @@ async def test_output_repair_does_not_retry_provider_errors() -> None:
     with pytest.raises(LLMProviderError):
         await _with_output_repair(fail)
     assert calls == [1]
+
+
+def test_query_plan_keeps_one_question_with_all_requested_aspects() -> None:
+    question = "Compare ANNOY and HNSW: memory, incremental updates and use cases."
+    plan = QueryPlan.model_validate({"query": question, "mode": "qa"})
+    assert plan.model_dump() == {"query": question, "mode": "qa"}
+    with pytest.raises(ValidationError):
+        QueryPlan.model_validate(
+            {"query": question, "mode": "qa", "queries": ["memory", "updates"]}
+        )
+
+
+@pytest.mark.parametrize("query", ["   ", "bad\x00query"])
+def test_single_query_plan_rejects_invalid_question(query: str) -> None:
+    with pytest.raises(ValidationError):
+        QueryPlan(query=query, mode="qa")

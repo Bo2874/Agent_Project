@@ -21,12 +21,12 @@ class ContextBudgetError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ContextTokenBudget:
-    max_input_tokens: int = 32_000
+    max_input_tokens: int = 36_000
     system_tokens: int = 2_000
     memory_tokens: int = 4_000
     history_tokens: int = 16_000
     tool_tokens: int = 6_000
-    rag_tokens: int = 4_000
+    rag_tokens: int = 8_000
 
     def __post_init__(self) -> None:
         section_values = (

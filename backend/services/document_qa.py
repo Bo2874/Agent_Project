@@ -46,7 +46,12 @@ from agent_core.rag.qa import (
     build_document_qa_graph,
     parse_json,
 )
-from agent_core.rag.retrieval import PACKING_RECIPE, evidence_block, select_ranked_evidence
+from agent_core.rag.retrieval import (
+    MAX_EVIDENCE_TOKENS,
+    PACKING_RECIPE,
+    evidence_block,
+    pack_evidence,
+)
 from backend.core.config import get_settings
 from backend.database import SessionFactory
 from backend.models import (
@@ -205,11 +210,7 @@ async def stream_document_qa(
                 "started_at", datetime.now(UTC).isoformat()
             ),
         }
-        if stage.startswith("query."):
-            index = int(stage.split(".")[1])
-            total = len(result.trace["plan"]["queries"])
-            row["label"] += f" · truy vấn {index}/{total}"
-        elif stage == "scope":
+        if stage == "scope":
             row["label"] += f" · {search_mode.title()}"
         if metadata and isinstance(metadata.get("count"), int):
             row["count"] = metadata["count"]
@@ -492,63 +493,50 @@ async def stream_document_qa(
                 "document_count": len(result.document_ids),
             }
         else:
-            rankings = []
-            for query_index, subquery in enumerate(plan.queries, 1):
 
-                async def on_progress(stage, state, metadata, index=query_index):
-                    await progress(f"query.{index}.{stage}", state, metadata)
+            async def on_progress(stage, state, metadata):
+                await progress(f"query.1.{stage}", state, metadata)
 
-                await revalidate()
-                async with SessionFactory() as session:
-                    response = await retrieve_document_evidence(
-                        session,
-                        owner,
-                        DocumentSearchRequest(
-                            query=subquery,
-                            document_ids=result.document_ids,
-                            mode="hybrid",
-                            search_mode=search_mode,
-                        ),
-                        on_progress=on_progress,
-                        query_is_planned=True,
-                        candidates_only=True,
-                    )
-                rankings.append(response.items)
-                trace = response.model_dump(mode="json", exclude={"items"})
-                trace["candidates"] = [
-                    hit.model_dump(mode="json", exclude={"text"}) for hit in response.items
-                ]
-                result.trace["retrievals"].append(trace)
-                await _save_trace(run_id, owner, result.trace)
+            await revalidate()
+            async with SessionFactory() as session:
+                response = await retrieve_document_evidence(
+                    session,
+                    owner,
+                    DocumentSearchRequest(
+                        query=plan.query,
+                        document_ids=result.document_ids,
+                        mode="hybrid",
+                        search_mode=search_mode,
+                    ),
+                    on_progress=on_progress,
+                    query_is_planned=True,
+                    candidates_only=True,
+                )
+            trace = response.model_dump(mode="json", exclude={"items"})
+            trace["candidates"] = [
+                hit.model_dump(mode="json", exclude={"text"}) for hit in response.items
+            ]
+            result.trace["retrievals"].append(trace)
+            await _save_trace(run_id, owner, result.trace)
             await progress("evidence")
-            packed = select_ranked_evidence(rankings, token_budget=context_budget.rag_tokens)
+            packed = pack_evidence(
+                response.items, token_budget=context_budget.rag_tokens, label_sources=True
+            )
             evidence = packed.items
             result.trace["selection"] = {
                 "recipe": PACKING_RECIPE,
-                "token_budget": min(4000, context_budget.rag_tokens),
+                "token_budget": min(MAX_EVIDENCE_TOKENS, context_budget.rag_tokens),
                 "estimated_tokens": packed.estimated_tokens,
                 "budget_skipped": packed.budget_skipped,
                 "duplicate_skipped": packed.duplicate_skipped,
                 "content_duplicate_skipped": packed.content_duplicate_skipped,
-                "query_contributions": packed.query_contributions,
-                "chunk_queries": {str(k): v for k, v in packed.chunk_queries.items()},
-                "max_chunks_per_query": 5,
-                "max_chunks": 15,
+                "query_count": 1,
+                "max_chunks": 10,
             }
             result.trace["coverage"] = {
                 "mode": "retrieved_passages",
-                "queries": [
-                    {
-                        "query": q,
-                        "selected_chunks": count,
-                        "matched_selected_chunks": len(
-                            {h.chunk_id for h in items} & {h.chunk_id for h in evidence}
-                        ),
-                    }
-                    for q, items, count in zip(
-                        plan.queries, rankings, packed.query_contributions, strict=True
-                    )
-                ],
+                "query": plan.query,
+                "selected_chunks": len(evidence),
             }
         result.evidence = [
             hit.model_copy(update={"citation_id": f"S{index}"})
@@ -655,7 +643,6 @@ async def stream_document_qa(
             ANSWER_PROMPT,
             {
                 "question": plan.query,
-                "aspects": plan.queries,
                 "mode": plan.mode,
                 "coverage": result.trace["coverage"],
                 "allowed_sources": sorted(allowed),

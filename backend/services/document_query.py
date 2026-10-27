@@ -18,6 +18,7 @@ from agent_core.rag.qa import PLAN_VERSION
 from agent_core.rag.reranking import QwenRerankerClient, RerankingError
 from agent_core.rag.retrieval import (
     FUSION_RECIPE,
+    MAX_EVIDENCE_TOKENS,
     PACKING_RECIPE,
     pack_evidence,
     reciprocal_rank_fusion,
@@ -257,10 +258,10 @@ async def retrieve_document_evidence(
     query_is_planned: bool = False,
     candidates_only: bool = False,
 ) -> DocumentSearchResponse:
-    """Retrieve once. QA defers final selection until every query has its top ten.
+    """Retrieve one query once. QA defers packing to its final source selection.
 
     A query already produced by the QA planner must not call the rewrite model again.
-    Standalone search keeps its history-aware rewrite and selects at most five sources.
+    Standalone search keeps its history-aware rewrite and selects at most ten sources.
     """
     settings = get_settings()
 
@@ -391,7 +392,9 @@ async def retrieve_document_evidence(
         ),
         "lexical": LEXICAL_CONFIG,
         "estimator": TOKEN_ESTIMATOR_NAME,
-        "token_budget": None if candidates_only else min(4000, settings.context_rag_token_budget),
+        "token_budget": None
+        if candidates_only
+        else min(MAX_EVIDENCE_TOKENS, settings.context_rag_token_budget),
     }
     fingerprint = (
         "hybrid-v2-"
@@ -422,7 +425,7 @@ async def retrieve_document_evidence(
         evidence_estimated_tokens=0 if packed is None else packed.estimated_tokens,
         evidence_token_budget=None
         if packed is None
-        else min(4000, settings.context_rag_token_budget),
+        else min(MAX_EVIDENCE_TOKENS, settings.context_rag_token_budget),
         budget_skipped_chunks=0 if packed is None else packed.budget_skipped,
         retrieval_metadata={
             "dense_count": len(dense.items),

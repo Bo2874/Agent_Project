@@ -172,12 +172,12 @@ class Settings(BaseSettings):
     tool_max_loaded: int = Field(default=4, ge=1, le=100)
     skill_selection_min_score: int = Field(default=20, ge=1, le=1000)
     skill_selection_ambiguity_margin: int = Field(default=5, ge=0, le=1000)
-    context_max_input_tokens: int = Field(default=32_000, ge=1_000, le=1_000_000)
+    context_max_input_tokens: int = Field(default=36_000, ge=1_000, le=1_000_000)
     context_system_token_budget: int = Field(default=2_000, ge=100)
     context_memory_token_budget: int = Field(default=4_000, ge=100)
     context_history_token_budget: int = Field(default=16_000, ge=100)
     context_tool_token_budget: int = Field(default=6_000, ge=100)
-    context_rag_token_budget: int = Field(default=4_000, ge=100)
+    context_rag_token_budget: int = Field(default=8_000, ge=100, le=8_000)
 
     @field_validator("background_worker_heartbeat_path", mode="before")
     @classmethod

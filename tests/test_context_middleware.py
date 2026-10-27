@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
 from langchain.agents.middleware import AgentMiddleware
@@ -16,8 +17,10 @@ from agent_core.context_budget import (
     measure_context_blocks,
 )
 from agent_core.context_middleware import ContextAssemblyMiddleware
+from agent_core.contracts.retrieval import RetrievalResult
 from agent_core.llm.deepseek import to_langchain_messages, to_model_messages
 from agent_core.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_VERSION, build_chat_messages
+from agent_core.rag.retrieval import evidence_block, pack_evidence
 from agent_core.status import AgentStatusBlock, AgentStatusBudget
 
 
@@ -330,3 +333,91 @@ def test_prepare_context_never_drops_current_user_turn() -> None:
             [],
             budget,
         )
+
+
+def _ranked_hit(number: int, text: str | None = None) -> RetrievalResult:
+    return RetrievalResult(
+        citation_id=f"source.c{number}",
+        document_id=UUID(int=100),
+        version_id=UUID(int=101),
+        chunk_id=UUID(int=number),
+        title="Source",
+        text=text or f"Passage {number}. " + "reference data " * 85,
+        score=float(20 - number),
+        score_kind="fusion",
+        retrieval_config_version="fixture-v1",
+        start_offset=number * 100,
+        end_offset=number * 100 + 100,
+    )
+
+
+def test_ranked_sources_keep_ten_whole_chunks_above_old_budget() -> None:
+    hits = [_ranked_hit(n) for n in range(1, 12)]
+    packed = pack_evidence(hits, token_budget=8000, label_sources=True)
+    assert [hit.chunk_id for hit in packed.items] == [hit.chunk_id for hit in hits[:10]]
+    assert [hit.citation_id for hit in packed.items] == [f"S{n}" for n in range(1, 11)]
+    assert 4000 < packed.estimated_tokens <= 8000
+    assert packed.estimated_tokens == measure_context_blocks("rag", packed.blocks)
+    assert [hit.text for hit in packed.items] == [hit.text for hit in hits[:10]]
+
+
+def test_ranked_sources_drop_whole_chunks_at_eight_thousand_hard_cap() -> None:
+    hits = [_ranked_hit(n, f"Passage {n}: " + "source content " * 180) for n in range(1, 11)]
+    packed = pack_evidence(hits, token_budget=8000, label_sources=True)
+    assert 0 < len(packed.items) < 10
+    assert packed.estimated_tokens <= 8000
+    assert packed.budget_skipped > 0
+    assert packed == pack_evidence(hits, token_budget=16000, label_sources=True)
+    assert [hit.chunk_id for hit in packed.items] == [
+        hit.chunk_id for hit in hits[: len(packed.items)]
+    ]
+    assert [hit.text for hit in packed.items] == [hit.text for hit in hits[: len(packed.items)]]
+
+
+def test_ranked_sources_preserve_order_skip_oversized_and_deduplicate() -> None:
+    first = _ranked_hit(1, "x" * 30000)
+    second = _ranked_hit(2, "same source")
+    repeated_content = _ranked_hit(3, "same source")
+    last = _ranked_hit(4, "same source plus new information")
+    packed = pack_evidence([first, second, second, repeated_content, last], token_budget=8000)
+    assert [hit.chunk_id for hit in packed.items] == [second.chunk_id, last.chunk_id]
+    assert (
+        packed.budget_skipped == packed.duplicate_skipped == packed.content_duplicate_skipped == 1
+    )
+    assert packed.items[0].citation_id == second.citation_id
+    # Packing follows the supplied ranking; it never sorts by scores or returns to RRF order.
+    assert [hit.chunk_id for hit in pack_evidence([last, second], token_budget=8000).items] == [
+        last.chunk_id,
+        second.chunk_id,
+    ]
+
+
+def test_ranked_source_budget_counts_final_labels_and_metadata() -> None:
+    hit = _ranked_hit(1, "short passage")
+    final_hit = hit.model_copy(update={"citation_id": "S1"})
+    exact = measure_context_blocks("rag", [evidence_block(final_hit)])
+    assert len(pack_evidence([hit], token_budget=exact, label_sources=True).items) == 1
+    assert not pack_evidence([hit], token_budget=exact - 1, label_sources=True).items
+    assert not pack_evidence([hit], token_budget=0).items
+    with pytest.raises(ValueError):
+        pack_evidence([hit], token_budget=-1)
+
+
+def test_default_context_budget_reserves_eight_thousand_for_sources() -> None:
+    from backend.core.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        db_password="test-only",
+        auth_secret_key="test-only-secret-key-32-characters",
+    )
+    budget = ContextTokenBudget()
+    assert settings.context_rag_token_budget == budget.rag_tokens == 8000
+    assert settings.context_max_input_tokens == budget.max_input_tokens == 36000
+    assert (
+        budget.system_tokens
+        + budget.memory_tokens
+        + budget.history_tokens
+        + budget.tool_tokens
+        + budget.rag_tokens
+    ) == budget.max_input_tokens

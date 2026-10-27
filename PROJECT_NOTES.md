@@ -1136,3 +1136,68 @@
   file tracked/dependency/migration/.env; user restart web không --reload rồi Ctrl+F5 để nạp code.
   Ruff check/format6 file Python, JS syntax và git diff --check đạt; đã kiểm lại18 test adapter/RAG
   sau khi hoàn thiện giới hạn excerpt, đều đạt. Không cộng lượt chạy lặp vào tổng40 test khác nhau.
+
+## 2026-10-27 — Chẩn đoán lỗi citation khi hỏi bảng ANNOY/HNSW
+
+- Đọc trace theo owner user@personalagent.vn, run37453adf-0e66-4c10-86f3-9da06b62a0ef
+  lúc11:26:40 +07. Fast/plan v2/answer v3; JSON/schema đã qua, answer và repair đều
+  citation_sources. error_details rỗng, không raw output: chưa biết điều kiện con/nhãn nào sai.
+- Kiểm private active-version chunks: bảng3-2 ANNOY/HNSW đã được trích xuất/index ở trang119,
+  chunk a9fe3bbd-eee5-5623-aed8-a41d1fcf1e90. Bộ5 evidence cuối ở109/131/136–137/106/111
+  đều không có ANNOY/HNSW trong text. Chunk giới thiệu bảng hạng6/4/3; chính bảng hạng5 của
+  query3, chưa vào Top10 query1/2. RRF đang ưu tiên nhiều đoạn chung về bộ nhớ/cập nhật.
+- Phát lại offline đúng30 candidates/text đã lưu: trùng chính xác bộ5 nguồn/3971 token,
+  đóng góp [3,1,1]. Lúc xét bảng context3606, nếu thêm bảng lên4071 >4000 nên skip; bảng đứng
+  riêng513 token. Ranking đầu vào chưa tốt làm budget dành cho nguồn chung, selector đang làm
+  đúng quy tắc Round-Robin/Fast đã chốt. Không cần thay đổi giới hạn để kết luận vấn đề này.
+- Lexical đang OR cả tên thuật toán và từ chung/số3/2; thiếu trace từng nhánh nên chưa định
+  lượng được dense/lexical gây lệch bao nhiêu. Cần cải thiện ranking thực thể/tham chiếu bảng,
+  đồng thời chi tiết hóa citation_sources và repair/no-answer; không nới kiểm source binding.
+- Không gọi LLM/embedding/reranker hoặc ghi DB, không sửa code sản phẩm trong lượt chẩn đoán.
+  Helper Git ignore .tools/runtime-setup/diagnose_annoy_citations.py; kết quả/report tại
+  data/rag-testing/annoy-citation-diagnostic-20261027. Thiếu nguồn bảng là kết quả đã xác minh;
+  chưa khẳng định nó gây điều kiện citation_sources nào vì output gốc không được lưu.
+
+## 2026-10-27 — Một query sau rewrite, tối đa10 nguồn và ngân sách8000
+
+- User chốt bỏ phân rã và Ranked Round-Robin; giữ rewrite/history, Fast/Deep, mục tiêu10 chunk,
+  nếu vượt8000 token thì bỏ bớt nguyên chunk theo thứ hạng. Giữ các ghi chú chẩn đoán chưa commit.
+- agent_core/rag/qa.py: QueryPlan chỉ có query/mode, plan v3 yêu cầu đúng một câu độc lập giữ
+  mọi ý/tên/số/phủ định. Schema extra=forbid từ chối trường queries cũ; không tự chọn một ý rồi
+  làm mất các ý khác. Không history giữ nguyên query gốc; có history dùng query đã resolve.
+  Answer v4 nhận câu hỏi đầy đủ/coverage/allowed_sources, không còn danh sách aspects.
+- backend/services/document_qa.py: bỏ vòng lặp subquery, chỉ gọi retrieve_document_evidence một
+  lần với plan.query. Giữ JSON mode và tối đa1 repair, không rewrite/search lại trong retrieval
+  hoặc repair. Progress giữ ID query.1 để ổn định, bỏ nhãn truy vấn i/N vì chỉ còn một query.
+  Trace có đúng1 retrieval, coverage.query/selected_chunks và selection.query_count=1/max_chunks=10;
+  bỏ query_contributions/chunk_queries/quota5/query. Run/trace cũ không bị sửa hoặc xóa.
+- agent_core/rag/retrieval.py: xóa select_ranked_evidence/thuật toán Round-Robin; pack_evidence
+  duyệt một danh sách Top10 theo thứ tự đã xếp hạng, không tự sort. Fast dùng RRF, Deep dùng
+  reranker; giữ dedup chunk_id và text giống hoàn toàn trong cùng version/section, giữ indent/
+  overlap một phần/khác version. Hard cap8000 gồm metadata/wrapper, label S1… được tính ngay
+  trong QA. Bỏ nguyên chunk không vừa và xét tiếp trong Top10; không cắt text hoặc lấy ứng viên
+  ngoài Top10 để bù. Search API giữ ID opaque, QA dùng nhãn S1…; đổi packing recipe v3.
+- backend/services/document_query.py, schemas/document.py: standalone hybrid API cũng tối đa10
+  nguồn trong8000 token; dense20/lexical20 và RRF Top10/Deep10 không đổi. Rewrite độc lập của
+  search API vẫn một query. Scope owner/version và kiểm citation/JSON mode giữ nguyên.
+- backend/core/config.py, agent_core/context_budget.py, .env.example: RAG default/max8000,
+  tổng context đầu vào default36000 thay32000 để giữ system2000/memory4000/history16000/tool6000.
+  Đọc riêng các giá trị budget xác nhận .env hiện không có override; get_settings thực tế ra
+  8000/36000 và tổng section36000 hợp lệ. Không sửa .env riêng hoặc in config/credential khác.
+- Summary giữ all-chunks tối đa64 và map-reduce theo batch (budget nguồn8000), không biến tóm
+  tắt toàn bộ thành Top10. Không đổi ingestion, chunk size512/tokenizer F2, embedding/index,
+  model/device, timeout hoặc budget tổng call/token của run; không cần upload/re-index lại.
+- tests/test_deepseek.py bổ sung plan một query giữ đủ tiêu chí và từ chối queries/NUL/rỗng.
+  tests/test_context_middleware.py kiểm10 nguồn vượt4000 nhưng trong8000, cắt nguyên chunk khi
+  vượt8000/hardcap khi caller xin16000, thứ tự/dedup/biên label+metadata và defaults context.
+  77 test deepseek/context/status/streaming/recorder/runtime/safety đạt. Test config mới ban đầu
+  thiếu credential bắt buộc trong fixture; đã bổ sung giá trị giả, không đọc secret máy user.
+- Helper Git ignore .tools/runtime-setup/check_single_query_rag.py chạy graph và hybrid thật
+  với provider/search/reranker/DB giả: Fast/Deep một query/retrieval, history, sửa output vẫn
+  không lặp retrieval,10 nguồn/8000, API giữ opaque ID, summary đủ12 chunk theo batch đều đạt.
+  Không gọi LLM/model thật, không ghi DB hoặc chạy lại câu ANNOY/HNSW trong bước này; chưa
+  khẳng định thay thiết kế đã giải quyết chất lượng ranking hoặc lỗi citation_sources trước đó.
+- Cập nhật PROJECT_PLAN.md, MANUAL_M3_CASES.md (H01/H03/F01–F07/T02/T03) và README Docker để
+  phản ánh một query/8000. Giữ ghi chép và báo cáo lịch sử có multi-query/4000, không sửa dữ liệu cũ.
+  Không thêm file tracked/dependency/migration; user restart web rồi test lại, không --reload trên Windows.
+  Ruff check/format9 file Python và git diff --check đạt; không stage/commit/push thay user.

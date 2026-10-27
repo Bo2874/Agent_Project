@@ -122,7 +122,9 @@ class DocumentSearchRequest(BaseModel):
         default=20,
         ge=1,
         le=50,
-        description=("Top-k for dense/lexical only; hybrid uses 20+20, RRF top 10, final max 5."),
+        description=(
+            "Top-k for dense/lexical only; hybrid uses 20+20, RRF top 10, budget max 8000."
+        ),
     )
 
     @model_validator(mode="after")

@@ -70,13 +70,16 @@ Package source nằm tại `/app` để đường dẫn templates/static/skills/
   lần xử lý/tìm kiếm đầu cần mạng để điền cache. Model embedding chạy trong subprocess được tái sử dụng,
   mặc định batch 4, CPU float32, theo dõi RSS/timeout, không load model cho mỗi batch/query.
   Worker công bố version ready sau khi đủ vector/FTS; M3.7 đã nối nhánh document_qa có citation.
-  Hybrid tìm 20 dense + 20 lexical, RRF rồi rerank tối đa 20 đoạn bằng Qwen3-Reranker-0.6B.
+  Hybrid dùng một query sau rewrite: 20 dense + 20 lexical → RRF Top10. Fast mặc định giữ RRF;
+  Deep rerank tối đa10 đoạn bằng Qwen3-Reranker-0.6B. Không phân rã query hoặc Round-Robin.
   Reranker có process/cache riêng, CPU float32, mặc định batch 1, 4 GiB RSS, 600 giây/request;
   embedding/reranker có thể cùng ở RAM nên giới hạn RSS từng process không phải RAM tổng app.
   `DOCUMENT_RERANKER_REVISION=main` resolve về commit lúc load; pin commit nếu cần tái lập/offline.
   `POST /api/documents/search` mặc định `mode=hybrid`; `dense`/`lexical` vẫn là baseline độc lập.
-  Hybrid lấy scope bằng `conversation_id` hoặc `document_ids`, nhắm 6 evidence/tối đa 8 theo
-  `CONTEXT_RAG_TOKEN_BUDGET`. `limit` chỉ áp dụng cho baseline dense/lexical; hybrid cố định top-k.
+  Hybrid lấy scope bằng `conversation_id` hoặc `document_ids`, chọn tối đa10 nguồn theo thứ hạng,
+  bỏ nguyên chunk vượt `CONTEXT_RAG_TOKEN_BUDGET` (mặc định/max8000, gồm metadata). Tổng
+  `CONTEXT_MAX_INPUT_TOKENS` mặc định36000; deployment có override cần đồng bộ cả hai.
+  `limit` chỉ áp dụng cho baseline dense/lexical; hybrid cố định top-k. Không cần re-index.
   Có history của hội thoại thì gọi model chat một lần để rewrite; chỉ truyền tối đa 8 message,
   budget history 2.000 token ước lượng và metadata file, không gửi toàn bộ tài liệu. Không history
   thì bỏ rewrite. Response chứa query rewrite, usage/latency, profile reranker và evidence budget.

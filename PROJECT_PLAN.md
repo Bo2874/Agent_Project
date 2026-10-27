@@ -781,9 +781,11 @@ Rerank dùng embedding_text có title/heading, evidence giữ text gốc/offset/
 `POST /api/documents/search` mặc định hybrid: dense20 + lexical20 độc lập → RRF k60 cùng trọng số,
 khử trùng chunk/version → Top10/query. Từ 2026-10-27, Fast (mặc định) giữ thứ tự RRF, không gọi
 reranker; Deep chạy tối đa10 Qwen/query rồi chỉ dùng thứ tự điểm reranker, đồng điểm theo chunk ID.
-API một query trả tối đa5 nguồn; chat giữ riêng các danh sách Top10 rồi Ranked Round-Robin.
+Từ lần điều chỉnh thiết kế tiếp theo 2026-10-27, chat luôn một query sau rewrite, bỏ phân rã.
+API/chat chọn tối đa10 nguồn theo thứ hạng Fast/Deep, không Ranked Round-Robin hoặc quota5/query.
 Budget đo cả JSON/metadata/wrapper bằng estimator context hiện có; không sửa text/offset để ép vừa.
-Giới hạn chung 4000 token, 5 chunk/query và 15 tổng; skip trùng/quá dài không làm mất lượt query.
+Ngân sách nguồn tối đa8000 token ước lượng gồm metadata; bỏ nguyên chunk không vừa rồi xét tiếp
+trong Top10, không cắt text. CONTEXT_MAX_INPUT_TOKENS mặc định36000, giữ các budget khác.
 Baseline dense/lexical vẫn dùng limit riêng; Deep lỗi không tự fallback Fast hoặc chạy lại retrieval.
 Kiểm tra lại owner/scope/active version sau rewrite/model inference; không giữ DB connection lúc chạy model.
 
@@ -805,19 +807,19 @@ DEV_V2_RAG_ENABLED, mặc định tắt. Không tự sửa .env private hoặc b
 
 JEV nhận thêm metadata file đang chọn (tối đa20 title/status, kèm tổng số), không nhận text file.
 Query routing policy 2.1; resume chat/tool đã pin policy 2.0 vẫn được hỗ trợ. Không tạo choice mới.
-QA có một call lập truy vấn: có recent history thì resolve tham chiếu/standalone query, không
-history giữ query chính nguyên văn; tách tối đa3 câu hỏi con, chọn qa hoặc summary. Dùng history
-owner-scoped/bounded M3.6, loại user message hiện tại để không gửi trùng; không rewrite thêm
+QA có một call lập truy vấn và chọn qa/summary: không history giữ query nguyên văn, có recent
+history thì resolve tham chiếu thành một query độc lập giữ mọi ý. Dùng history owner-scoped/
+bounded M3.6, loại user message hiện tại để không gửi trùng; không rewrite thêm
 trong từng retrieval. Metadata plan tối đa20 file, title rút gọn, có cờ thông báo rút gọn.
 
-QA thường: chạy hybrid M3.6 một lần cho từng câu hỏi con, giữ tối đa10 ứng viên chưa đóng budget,
-chọn nguồn bằng Ranked Round-Robin (5/query, 15 tổng, 4000 token). Câu trả lời dùng query đã
-resolve/các ý/coverage và evidence; history không làm nguồn
+QA thường: chạy hybrid M3.6 đúng một lần với query đã rewrite, RRF Top10; Fast giữ thứ tự RRF,
+Deep dùng thứ tự reranker. Chọn tối đa10 nguồn nguyên chunk trong8000 token gồm metadata.
+Câu trả lời dùng query đã resolve/coverage và evidence; history không làm nguồn
 cho sự kiện tài liệu. Không cấp tool/Skill, không ghi tài liệu vào user memory.
 Tóm tắt: lấy mọi chunk của scope đã chọn, tối đa64 chunk; vừa context thì trả lời trực tiếp,
 không vừa thì notes theo batch và rút gọn nhiều tầng trước câu trả lời cuối. Mọi batch giữ label
 nguồn gốc; vượt chunk/call/token/time/context budget thì báo rõ yêu cầu thu hẹp, không thay bằng
-top-k rồi tuyên bố đã tóm tắt toàn bộ. Dùng budget Agent hiện có (mặc định8 call/20.000 token/120 giây).
+top-k rồi tuyên bố đã tóm tắt toàn bộ. Dùng budget8 call/20.000 token và timeout RAG600 giây hiện có.
 
 Output model JSON được kiểm schema và đối chiếu [S<number>]/sources với các chunk thực sự cấp
 trong context; từ chối nhãn lạ, URL gắn vào nhãn hoặc nguồn không khớp. Thiếu dữ kiện thì nói rõ,
@@ -949,7 +951,7 @@ citation trang 117 trong 170,74 giây; HTTP/SSE Atlas thật qua JEV hoàn thàn
 Browser không kết nối nên chưa nghiệm thu trực quan layout/mobile; cần restart web và
 hard refresh để user kiểm UI. Không thêm migration/dependency hoặc file code/test tracked.
 
-Ngày 2026-10-27 — Fast/Deep và Final Chunk Selection đã cập nhật theo thiết kế user duyệt:
+Ngày 2026-10-27 — Fast/Deep và Final Chunk Selection, thiết kế cũ trước khi chốt một query:
 - [x] Mỗi query dense20 + lexical20 → RRF Top10; Fast không gọi reranker, Deep rerank tối đa10.
 - [x] Giữ 1–3 danh sách riêng tới bước chọn nguồn; không đóng budget hoặc cắt còn5 từng query trước đó.
 - [x] Ranked Round-Robin toàn cục, dedup chunk_id, tối đa5 đóng góp/query, 15 chunk và4000 token.
@@ -978,6 +980,22 @@ Ngày 2026-10-27 — Sửa lỗi JSON ở nhánh document_qa:
 
 Chi tiết tại data/rag-testing/json-fix-20261027/REPORT.md (Git ignore). Không đổi .env,
 dependency/migration hoặc index; giữ thuật toán Fast/Deep và budget nguồn 4000 token.
+
+Ngày 2026-10-27 — Thiết kế hiện tại: một query và tối đa10 nguồn/8000 token:
+- [x] QueryPlan chỉ có query/mode; plan v3 cấm phân rã, rewrite giữ đủ ý/tên/số/phủ định và history.
+  Backend gọi một retrieval duy nhất, kể cả câu hỏi nhiều tiêu chí; answer v4 không còn aspects list.
+- [x] Bỏ code Ranked Round-Robin và các quota5/query/15 tổng. Pack duyệt một danh sách Top10 theo
+  thứ tự Fast RRF hoặc Deep reranker, dedup và giữ nguyên chunk, bỏ ứng viên vượt8000 token.
+- [x] Search API và QA đều tối đa10 nguồn/8000 token; trace selection ghi query_count=1/max_chunks=10,
+  coverage.query giữ câu đã rewrite. Trace/run cũ giữ nguyên dữ liệu và vẫn xem được.
+- [x] Default RAG budget8000, tổng context36000 trong Settings/ContextTokenBudget/.env.example;
+  giữ system2000/memory4000/history16000/tool6000. Không sửa .env riêng vì không có override budget.
+- [x] Kiểm unit và graph có kiểm soát cho query đơn, history, Fast/Deep,10 nguồn/budget và repair;
+  summary toàn scope giữ all-chunks/batch và limit64. Chưa chạy model/LLM thật trong bước này.
+- [ ] User test lại H01/H03/F01–F07 trên web sau restart; chất lượng ranking/citation_sources
+  của case ANNOY/HNSW vẫn cần nghiệm thu riêng, không coi thay thiết kế là đã sửa mọi lỗi citation.
+
+Không thêm dependency/migration hoặc file tracked; không đổi tài liệu/index, không cần re-index.
 
 1. API nhận file, kiểm tra ownership, quota, extension + MIME + nội dung, tên file và checksum;
    ghi storage bằng ID do server sinh. Mức khởi đầu đề xuất: 20 MiB/file, 200 MiB/user,
@@ -1017,8 +1035,8 @@ LlamaIndex có ingestion pipeline và cơ chế document hash phục vụ xử l
 - Lexical baseline: PostgreSQL FTS + GIN, xử lý có dấu/không dấu nhất quán và ưu tiên heading;
   rút cụm quan trọng, không AND mọi từ trong câu hỏi. `ts_rank` không phải BM25; BM25 để cân nhắc sau.
 - Hybrid: dense top-20 và lexical top-20 chạy độc lập → RRF trọng số bằng nhau, hằng số 60 →
-  loại trùng → Top10/query; Fast giữ thứ tự RRF, Deep dùng thứ tự reranker. Final Ranked Round-Robin
-  giữ tối đa5/query, 15 tổng và4000 token gồm metadata, bỏ trùng toàn cục và giữ nguyên chunk.
+  loại trùng → Top10 của một query sau rewrite; Fast giữ thứ tự RRF, Deep dùng thứ tự reranker.
+  Final chọn theo thứ hạng, tối đa10 nguồn/8000 token gồm metadata, bỏ trùng và giữ nguyên chunk.
   Các top-k là cấu hình ban đầu; không cộng trực tiếp cosine với lexical score, không coi score là
   bảo đảm câu trả lời đúng. HNSW khi cần: m=16, ef_construction=128, ef_search=100, iterative strict_order.
 - Rerank chỉ bật khi user chọn Deep, dùng `Qwen/Qwen3-Reranker-0.6B`, tuân thủ template/scoring của model.
@@ -1027,7 +1045,7 @@ LlamaIndex có ingestion pipeline và cơ chế document hash phục vụ xử l
   một lần để tạo query tự đủ nghĩa (giữ nguyên nếu đã rõ). Đầu vào gồm query/history/metadata file,
   không phải toàn tài liệu; lưu query gốc/query rewrite và usage/latency vào run.
   JEV nhận metadata file đã chọn để phân route; không chọn từng bước embedding/rerank như tool_task.
-  Câu nhiều ý có truy vấn con; tóm tắt toàn tài liệu phải đọc phủ các phần, không chỉ top-k thông thường.
+  Câu nhiều ý giữ chung trong một query; tóm tắt toàn tài liệu phải đọc phủ các phần, không chỉ top-k thông thường.
 - `RetrievalResult` gồm `document_id`, `version_id`, `chunk_id`, title, page/section, score,
   đoạn trích nguyên gốc và retrieval config version. Metadata phân quyền lấy từ runtime,
   không nhận `user_id` do model truyền vào.
