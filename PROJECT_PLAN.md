@@ -13,6 +13,8 @@ Ngày 2026-11-02: context dùng tối đa 1.048.576 token, chia System/Tools 5%,
 RAG/Tool Results 15%, Output 10%, Safety 5%. Đã bỏ quota token/run/tool-call theo ngày;
 vẫn ghi usage và giữ rate limit theo phút, deadline, số bước, chống lặp và approval.
 Budget run mặc định tự tính từ số bước và dung lượng mỗi call, thay cap20k/60k cũ.
+History chuyển sang LLM tóm tắt đồng bộ trước khi chạy Agent: giữ ít nhất20 message gần nhất,
+batch10/gộp4 cùng tầng, bỏ cap6000 ký tự; độ dài theo ngân sách Memory+History còn lại.
 Các kết quả W02/quota trong ghi chép trước là lịch sử, chưa chạy lại LLM để nghiệm thu.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),

@@ -989,6 +989,7 @@ if (chatApp) {
   async function requestAgentStream(url, options) {
     const assistantBubble = addMessage("assistant");
     const timeline = createAgentTimeline(assistantBubble);
+    timeline.count.textContent = "Đang chuẩn bị hội thoại và lịch sử…";
     try {
       const response = await fetch(url, options);
       if (response.headers.get("X-Agent-Run-ID")) timeline.root.dataset.runId = response.headers.get("X-Agent-Run-ID");

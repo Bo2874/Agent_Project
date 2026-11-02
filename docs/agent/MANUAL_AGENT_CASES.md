@@ -2,6 +2,22 @@
 
 ## Cấu hình hiện tại — 2026-11-02
 
+History mới dùng LLM DeepSeek (`llm-history-v1`), vẫn giữ ít nhất20 message gần nhất và
+gom mỗi10 message cũ. Đủ4 summary cùng tầng thì gọi LLM để gộp tầng tiếp theo. Không còn
+`HISTORY_SUMMARY_MAX_CHARS=6000`; độ dài summary dựa trên chỗ còn lại của Memory+History,
+ngữ cảnh nguồn và trần output chung. API chờ các summary cần thiết lưu xong mới tạo AgentRun;
+ô nhập/nút gửi khóa trong lúc chờ. Timeline hiện “Đang chuẩn bị hội thoại và lịch sử…”.
+`HISTORY_SUMMARY_TIMEOUT_SECONDS=180` giới hạn thời gian mỗi call, không phải token cap.
+Nếu tóm tắt lỗi/timeout/output rỗng hoặc chưa hoàn chỉnh: trả lỗi, không chạy Agent tiếp,
+không tự fallback sang extractive/cắt câu, không ghi summary mới dở dang. Message gốc vẫn giữ.
+ModelCall và usage thực tế của summarization được ghi riêng; không có quota ngày.
+Summary extractive cũ giữ làm lịch sử; lần đầu trên hội thoại cũ sẽ tạo bản LLM từ message
+gốc nên có thể cần nhiều call và chờ lâu hơn. Không cần migration hoặc reindex.
+
+Test tay history: chat qua mốc30 message (user/assistant tính riêng), mốc40 rồi60. Sau đó
+hỏi lại quyết định/số liệu ở các lượt cũ; ở60 message, bốn summary tầng1 được gộp tầng2.
+Không khẳng định quality/retention chỉ từ test stub; cần đánh giá một số hội thoại thực tế.
+
 Phần này thay các mức budget/quota cũ được ghi trong những đợt bên dưới. Không xóa các
 kết quả test lịch sử hoặc coi chúng là đã chạy lại sau thay đổi.
 

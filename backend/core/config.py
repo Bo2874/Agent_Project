@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     chat_history_limit: int = Field(default=20, ge=2, le=100)
     history_compression_batch_size: int = Field(default=10, ge=2, le=100)
     history_summary_merge_factor: int = Field(default=4, ge=2, le=20)
-    history_summary_max_chars: int = Field(default=6_000, ge=200, le=50_000)
+    history_summary_timeout_seconds: float = Field(default=180, gt=0, le=3600)
     memory_extraction_enabled: bool = True
     memory_extraction_min_confidence: float = Field(default=0.6, ge=0, le=1)
     memory_extraction_timeout_seconds: float = Field(default=20, gt=0, le=180)

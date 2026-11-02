@@ -274,3 +274,8 @@ Chưa build/test Docker hoặc hard-kill/distributed load; xem manual/report đ�
 tự tính theo số bước, không còn cap20k/60k. Unknown billing giữ dự trù trong run/worker,
 không còn dự trù để chặn cả ngày. Rebuild/recreate app và worker sau thay đổi;
 không cần migration/reindex. Các đoạn đợt3–5 phía trên ghi hành vi ở thời điểm cũ.
+
+History sau thay đổi2026-11-02 gọi LLM để tóm tắt:20 message gần nhất/batch10/gộp4 cùng tầng,
+bỏ trần6000 ký tự. App đợi summary lưu xong trước khi enqueue Agent. Compose nhận
+`DEV_HISTORY_SUMMARY_TIMEOUT_SECONDS=180`; restart/rebuild app cùng worker, không cần
+migration. DeepSeek key dùng chung cấu hình model hiện có; mỗi batch/gộp có phát sinh API usage.

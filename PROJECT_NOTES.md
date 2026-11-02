@@ -1696,6 +1696,51 @@
   safety52431/run7969672, không còn field quota ngày. Không gọi LLM trả phí, chưa test web
   hoặc load context sát1M, không chạy toàn suite/Docker build, không restart/commit/push.
 - Giới hạn: context vẫn ước tính UTF-8 bytes/3, chưa đổi sang tokenizer DeepSeek; safety5%
-  không bảo đảm đếm chính xác mọi input sát biên. History vẫn nạp tối đa20 message gần nhất
+  không bảo đảm đếm chính xác mọi input sát biên. History giữ ít nhất20 message gần nhất
   kèm summary và memory theo chính sách hiện có, không tự lấy toàn lịch sử cho đủ65%.
   Các kết quả W02/quota ngày trong ghi chép trước là lịch sử, chưa gọi lại để nghiệm thu.
+
+### 2026-11-02 — History tóm tắt bằng LLM, batch10/giữ20/gộp4
+
+- User chốt giữ cơ chế message hiện tại: ít nhất20 message nguyên văn gần nhất; gom đủ10
+  message cũ mới tóm tắt (vì vậy có20–29 message nguyên văn). Đủ4 summary cùng tầng gọi
+  LLM để gộp thành tầng tiếp theo; không chuyển sang trigger theo token pressure.
+- Thêm prompt/version llm-history-v1 trong agent_core/history_compression.py; bỏ trường
+  max_summary_chars khỏi policy và HISTORY_SUMMARY_MAX_CHARS khỏi Settings/env mẫu.
+  Production dùng DeepSeek đang cấu hình, một call cho mỗi batch/gộp, tools=None và plain
+  text, không tự retry hoặc fallback sang extractive khi lỗi. Các hàm extractive cũ chỉ
+  còn phục vụ benchmark offline/lịch sử, không tạo history context cho chat mới.
+- backend/services/history_compression.py tính output allowance theo ngân sách chung
+  Memory+History còn lại sau raw recent/history summary khác và overhead serialize; đồng
+  thời tuân source size và output reservation/model cap. Không cap cố định6000 ký tự hoặc
+  số token riêng cho mỗi summary. Middleware vẫn phân bổ memory trong phần còn lại của65%.
+  Bản tóm tắt phải không rỗng, finish_reason=stop, không tool call, vừa headroom và không
+  dài hơn nguồn (tương thích constraint database hiện có). Không cắt mất phần dư để giả
+  một summary hoàn chỉnh; lỗi sẽ dừng lượt chat và giữ nguồn để thử lại.
+- API await tóm tắt trước khi tạo AgentRun/enqueue job. Summary không hoàn tất thì HTTP503,
+  đóng model, không chạy Agent tiếp. Ô nhập/nút gửi đã khóa suốt request; timeline thêm
+  “Đang chuẩn bị hội thoại và lịch sử…” trước khi nhận stream. Không cần UI hỏi xác nhận.
+- Khóa owner/conversation bằng PostgreSQL FOR NO KEY UPDATE để serialize các lượt nén,
+  vẫn cho phép transaction audit riêng ghi FK. Summary mới và supersede cùng transaction;
+  lỗi/timeout/cancel rollback toàn bộ phần nén đang làm, không xóa message gốc. Flush parent
+  trước khi ghi superseded_by để không phụ thuộc thứ tự insert FK. Release lock khi xong.
+- Mỗi call ghi ModelCall/version/fingerprint/status/latency/usage, đóng client cuối cùng;
+  actual token được ghi một lần vào counter thống kê, không quota ngày. Không dùng estimate
+  như actual. Các call chuẩn bị history nằm trước graph, không tính vào step/token headline
+  hoặc operation journal của AgentRun; không tuyên bố exactly-once cho crash giữa call và
+  commit summary. Không tự phát lại call lỗi trong cùng request.
+- Summary extractive phiên bản cũ giữ trong database nhưng không dùng thay bản LLM mới.
+  Lần đầu chat tiếp trên hội thoại cũ có thể cần nhiều call để dựng lại từ message nguồn.
+  Version mới đã lưu được tái sử dụng ở các lượt sau; không tóm tắt lại cùng batch đã commit.
+  Không migration/dependency mới/reindex. Thêm HISTORY_SUMMARY_TIMEOUT_SECONDS=180 cho
+  mỗi call (host .env/env mẫu; Compose dùng DEV_HISTORY_SUMMARY_TIMEOUT_SECONDS).
+- Sửa test_history_compression.py hiện có: mốc20/29/30/40/60, gộp4 lên tầng2, tái sử dụng
+  không gọi lại, output>6000 ký tự, headroom linh động, không gọi nếu budget hết, rollback
+  khi provider lỗi, plain-text stream/usage/audit và API không tạo AgentRun khi nén lỗi.
+  Không thêm file mới. Test extractive vẫn là benchmark offline, không chứng minh chất
+  lượng bản tóm tắt của LLM production.
+- Kiểm tra169 test liên quan history/context/usage/router/jobs/graph/model đạt. PostgreSQL
+  thật với model giả:60 message ->20 raw,4 summary tầng1+1 tầng2,5 audit calls, actual55
+  token mô phỏng; lượt sau0 call mới. Tài khoản fixture tạo riêng và đã xóa, không sửa
+  hội thoại user. Ruff/format, Node syntax, Compose config và diff check đạt. Chưa gọi
+  LLM thật hoặc test browser/semantic retention của summary; không tự restart/commit/push.

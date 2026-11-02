@@ -93,7 +93,7 @@ from backend.services.documents import (
     get_conversation_documents,
     set_conversation_documents,
 )
-from backend.services.history_compression import prepare_history_context
+from backend.services.history_compression import HistoryCompressionError, prepare_history_context
 from backend.services.langgraph_checkpoints import get_langgraph_checkpointer
 from backend.services.langgraph_memory_store import (
     ScopedUserMemoryStore,
@@ -1116,16 +1116,22 @@ async def post_message(
 
     await add_usage(user.id, metric="agent_run", amount=1)
     user_message = await add_user_message(session, conversation, data.content)
-    history_context = await prepare_history_context(
-        session,
-        conversation.id,
-        HistoryCompressionPolicy(
-            recent_message_limit=settings.chat_history_limit,
-            batch_size=settings.history_compression_batch_size,
-            merge_factor=settings.history_summary_merge_factor,
-            max_summary_chars=settings.history_summary_max_chars,
-        ),
-    )
+    try:
+        history_context = await prepare_history_context(
+            session,
+            conversation.id,
+            HistoryCompressionPolicy(
+                recent_message_limit=settings.chat_history_limit,
+                batch_size=settings.history_compression_batch_size,
+                merge_factor=settings.history_summary_merge_factor,
+            ),
+            user_id=user.id,
+            user_message_id=user_message.id,
+            budget=settings.context_budget,
+        )
+    except HistoryCompressionError as exc:
+        await model.aclose()
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     model_messages = build_chat_messages(history_context.messages)
     agent_run = await create_agent_run(
         session,
