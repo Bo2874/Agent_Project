@@ -3,11 +3,11 @@ from uuid import uuid4
 
 import pytest
 
-from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError, ToolCallRequest
+from agent_core.graph import AgentLoopEvent, ToolCallRequest
 from agent_core.llm.types import TokenUsage
 from agent_core.tools import ToolResult
 from backend.services import usage_limits
-from backend.services.usage_limits import AgentQuotaGuard, UsageLimit, _window
+from backend.services.usage_limits import AgentQuotaGuard, _window
 
 
 async def test_api_tool_tokens_count_once_in_daily_quota_even_if_output_validation_fails(
@@ -19,7 +19,7 @@ async def test_api_tool_tokens_count_once_in_daily_quota_even_if_output_validati
         captured.append((metric, amount))
 
     monkeypatch.setattr(usage_limits, "add_usage", add)
-    guard = AgentQuotaGuard(user_id=uuid4(), token_limit=1000, tool_call_limit=10)
+    guard = AgentQuotaGuard(user_id=uuid4())
     await guard.record_event(
         AgentLoopEvent(
             kind="tool_completed",
@@ -42,31 +42,31 @@ def test_fixed_window_is_anchored_and_returns_retry_after() -> None:
 
 
 @pytest.mark.asyncio
-async def test_token_quota_blocks_next_model_call(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_daily_usage_never_blocks_next_model_call(monkeypatch: pytest.MonkeyPatch) -> None:
     async def current_usage(*_: object, **__: object) -> int:
-        return 100
+        pytest.fail("Daily usage must not be consulted for admission")
 
     monkeypatch.setattr(usage_limits, "get_current_usage", current_usage)
-    guard = AgentQuotaGuard(user_id=uuid4(), token_limit=100, tool_call_limit=10)
+    guard = AgentQuotaGuard(user_id=uuid4())
 
-    with pytest.raises(AgentQuotaLimitError, match="quota token"):
-        await guard.before_execution("model")
+    await guard.before_execution("model")
+    async with guard.reserve_tokens(10_000_000) as receipt:
+        receipt.actual = 0
 
 
 @pytest.mark.asyncio
-async def test_tool_quota_consumes_one_atomic_counter(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: list[tuple[UsageLimit, ...]] = []
+async def test_tool_usage_is_recorded_without_daily_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = []
 
-    async def consume(_: object, limits: tuple[UsageLimit, ...]) -> None:
-        captured.append(limits)
+    async def add(_: object, *, metric, amount, **kwargs):
+        captured.append((metric, amount))
 
-    monkeypatch.setattr(usage_limits, "consume_usage_limits", consume)
-    guard = AgentQuotaGuard(user_id=uuid4(), token_limit=100, tool_call_limit=10)
+    monkeypatch.setattr(usage_limits, "add_usage", add)
+    guard = AgentQuotaGuard(user_id=uuid4())
 
     await guard.before_execution("tool")
 
-    assert captured[0][0].metric == "tool_call"
-    assert captured[0][0].amount == 1
+    assert captured == [("tool_call", 1)]
 
 
 @pytest.mark.asyncio
@@ -78,7 +78,7 @@ async def test_model_usage_is_recorded_after_completion(monkeypatch: pytest.Monk
         return amount
 
     monkeypatch.setattr(usage_limits, "add_usage", add)
-    guard = AgentQuotaGuard(user_id=uuid4(), token_limit=100, tool_call_limit=10)
+    guard = AgentQuotaGuard(user_id=uuid4())
 
     await guard.record_event(
         AgentLoopEvent(

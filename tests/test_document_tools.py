@@ -64,7 +64,6 @@ def bridge(monkeypatch):
             before_execution=AsyncMock(),
             record_tokens=AsyncMock(),
             user_id=context.user_id,
-            token_limit=100_000,
         ),
         recorder=AsyncMock(),
     )
@@ -237,7 +236,7 @@ async def test_empty_evidence_is_distinct_from_evidence_budget_failure(
         ),
     )
     if budget_error:
-        service.context_budget = replace(service.context_budget, rag_tokens=0)
+        service.context_budget = replace(service.context_budget, rag_tool_result_tokens=0)
     result = await service.search(context, {"query": "Question"})
     assert result.is_error is budget_error
     assert result.error_code == ("document_evidence_budget" if budget_error else None)
@@ -457,9 +456,13 @@ async def test_real_summary_subgraph_map_reduce_inside_tool_keeps_step_usage_and
     bridge,
     monkeypatch,
 ):
+    from dataclasses import replace
+
     from backend.services import document_qa, usage_limits
 
     service, context = bridge
+    # Deliberately small context to exercise map/reduce despite the larger default.
+    service.context_budget = replace(service.context_budget, rag_tool_result_tokens=8000)
     hits = [hit(n, text=f"Paragraph {n}. " + "data " * 300) for n in range(1, 13)]
     rows = [
         (

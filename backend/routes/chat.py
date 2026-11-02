@@ -110,13 +110,12 @@ from backend.services.tool_approvals import (
     tool_approval_manager,
 )
 from backend.services.usage_limits import (
-    DAY_SECONDS,
     MINUTE_SECONDS,
     AgentQuotaGuard,
     UsageLimit,
     UsageLimitExceeded,
+    add_usage,
     consume_usage_limits,
-    ensure_usage_available,
 )
 
 router = APIRouter(prefix="/api/conversations", tags=["chat"])
@@ -217,6 +216,10 @@ def agent_status_payload(event: AgentLoopEvent) -> dict[str, object]:
             "tool_selection_mode": context_usage.tool_selection_mode,
             "status_tokens": context_usage.status_tokens,
             "skill_tokens": context_usage.skill_tokens,
+            "tool_result_tokens": context_usage.tool_result_tokens,
+            "context_window_tokens": context_usage.context_window_tokens,
+            "output_reserved_tokens": context_usage.output_reserved_tokens,
+            "safety_tokens": context_usage.safety_tokens,
             "selected_skill": context_usage.selected_skill,
         }
         payload["message"] = (
@@ -279,11 +282,7 @@ async def stream_assistant_response(
     parts: list[str] = []
     usage = TokenUsage()
     settings = get_settings()
-    quota_guard = AgentQuotaGuard(
-        user_id=user_id,
-        token_limit=settings.agent_tokens_per_day,
-        tool_call_limit=settings.agent_tool_calls_per_day,
-    )
+    quota_guard = AgentQuotaGuard(user_id=user_id)
     partial_reason = None
     plan_snapshot = None
 
@@ -384,7 +383,7 @@ async def stream_assistant_response(
         if react_enabled and selected_documents:
             limits = replace(
                 limits,
-                max_total_tokens=settings.agent_document_max_total_tokens,
+                max_total_tokens=settings.agent_document_run_token_budget,
                 max_duration_seconds=max(
                     limits.max_duration_seconds, settings.document_qa_timeout_seconds
                 ),
@@ -479,7 +478,7 @@ async def stream_assistant_response(
                     search_mode=rag_search_mode,
                     context_budget=replace(
                         context_budget,
-                        rag_tokens=max(
+                        rag_tool_result_tokens=max(
                             0,
                             context_budget.rag_tokens
                             - measure_context_blocks("rag", rag_context)
@@ -981,12 +980,6 @@ async def resume_agent_run(
         )
     settings = get_settings()
     try:
-        await ensure_usage_available(
-            user.id,
-            metric="llm_token",
-            limit=settings.agent_tokens_per_day,
-            window_seconds=DAY_SECONDS,
-        )
         await consume_usage_limits(
             user.id,
             (
@@ -1043,19 +1036,12 @@ async def resume_agent_run(
     )
     limits = AgentLimits(
         max_steps=settings.agent_max_steps,
-        max_total_tokens=settings.agent_max_total_tokens,
+        max_total_tokens=settings.agent_run_token_budget,
         max_duration_seconds=settings.agent_max_duration_seconds,
         max_identical_tool_calls=settings.agent_max_identical_tool_calls,
         max_repeated_observations=settings.agent_max_repeated_observations,
     )
-    context_budget = ContextTokenBudget(
-        max_input_tokens=settings.context_max_input_tokens,
-        system_tokens=settings.context_system_token_budget,
-        memory_tokens=settings.context_memory_token_budget,
-        history_tokens=settings.context_history_token_budget,
-        tool_tokens=settings.context_tool_token_budget,
-        rag_tokens=settings.context_rag_token_budget,
-    )
+    context_budget = settings.context_budget
     tool_selection_config = ToolSelectionConfig(
         lazy_load_threshold=settings.tool_lazy_load_threshold,
         max_loaded_tools=settings.tool_max_loaded,
@@ -1110,12 +1096,6 @@ async def post_message(
 
     settings = get_settings()
     try:
-        await ensure_usage_available(
-            user.id,
-            metric="llm_token",
-            limit=settings.agent_tokens_per_day,
-            window_seconds=DAY_SECONDS,
-        )
         await consume_usage_limits(
             user.id,
             (
@@ -1123,11 +1103,6 @@ async def post_message(
                     metric="agent_request",
                     limit=settings.agent_requests_per_minute,
                     window_seconds=MINUTE_SECONDS,
-                ),
-                UsageLimit(
-                    metric="agent_run",
-                    limit=settings.agent_runs_per_day,
-                    window_seconds=DAY_SECONDS,
                 ),
             ),
         )
@@ -1139,6 +1114,7 @@ async def post_message(
             headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
 
+    await add_usage(user.id, metric="agent_run", amount=1)
     user_message = await add_user_message(session, conversation, data.content)
     history_context = await prepare_history_context(
         session,
@@ -1165,19 +1141,12 @@ async def post_message(
     )
     limits = AgentLimits(
         max_steps=settings.agent_max_steps,
-        max_total_tokens=settings.agent_max_total_tokens,
+        max_total_tokens=settings.agent_run_token_budget,
         max_duration_seconds=settings.agent_max_duration_seconds,
         max_identical_tool_calls=settings.agent_max_identical_tool_calls,
         max_repeated_observations=settings.agent_max_repeated_observations,
     )
-    context_budget = ContextTokenBudget(
-        max_input_tokens=settings.context_max_input_tokens,
-        system_tokens=settings.context_system_token_budget,
-        memory_tokens=settings.context_memory_token_budget,
-        history_tokens=settings.context_history_token_budget,
-        tool_tokens=settings.context_tool_token_budget,
-        rag_tokens=settings.context_rag_token_budget,
-    )
+    context_budget = settings.context_budget
     tool_selection_config = ToolSelectionConfig(
         lazy_load_threshold=settings.tool_lazy_load_threshold,
         max_loaded_tools=settings.tool_max_loaded,

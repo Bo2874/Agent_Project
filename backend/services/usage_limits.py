@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError
+from agent_core.graph import AgentLoopEvent
 from agent_core.graph.budgeting import UsageReservation
 from backend.database import SessionFactory
 from backend.models import UsageCounter
@@ -105,10 +105,11 @@ async def add_usage(
     metric: UsageMetric,
     amount: int,
     window_seconds: int = DAY_SECONDS,
+    observed_at: datetime | None = None,
 ) -> int:
     if amount < 1:
         raise ValueError("amount phải lớn hơn hoặc bằng 1")
-    now = datetime.now(UTC)
+    now = observed_at or datetime.now(UTC)
     window_start, _ = _window(now, window_seconds)
     statement = (
         insert(UsageCounter)
@@ -154,55 +155,12 @@ async def get_current_usage(
         return int(value or 0)
 
 
-async def settle_reserved_usage(user_id, *, window_start, reserved, actual):
-    """Settle in the original day, including calls which finish across midnight."""
-    async with SessionFactory() as session:
-        statement = (
-            update(UsageCounter)
-            .where(
-                UsageCounter.user_id == user_id,
-                UsageCounter.metric == "llm_token",
-                UsageCounter.window_start == window_start,
-            )
-            .values(value=UsageCounter.value + actual - reserved, updated_at=datetime.now(UTC))
-        )
-        await session.execute(statement)
-        await session.commit()
-
-
-async def ensure_usage_available(
-    user_id: UUID,
-    *,
-    metric: UsageMetric,
-    limit: int,
-    window_seconds: int,
-) -> None:
-    current = await get_current_usage(
-        user_id,
-        metric=metric,
-        window_seconds=window_seconds,
-    )
-    if current >= limit:
-        _, retry_after = _window(datetime.now(UTC), window_seconds)
-        raise UsageLimitExceeded(
-            metric=metric,
-            limit=limit,
-            retry_after_seconds=retry_after,
-        )
-
-
 class AgentQuotaGuard:
-    def __init__(
-        self,
-        *,
-        user_id: UUID,
-        token_limit: int,
-        tool_call_limit: int,
-    ) -> None:
+    """Usage accounting and job fencing; no per-day admission quotas."""
+
+    def __init__(self, *, user_id: UUID) -> None:
         self.user_id = user_id
-        self.token_limit = token_limit
-        self.tool_call_limit = tool_call_limit
-        self._reservation = ContextVar(f"quota_receipt_{id(self)}", default=None)
+        self._reservation = ContextVar(f"usage_receipt_{id(self)}", default=None)
 
     @property
     def active_reservation(self):
@@ -213,37 +171,17 @@ class AgentQuotaGuard:
         if self.active_reservation is not None:
             raise RuntimeError("Nested root token reservations are not supported")
         now = datetime.now(UTC)
-        window_start, _ = _window(now, DAY_SECONDS)
-        try:
-            await consume_usage_limits(
-                self.user_id,
-                (
-                    UsageLimit(
-                        metric="llm_token",
-                        limit=self.token_limit,
-                        window_seconds=DAY_SECONDS,
-                        amount=amount,
-                    ),
-                ),
-                observed_at=now,
-            )
-        except (UsageLimitExceeded, ValueError) as exc:
-            raise AgentQuotaLimitError("Không đủ quota token để dự trù lời gọi tiếp theo.") from exc
         receipt = UsageReservation()
         token = self._reservation.set(receipt)
         try:
             yield receipt
         finally:
             self._reservation.reset(token)
-            # Unknown billing/crash retains the conservative reservation until day end.
-            # Do not refund an API request simply because its response was lost.
-            settled = receipt.actual
-            if settled is None and receipt.known_tokens > amount:
-                settled = receipt.known_tokens
-            if settled is not None:
-                await settle_reserved_usage(
-                    self.user_id, window_start=window_start, reserved=amount, actual=settled
-                )
+            # Estimates are not billed usage. Root/worker ledgers still hold unknown
+            # spend for this run; daily counters only retain provider-confirmed usage.
+            actual = max(receipt.actual or 0, receipt.known_tokens)
+            if actual:
+                await add_usage(self.user_id, metric="llm_token", amount=actual, observed_at=now)
 
     async def before_execution(self, action: Literal["model", "tool"]) -> None:
         from backend.services.run_events import current_job, runtime_session
@@ -252,32 +190,7 @@ class AgentQuotaGuard:
             async with runtime_session():
                 pass
         if action == "tool":
-            try:
-                await consume_usage_limits(
-                    self.user_id,
-                    (
-                        UsageLimit(
-                            metric="tool_call",
-                            limit=self.tool_call_limit,
-                            window_seconds=DAY_SECONDS,
-                        ),
-                    ),
-                )
-            except UsageLimitExceeded as exc:
-                raise AgentQuotaLimitError(str(exc)) from exc
-            return
-
-        if self.active_reservation is not None:
-            return
-        try:
-            await ensure_usage_available(
-                self.user_id,
-                metric="llm_token",
-                limit=self.token_limit,
-                window_seconds=DAY_SECONDS,
-            )
-        except UsageLimitExceeded as exc:
-            raise AgentQuotaLimitError(str(exc)) from exc
+            await add_usage(self.user_id, metric="tool_call", amount=1)
 
     async def record_event(self, event: AgentLoopEvent) -> None:
         if (

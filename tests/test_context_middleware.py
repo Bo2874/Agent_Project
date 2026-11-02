@@ -5,7 +5,13 @@ from uuid import UUID
 
 import pytest
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from agent_core.context_budget import (
@@ -118,13 +124,15 @@ def test_prepare_context_measures_sections_and_trims_oldest_complete_turns() -> 
         {"role": "assistant", "content": "old answer " * 20},
         {"role": "user", "content": "new question"},
     ]
-    budget = ContextTokenBudget(
-        max_input_tokens=130,
-        system_tokens=30,
-        memory_tokens=0,
-        history_tokens=90,
-        tool_tokens=10,
-        rag_tokens=0,
+    budget = ContextTokenBudget.from_payload(
+        dict(
+            max_input_tokens=130,
+            system_tokens=30,
+            memory_tokens=0,
+            history_tokens=90,
+            tool_tokens=10,
+            rag_tokens=0,
+        )
     )
 
     prepared = _prepare(messages, [], budget)
@@ -175,32 +183,35 @@ def test_context_middleware_keeps_five_sections_independent() -> None:
     assert prepared.messages[-1] == {"role": "user", "content": "current question"}
 
 
-def test_memory_context_is_trimmed_to_its_own_token_budget() -> None:
+def test_memory_context_uses_remaining_shared_history_budget() -> None:
     blocks = [
         ContextBlock(content=f"memory-{index}-" + ("x" * 180), source=f"memory:{index}")
         for index in range(4)
     ]
-    fitted = fit_context_blocks("memory", blocks, 150)
     prepared = _prepare(
         [
             {"role": "system", "content": "system"},
             {"role": "user", "content": "question"},
         ],
         [],
-        ContextTokenBudget(
-            max_input_tokens=260,
-            system_tokens=20,
-            memory_tokens=150,
-            history_tokens=80,
-            tool_tokens=10,
-            rag_tokens=0,
+        ContextTokenBudget.from_payload(
+            dict(
+                max_input_tokens=260,
+                system_tokens=20,
+                memory_tokens=150,
+                history_tokens=80,
+                tool_tokens=10,
+                rag_tokens=0,
+            )
         ),
         memory=blocks,
     )
 
+    remaining = 230 - prepared.usage.history_tokens
+    fitted = fit_context_blocks("memory", blocks, remaining)
     assert 0 < len(fitted) < len(blocks)
     assert prepared.usage.memory_tokens == measure_context_blocks("memory", fitted)
-    assert prepared.usage.memory_tokens <= 150
+    assert prepared.usage.memory_tokens <= remaining
     assert "memory-0" in prepared.sections.memory[0]["content"]
     assert "memory-3" not in prepared.sections.memory[0]["content"]
 
@@ -300,13 +311,15 @@ def test_context_middleware_inserts_versioned_history_summary_before_raw_history
 
 
 def test_prepare_context_rejects_oversized_non_trimmable_section() -> None:
-    budget = ContextTokenBudget(
-        max_input_tokens=102,
-        system_tokens=1,
-        memory_tokens=0,
-        history_tokens=100,
-        tool_tokens=1,
-        rag_tokens=0,
+    budget = ContextTokenBudget.from_payload(
+        dict(
+            max_input_tokens=102,
+            system_tokens=1,
+            memory_tokens=0,
+            history_tokens=100,
+            tool_tokens=1,
+            rag_tokens=0,
+        )
     )
 
     with pytest.raises(ContextBudgetError, match="System prompt"):
@@ -318,13 +331,15 @@ def test_prepare_context_rejects_oversized_non_trimmable_section() -> None:
 
 
 def test_prepare_context_never_drops_current_user_turn() -> None:
-    budget = ContextTokenBudget(
-        max_input_tokens=30,
-        system_tokens=5,
-        memory_tokens=0,
-        history_tokens=20,
-        tool_tokens=5,
-        rag_tokens=0,
+    budget = ContextTokenBudget.from_payload(
+        dict(
+            max_input_tokens=30,
+            system_tokens=5,
+            memory_tokens=0,
+            history_tokens=20,
+            tool_tokens=5,
+            rag_tokens=0,
+        )
     )
 
     with pytest.raises(ContextBudgetError, match="hiện tại"):
@@ -367,7 +382,9 @@ def test_ranked_sources_drop_whole_chunks_at_eight_thousand_hard_cap() -> None:
     assert 0 < len(packed.items) < 10
     assert packed.estimated_tokens <= 8000
     assert packed.budget_skipped > 0
-    assert packed == pack_evidence(hits, token_budget=16000, label_sources=True)
+    assert len(pack_evidence(hits, token_budget=16000, label_sources=True).items) > len(
+        packed.items
+    )
     assert [hit.chunk_id for hit in packed.items] == [
         hit.chunk_id for hit in hits[: len(packed.items)]
     ]
@@ -403,7 +420,7 @@ def test_ranked_source_budget_counts_final_labels_and_metadata() -> None:
         pack_evidence([hit], token_budget=-1)
 
 
-def test_default_context_budget_reserves_eight_thousand_for_sources() -> None:
+def test_default_context_budget_uses_full_window_and_percentage_groups() -> None:
     from backend.core.config import Settings
 
     settings = Settings(
@@ -412,12 +429,109 @@ def test_default_context_budget_reserves_eight_thousand_for_sources() -> None:
         auth_secret_key="test-only-secret-key-32-characters",
     )
     budget = ContextTokenBudget()
-    assert settings.context_rag_token_budget == budget.rag_tokens == 8000
-    assert settings.context_max_input_tokens == budget.max_input_tokens == 36000
-    assert (
-        budget.system_tokens
-        + budget.memory_tokens
-        + budget.history_tokens
-        + budget.tool_tokens
-        + budget.rag_tokens
-    ) == budget.max_input_tokens
+    assert settings.context_budget == budget
+    assert budget.system_tool_tokens == 52_428
+    assert budget.memory_history_tokens == 681_574
+    assert budget.rag_tool_result_tokens == 157_286
+    assert budget.max_input_tokens == 891_288
+    assert budget.output_tokens == settings.deepseek_max_tokens == 104_857
+    assert budget.safety_tokens == 52_431
+    assert budget.max_input_tokens + budget.output_tokens + budget.safety_tokens == 1_048_576
+    assert settings.agent_run_token_budget > budget.max_input_tokens + budget.output_tokens
+
+
+def test_percentage_validation_and_legacy_snapshot_conversion() -> None:
+    with pytest.raises(ValueError, match="100%"):
+        ContextTokenBudget.from_percentages(memory_history=64)
+    with pytest.raises(ValueError, match="context window"):
+        ContextTokenBudget(context_window_tokens=1000)
+    small = ContextTokenBudget.from_percentages(10_000)
+    assert (small.max_input_tokens, small.output_tokens, small.safety_tokens) == (8500, 1000, 500)
+    legacy = ContextTokenBudget.from_payload(
+        {
+            "max_input_tokens": 36000,
+            "system_tokens": 2000,
+            "tool_tokens": 6000,
+            "memory_tokens": 4000,
+            "history_tokens": 16000,
+            "rag_tokens": 8000,
+        }
+    )
+    assert (legacy.system_tool_tokens, legacy.memory_history_tokens, legacy.rag_tokens) == (
+        8000,
+        20000,
+        8000,
+    )
+    assert legacy.output_tokens == 2048
+
+
+def test_system_and_schema_share_one_cap_without_borrowing_from_history() -> None:
+    messages = [SystemMessage(content="policy " * 40), HumanMessage(content="Question")]
+    tools = [{"type": "function", "function": {"name": "example", "description": "tool " * 40}}]
+    full = ContextAssemblyMiddleware(ContextTokenBudget(), tool_definitions=tools).prepare(messages)
+    cap = max(full.usage.system_tokens, full.usage.tool_tokens)
+    assert full.usage.system_tokens + full.usage.tool_tokens > cap
+    with pytest.raises(ContextBudgetError, match="tool schemas"):
+        ContextAssemblyMiddleware(
+            ContextTokenBudget(system_tool_tokens=cap),
+            tool_definitions=tools,
+        ).prepare(messages)
+
+
+def test_memory_history_summary_share_budget_and_keep_current_question() -> None:
+    prepared = ContextAssemblyMiddleware(
+        ContextTokenBudget(memory_history_tokens=160),
+        memory=[ContextBlock(content="memory " * 100)],
+        history_summaries=[ContextBlock(content="summary " * 100)],
+    ).prepare([SystemMessage(content="policy"), HumanMessage(content="current " * 25)])
+    used = prepared.usage
+    assert used.memory_tokens + used.summary_tokens + used.history_tokens <= 160
+    assert prepared.messages[-1].content == "current " * 25
+    assert used.memory_tokens == used.summary_tokens == 0
+
+
+def test_tool_results_share_rag_budget_and_preserve_call_result_order() -> None:
+    call = AIMessage(content="", tool_calls=[{"id": "c1", "name": "example", "args": {}}])
+    result = ToolMessage(content="tool output " * 80, tool_call_id="c1")
+    question = HumanMessage(content="current question")
+    messages = [SystemMessage(content="policy"), question, call, result]
+    rag = [ContextBlock(content="document passage " * 60)]
+    full = ContextAssemblyMiddleware(ContextTokenBudget(), rag=rag).prepare(messages)
+    used = full.usage
+    assert used.tool_result_tokens > used.history_tokens
+    assert full.messages[-3:] == [question, call, result]
+    assert used.total_tokens == (
+        used.system_tokens
+        + used.skill_tokens
+        + used.status_tokens
+        + used.tool_tokens
+        + used.memory_tokens
+        + used.history_tokens
+        + used.summary_tokens
+        + used.rag_tokens
+        + used.tool_result_tokens
+    )
+    cap = max(used.rag_tokens, used.tool_result_tokens)
+    with pytest.raises(ContextBudgetError, match="hiện tại"):
+        ContextAssemblyMiddleware(
+            ContextTokenBudget(rag_tool_result_tokens=cap),
+            rag=rag,
+        ).prepare(messages)
+    old = [HumanMessage(content="old"), call, result]
+    trimmed = ContextAssemblyMiddleware(
+        ContextTokenBudget(rag_tool_result_tokens=1),
+    ).prepare([*old, question])
+    assert trimmed.messages == [question]
+    assert trimmed.usage.trimmed_messages == 3
+
+
+def test_percentage_settings_reject_output_above_reserved_space() -> None:
+    from backend.core.config import Settings
+
+    with pytest.raises(ValueError, match="Output Reservation"):
+        Settings(
+            _env_file=None,
+            deepseek_max_tokens=104858,
+            db_password="test-only",
+            auth_secret_key="test-only-secret-key-32-characters",
+        )

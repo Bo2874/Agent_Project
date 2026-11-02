@@ -1650,3 +1650,52 @@
   settle/checkpoint, multi-process throughput/lease contention hoặc browser reconnect thật.
   Các semaphore worker vẫn per-process, quota token PostgreSQL dùng chung. Memory/history chuẩn
   bị trước graph vẫn ngoài journal/budget graph như đợt3; không coi đây là hoàn tất mọi mục M4.
+
+### 2026-11-02 — Budget context theo phần trăm toàn window và gỡ quota ngày
+
+- Theo yêu cầu user, dùng context window1.048.576 của deepseek-flash làm trần mỗi call:
+  System/Skill/status/điều phối + tool schemas chung5%=52.428; Memory + History + summary
+  chung65%=681.574; RAG + tool result messages chung15%=157.286; output10%=104.857;
+  safety52.431 gồm5% và phần lẻ làm tròn. Input tối đa891.288; không nạp dữ liệu cho đầy,
+  không chuyển ngân sách chưa dùng sang nhóm khác hoặc cho input mượn output/safety.
+- ContextTokenBudget có factory tỷ lệ, kiểm tổng100%, các property cho retrieval/tool/memory
+  dùng làm trần ứng viên; middleware kiểm tổng nhóm thật. System+tool schemas quá lớn báo
+  lỗi trước model. History bỏ theo toàn lượt cũ, giữ current turn và cặp tool call/result theo
+  đúng vị trí; optional summary/memory dùng phần65% còn lại. ToolMessage tính vào15%, không
+  cộng vào History lần hai. Usage event thêm tool_result/output/safety/window để quan sát.
+- Settings/.env/env mẫu/Compose đồng bộ tỷ lệ5/65/15/10/5, output cap104857 (validator provider
+  tối đa393216 và không vượt output reservation). Graph cũng chặn model có max_tokens lớn
+  hơn output reservation trước dispatch. Không đổi prompt, model/key, timeout hoặc số bước.
+- Bỏ AGENT_RUNS_PER_DAY/AGENT_TOKENS_PER_DAY/AGENT_TOOL_CALLS_PER_DAY, bỏ chặn tại API chat/
+  resume, model/tool worker, document rewrite và delegated summary. UsageCounter vẫn ghi
+  run/tool và actual token provider xác nhận, không quota ngày. Rate limit/phút giữ nguyên.
+  Receipt ContextVar vẫn tách worker đồng thời, chỉ ghi actual một lần trong cửa sổ ngày
+  gốc; estimate chưa xác nhận không biến thành actual. Unknown billing vẫn giữ dự trù ở
+  ledger root/worker và operation journal vẫn chặn gọi lại mù; không xóa audit/counter cũ.
+- Cap20k/60k mặc định được thay bằng trần run tự tính: steps×(input cap+output cap+64),
+  mặc định8 bước là7.969.672 token. Hai biến AGENT_MAX_TOTAL_TOKENS và
+  AGENT_DOCUMENT_MAX_TOTAL_TOKENS vẫn có thể khai báo số nguyên để giới hạn riêng; không
+  khai báo thì derive. Không tăng deadline/số bước, không nhân thêm budget riêng cho worker.
+- Retrieval vẫn dense20+lexical20/RRF top10, Fast/Deep không đổi. Nâng trần packing nguồn
+  từ8000 lên157286 và recipe version mới, vẫn chỉ tối đa10 chunk và nguyên văn/provenance.
+  Không migration, dependency mới hoặc reindex. Không mở rộng tóm tắt toàn văn cap64 chunk.
+- Durable input mới lưu output cap, worker dùng cap đã pin; loader đọc snapshot context cũ
+  bằng cách chuyển5 cap cũ thành3 nhóm tương ứng và output2048, không tự nâng job cũ lên1M.
+  Cấu hình mới áp dụng yêu cầu mới sau restart cả web và background worker.
+- Đã sửa các test hiện có theo policy mới; thêm kiểm tổng nhóm, không mượn cap, Memory/
+  History dùng chung, ToolMessage+RAG cộng chung và giữ protocol order, output/safety,
+  legacy snapshots, actual usage/unknown floor và model không còn bị chặn theo ngày.
+  Các fixture map/reduce đặt rõ context8000 để vẫn kiểm đúng nhánh, không phụ thuộc default.
+  Runner live bỏ override40k cũ; suite budget lịch sử dùng output2048 trong test rồi restore.
+  Check usage script kiểm request rate limit/actual accounting/no daily quota.
+- Kiểm tra có mục tiêu:171 test đạt trong lô graph/context/usage/document/worker/planner/
+  journal/recorder/timeline/model, thêm1 test chặn output vượt reservation đạt (172 test).
+  Sandbox ban đầu chặn tmp_path/MCP trên Windows; chạy lại local có quyền phù hợp đạt.
+  Ruff/format, Compose config --quiet, CLI xem case không --live và git diff --check đạt.
+  Đã đọc config thực tế không in secret: window1048576/input891288/output104857/
+  safety52431/run7969672, không còn field quota ngày. Không gọi LLM trả phí, chưa test web
+  hoặc load context sát1M, không chạy toàn suite/Docker build, không restart/commit/push.
+- Giới hạn: context vẫn ước tính UTF-8 bytes/3, chưa đổi sang tokenizer DeepSeek; safety5%
+  không bảo đảm đếm chính xác mọi input sát biên. History vẫn nạp tối đa20 message gần nhất
+  kèm summary và memory theo chính sách hiện có, không tự lấy toàn lịch sử cho đủ65%.
+  Các kết quả W02/quota ngày trong ghi chép trước là lịch sử, chưa gọi lại để nghiệm thu.

@@ -389,7 +389,7 @@ async def test_graph_uses_actual_context_schema_budget_before_model_call():
             messages=[{"role": "user", "content": "search"}],
             context=ToolContext(uuid4(), uuid4(), "user"),
             event_handler=capture,
-            context_budget=ContextTokenBudget(tool_tokens=150),
+            context_budget=ContextTokenBudget(system_tool_tokens=350),
         )
     ]
     assert [d["function"]["name"] for d in model.requests[0][1]] == ["small"]

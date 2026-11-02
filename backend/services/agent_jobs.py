@@ -36,6 +36,10 @@ async def enqueue_run(arguments):
         user_message_observed_at=arguments["user_message_observed_at"].isoformat(),
         limits=asdict(arguments["limits"]),
         context_budget=asdict(arguments["context_budget"]),
+        model_max_tokens=min(
+            getattr(arguments["model"], "max_tokens", arguments["context_budget"].output_tokens),
+            arguments["context_budget"].output_tokens,
+        ),
         tool_selection_config=asdict(arguments["tool_selection_config"]),
         skill_selection_config=asdict(arguments["skill_selection_config"]),
         history_summary_context=[asdict(b) for b in arguments["history_summary_context"]],
@@ -182,7 +186,13 @@ async def agent_run_handler(context, payload):
         resume = await saver.aget_tuple(agent_checkpoint_config(run_id)) is not None
         if resume:
             await append_event(run_id, "reset", {"message": "Đang khôi phục từ checkpoint."})
-        model = create_chat_model()
+        context_budget = ContextTokenBudget.from_payload(data["context_budget"])
+        model = create_chat_model(
+            max_tokens=min(
+                data.get("model_max_tokens", context_budget.output_tokens),
+                context_budget.output_tokens,
+            )
+        )
         if model.model != data["model"]:
             await model.aclose()
             raise ValueError("Model configuration changed")
@@ -211,7 +221,7 @@ async def agent_run_handler(context, payload):
                 user_role=role,
             ),
             limits=AgentLimits(**data["limits"]),
-            context_budget=ContextTokenBudget(**data["context_budget"]),
+            context_budget=context_budget,
             tool_selection_config=ToolSelectionConfig(**data["tool_selection_config"]),
             skill_selection_config=SkillSelectionConfig(**data["skill_selection_config"]),
             history_summary_context=tuple(

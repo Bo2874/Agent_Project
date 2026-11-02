@@ -1,6 +1,6 @@
 # Kế hoạch phát triển Personal AI Agent
 
-Cập nhật: 2026-10-22
+Cập nhật: 2026-11-02
 
 Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memory, Skills, sandbox và trang quản trị đủ tốt để học và trình bày khi phỏng vấn.
 
@@ -9,6 +9,11 @@ planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi ti�
 [Lộ trình mở rộng V2](#lộ-trình-mở-rộng-v2) bên dưới. Đây là kế hoạch triển khai, chưa phải các chức năng đã có.
 
 Tiến độ 2026-10-28: **ReAct đợt1–6 đã có vòng chung, document tools, planner/DAG, worker đọc riêng/song song, queue nền, checkpoint root/worker PostgreSQL, cancel, approval bền vững, replay SSE và task UI. Đợt6 W01 LLM thật đạt; W02 truy xuất được nguồn nhưng dừng do quota ngày, chưa đạt trọn câu trả lời. Chưa nghiệm thu hard-kill/distributed load/toàn bộ M4. Lỗi web missing usage và Ngày87/connector Skill Ngày86 tiếp tục hoãn**.
+Ngày 2026-11-02: context dùng tối đa 1.048.576 token, chia System/Tools 5%, Memory/History 65%,
+RAG/Tool Results 15%, Output 10%, Safety 5%. Đã bỏ quota token/run/tool-call theo ngày;
+vẫn ghi usage và giữ rate limit theo phút, deadline, số bước, chống lặp và approval.
+Budget run mặc định tự tính từ số bước và dung lượng mỗi call, thay cap20k/60k cũ.
+Các kết quả W02/quota trong ghi chép trước là lịch sử, chưa chạy lại LLM để nghiệm thu.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),
 [mapping module](#4-mapping-module-và-dữ-liệu-dự-kiến),
@@ -1413,9 +1418,10 @@ Không mặc định các số liệu hiệu năng trong sách áp dụng cho pr
 
 ## Task tiếp theo
 
-Ngày 2026-10-28: đã triển khai code ReAct đợt1–6. Xem report đợt6 cho W01 đạt và W02 partial do
-quota ngày; không tăng quota hoặc gọi thêm LLM. Tiếp theo: user test UI/worker nền, chạy lại W02
-khi quota đủ, xử lý lỗi web riêng và nghiệm thu hard-kill/replay/load trước khi tick toàn M4.
+Ngày 2026-11-02: đã triển khai code ReAct đợt1–6 và context budget theo tỷ lệ5/65/15/10/5
+trên1.048.576 token; bỏ quota ngày theo yêu cầu user. Report đợt6 W01 đạt, W02 partial do quota
+là kết quả lịch sử, chưa gọi LLM lại sau thay đổi. Tiếp theo: restart web/worker và test UI,
+chạy lại W02 khi cần, xử lý lỗi web riêng và nghiệm thu hard-kill/replay/load trước khi tick toàn M4.
 Planner tuần tự bật bằng V2_PLANNING_ENABLED cùng ReAct/master flag, không bắt buộc JEV.
 JEV/routing giữ khi tắt flag và checkpoint cũ;
 flag ReAct không tự migrate run. File1389 chunk vẫn vượt giới hạn tóm tắt toàn văn64 chunk.

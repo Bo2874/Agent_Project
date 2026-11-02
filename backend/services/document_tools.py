@@ -451,21 +451,6 @@ class DocumentToolSession:
         class Collector:
             async def before_execution(self, action):
                 await outer_guard.before_execution(action)
-                # Known uncommitted child usage still counts toward the daily allowance.
-                from backend.services.usage_limits import DAY_SECONDS, get_current_usage
-
-                if not getattr(outer_guard, "active_reservation", None) and (
-                    collected.total_tokens
-                    + await get_current_usage(
-                        outer_guard.user_id,
-                        metric="llm_token",
-                        window_seconds=DAY_SECONDS,
-                    )
-                    >= outer_guard.token_limit
-                ):
-                    from agent_core.graph import AgentQuotaLimitError
-
-                    raise AgentQuotaLimitError("Đã chạm ngân sách token ngày.")
 
             async def record_tokens(self, amount):
                 # Actual usage is collected from child model events and charged once

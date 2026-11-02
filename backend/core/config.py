@@ -6,6 +6,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
+from agent_core.context_budget import ContextTokenBudget
 from agent_core.contracts.features import FeatureFlags
 from agent_core.tools.email import SMTPConfig
 from agent_core.tools.web_search import WebSearchConfig
@@ -103,7 +104,7 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
     deepseek_thinking: bool = False
-    deepseek_max_tokens: int = Field(default=2048, ge=128, le=16384)
+    deepseek_max_tokens: int = Field(default=104_857, ge=128, le=393_216)
     deepseek_cache_hit_price_per_million_usd: float = Field(default=0.006, ge=0)
     deepseek_cache_miss_price_per_million_usd: float = Field(default=0.30, ge=0)
     deepseek_output_price_per_million_usd: float = Field(default=1.20, ge=0)
@@ -139,15 +140,13 @@ class Settings(BaseSettings):
     agent_max_steps: int = Field(default=8, ge=1, le=50)
     agent_react_enabled: bool = False
     agent_web_search_estimated_tokens: int = Field(default=10_000, ge=1_000, le=100_000)
-    agent_document_max_total_tokens: int = Field(default=60_000, ge=128, le=1_000_000)
-    agent_max_total_tokens: int = Field(default=20_000, ge=128, le=1_000_000)
+    # None derives a cumulative run ceiling from max_steps and per-call capacity.
+    agent_document_max_total_tokens: int | None = Field(default=None, ge=128, le=100_000_000)
+    agent_max_total_tokens: int | None = Field(default=None, ge=128, le=100_000_000)
     agent_max_duration_seconds: float = Field(default=120, gt=0, le=3600)
     agent_max_identical_tool_calls: int = Field(default=3, ge=1, le=20)
     agent_max_repeated_observations: int = Field(default=3, ge=1, le=20)
     agent_requests_per_minute: int = Field(default=10, ge=1, le=10_000)
-    agent_runs_per_day: int = Field(default=100, ge=1, le=1_000_000)
-    agent_tokens_per_day: int = Field(default=1_000_000, ge=1_000, le=1_000_000_000)
-    agent_tool_calls_per_day: int = Field(default=500, ge=1, le=10_000_000)
     mcp_demo_enabled: bool = True
     mcp_stdio_config_path: Path = PROJECT_ROOT / "plugins/stdio/servers.json"
     mcp_http_config_path: Path = PROJECT_ROOT / "plugins/http/servers.json"
@@ -184,12 +183,38 @@ class Settings(BaseSettings):
     tool_max_loaded: int = Field(default=4, ge=1, le=100)
     skill_selection_min_score: int = Field(default=20, ge=1, le=1000)
     skill_selection_ambiguity_margin: int = Field(default=5, ge=0, le=1000)
-    context_max_input_tokens: int = Field(default=36_000, ge=1_000, le=1_000_000)
-    context_system_token_budget: int = Field(default=2_000, ge=100)
-    context_memory_token_budget: int = Field(default=4_000, ge=100)
-    context_history_token_budget: int = Field(default=16_000, ge=100)
-    context_tool_token_budget: int = Field(default=6_000, ge=100)
-    context_rag_token_budget: int = Field(default=8_000, ge=100, le=8_000)
+    context_window_tokens: int = Field(default=1_048_576, ge=1_000, le=1_048_576)
+    context_system_tools_percent: int = Field(default=5, ge=0, le=100)
+    context_memory_history_percent: int = Field(default=65, ge=0, le=100)
+    context_rag_tool_results_percent: int = Field(default=15, ge=0, le=100)
+    context_output_percent: int = Field(default=10, ge=1, le=100)
+    context_safety_percent: int = Field(default=5, ge=0, le=100)
+
+    @property
+    def context_budget(self) -> ContextTokenBudget:
+        return ContextTokenBudget.from_percentages(
+            self.context_window_tokens,
+            system_tools=self.context_system_tools_percent,
+            memory_history=self.context_memory_history_percent,
+            rag_tool_results=self.context_rag_tool_results_percent,
+            output=self.context_output_percent,
+            safety=self.context_safety_percent,
+        )
+
+    @property
+    def context_rag_token_budget(self) -> int:
+        return self.context_budget.rag_tool_result_tokens
+
+    @property
+    def agent_run_token_budget(self) -> int:
+        budget = self.context_budget
+        return self.agent_max_total_tokens or self.agent_max_steps * (
+            budget.max_input_tokens + budget.output_tokens + 64
+        )
+
+    @property
+    def agent_document_run_token_budget(self) -> int:
+        return self.agent_document_max_total_tokens or self.agent_run_token_budget
 
     @field_validator("background_worker_heartbeat_path", mode="before")
     @classmethod
@@ -230,15 +255,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MEMORY_RETRIEVAL_MAX_ITEMS không được vượt MEMORY_RETRIEVAL_CANDIDATE_LIMIT"
             )
-        section_total = (
-            self.context_system_token_budget
-            + self.context_memory_token_budget
-            + self.context_history_token_budget
-            + self.context_tool_token_budget
-            + self.context_rag_token_budget
-        )
-        if section_total > self.context_max_input_tokens:
-            raise ValueError("Tổng context section budget vượt CONTEXT_MAX_INPUT_TOKENS")
+        if self.deepseek_max_tokens > self.context_budget.output_tokens:
+            raise ValueError("DEEPSEEK_MAX_TOKENS vượt Output Reservation của context")
         return self
 
     @property

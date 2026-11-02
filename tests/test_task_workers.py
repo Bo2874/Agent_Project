@@ -183,12 +183,12 @@ async def test_quota_receipts_are_context_local(monkeypatch):
     async def consume(*args, **kwargs):
         pass
 
-    async def settle(*args, reserved, actual, **kwargs):
-        settled.append((reserved, actual))
+    async def add(*args, amount, **kwargs):
+        settled.append(amount)
 
     monkeypatch.setattr(usage_limits, "consume_usage_limits", consume)
-    monkeypatch.setattr(usage_limits, "settle_reserved_usage", settle)
-    guard = AgentQuotaGuard(user_id=uuid4(), token_limit=1000, tool_call_limit=20)
+    monkeypatch.setattr(usage_limits, "add_usage", add)
+    guard = AgentQuotaGuard(user_id=uuid4())
     barrier = asyncio.Event()
     receipts = []
 
@@ -208,7 +208,7 @@ async def test_quota_receipts_are_context_local(monkeypatch):
             assert receipt is guard.active_reservation
 
     await asyncio.gather(worker(100), worker(200))
-    assert guard.active_reservation is None and sorted(settled) == [(100, 50), (200, 100)]
+    assert guard.active_reservation is None and sorted(settled) == [50, 100]
 
 
 def test_ready_waves_and_terminal_reducer_are_bounded():

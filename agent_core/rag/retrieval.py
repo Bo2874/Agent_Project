@@ -7,8 +7,8 @@ from agent_core.context_budget import ContextBlock, measure_context_blocks
 from agent_core.contracts.retrieval import RetrievalResult
 
 FUSION_RECIPE = "rrf60-equal-20x20-top10-v2"
-PACKING_RECIPE = "ranked-top10-budget8000-v3"
-MAX_EVIDENCE_TOKENS = 8000
+PACKING_RECIPE = "ranked-top10-shared-context-budget-v4"
+MAX_EVIDENCE_TOKENS = 157_286
 
 
 def reciprocal_rank_fusion(*rankings: list[RetrievalResult]) -> list[RetrievalResult]:

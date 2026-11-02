@@ -35,10 +35,7 @@ from backend.services.document_indexing import LEXICAL_CONFIG
 from backend.services.document_retrieval import _scope, scoped_chunks, search_documents
 from backend.services.documents import DocumentServiceError
 from backend.services.usage_limits import (
-    DAY_SECONDS,
-    UsageLimitExceeded,
     add_usage,
-    ensure_usage_available,
 )
 
 REWRITE_PROMPT = (
@@ -152,15 +149,6 @@ async def _rewrite(query, history, files, owner, *, trimmed, model=None, on_rewr
     if not history:
         return trace
     settings = get_settings()
-    try:
-        await ensure_usage_available(
-            owner,
-            metric="llm_token",
-            limit=settings.agent_tokens_per_day,
-            window_seconds=DAY_SECONDS,
-        )
-    except UsageLimitExceeded as exc:
-        raise DocumentServiceError(str(exc), status_code=429, code="usage_limit_exceeded") from None
     metadata = []
     for file in files:
         candidate = {"id": str(file[0]), "title": file[1][:200]}

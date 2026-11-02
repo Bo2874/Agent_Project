@@ -1238,6 +1238,8 @@ async def run_agent_graph_stream(
                 active_memory = ()
             memory_loaded = True
         try:
+            if getattr(model, "max_tokens", 2048) > context_budget.output_tokens:
+                raise ContextBudgetError("Model max_tokens vượt Output Reservation của context")
             definitions = tool_definitions if planning_enabled else state["tool_definitions"]
             context_messages = state["messages"]
             if plan:

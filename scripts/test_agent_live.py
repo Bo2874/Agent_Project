@@ -265,11 +265,7 @@ async def run_planner_live(
                 item = {"id": key, "question": question, "conversation_id": conversation}
                 report["cases"].append(item)
                 previous_tokens = settings.agent_max_total_tokens
-                if key in {"P02", "W01"}:
-                    # Deliberate test configuration for a multi-model DAG. The app default
-                    # remains20k; planner validation may reject/stop plans which cannot fit.
-                    settings.agent_max_total_tokens = 40_000
-                    item["test_token_cap_override"] = 40_000
+                item["run_token_cap"] = settings.agent_run_token_budget
                 started = perf_counter()
                 try:
                     response = await api(
@@ -551,10 +547,14 @@ async def run_budget_live(owner_email, document_id):
                     )
                 item = {"id": key, "question": question, "conversation_id": conversation}
                 report["cases"].append(item)
-                original_steps, original_tokens = (
+                original_steps, original_tokens, original_output = (
                     settings.agent_max_steps,
                     settings.agent_max_total_tokens,
+                    settings.deepseek_max_tokens,
                 )
+                # This historical suite deliberately exercises small run budgets.
+                # Its output cap must also be small enough to admit the first call.
+                settings.deepseek_max_tokens = 2048
                 if key == "B04":
                     settings.agent_max_steps = 2
                 if key in {"B01", "B02", "B05"}:
@@ -622,9 +622,14 @@ async def run_budget_live(owner_email, document_id):
                     if isinstance(exc, AssertionError):
                         item["check"] = str(exc)[:200]
                 finally:
-                    settings.agent_max_steps, settings.agent_max_total_tokens = (
+                    (
+                        settings.agent_max_steps,
+                        settings.agent_max_total_tokens,
+                        settings.deepseek_max_tokens,
+                    ) = (
                         original_steps,
                         original_tokens,
+                        original_output,
                     )
                 item["seconds"] = round(perf_counter() - started, 3)
                 path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -650,7 +655,7 @@ async def run_budget_live(owner_email, document_id):
             if len(report["cases"]) == len(BUDGET_CASES) and all(
                 c["passed"] for c in report["cases"]
             ):
-                from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError
+                from agent_core.graph import AgentLoopEvent
                 from agent_core.llm.types import TokenUsage
                 from backend.services.usage_limits import (
                     DAY_SECONDS,
@@ -658,8 +663,7 @@ async def run_budget_live(owner_email, document_id):
                     get_current_usage,
                 )
 
-                # Controlled billing on a fresh account: actual PostgreSQL atomic counters,
-                # no inference or secret data and no changes to the owner's quota.
+                # Usage-only checks on a fresh account; no per-day admission limits.
                 client.cookies.clear()
                 fixture = (
                     await api(
@@ -674,15 +678,11 @@ async def run_budget_live(owner_email, document_id):
                     )
                 ).json()
                 fixture_id = UUID(fixture["id"] if "id" in fixture else fixture["user"]["id"])
-                first = AgentQuotaGuard(user_id=fixture_id, token_limit=1_000, tool_call_limit=10)
-                second = AgentQuotaGuard(user_id=fixture_id, token_limit=1_000, tool_call_limit=10)
-                denied = False
+                first = AgentQuotaGuard(user_id=fixture_id)
+                second = AgentQuotaGuard(user_id=fixture_id)
                 async with first.reserve_tokens(600):
-                    try:
-                        async with second.reserve_tokens(600) as receipt:
-                            receipt.actual = 0
-                    except AgentQuotaLimitError:
-                        denied = True
+                    async with second.reserve_tokens(600) as receipt:
+                        receipt.actual = 0
                     await first.record_event(
                         AgentLoopEvent(
                             kind="model_completed",
@@ -690,21 +690,20 @@ async def run_budget_live(owner_email, document_id):
                             usage=TokenUsage(total_tokens=150),
                         )
                     )
-                assert denied
                 settled = await get_current_usage(
                     fixture_id, metric="llm_token", window_seconds=DAY_SECONDS
                 )
                 assert settled == 150
                 async with second.reserve_tokens(200):
-                    pass  # Simulate loss of usage; keep the estimate, do not refund.
+                    pass  # Unknown usage remains unknown, never charged as estimated actual.
                 retained = await get_current_usage(
                     fixture_id, metric="llm_token", window_seconds=DAY_SECONDS
                 )
-                assert retained == 350
-                report["postgres_quota_checks"] = {
-                    "overlapping_reservations_denied": denied,
-                    "settled_actual": settled,
-                    "after_unknown_reservation": retained,
+                assert retained == 150
+                report["postgres_usage_checks"] = {
+                    "no_daily_quota": True,
+                    "recorded_actual": settled,
+                    "after_unknown_usage": retained,
                 }
     report["passed"] = len(report["cases"]) == len(BUDGET_CASES) and all(
         c["passed"] for c in report["cases"]

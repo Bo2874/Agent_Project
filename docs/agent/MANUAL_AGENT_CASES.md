@@ -1,5 +1,49 @@
 # Kiểm thử agent ReAct và M4
 
+## Cấu hình hiện tại — 2026-11-02
+
+Phần này thay các mức budget/quota cũ được ghi trong những đợt bên dưới. Không xóa các
+kết quả test lịch sử hoặc coi chúng là đã chạy lại sau thay đổi.
+
+| Nhóm | Trần token mỗi lần gọi |
+| --- | ---: |
+| System prompt, status/điều phối, Skill nếu có và tool schemas (chung 5%) | 52.428 |
+| Memory, history summary, history và câu hỏi hiện tại (chung 65%) | 681.574 |
+| RAG và các tool result messages (chung 15%) | 157.286 |
+| Output reservation (10%) | 104.857 |
+| Safety (5% và token lẻ làm tròn, giữ trống) | 52.431 |
+| Tổng context window | 1.048.576 |
+
+Input tối đa891.288, `DEEPSEEK_MAX_TOKENS=104857`. `.env` dùng
+`CONTEXT_WINDOW_TOKENS=1048576`, `CONTEXT_SYSTEM_TOOLS_PERCENT=5`,
+`CONTEXT_MEMORY_HISTORY_PERCENT=65`, `CONTEXT_RAG_TOOL_RESULTS_PERCENT=15`,
+`CONTEXT_OUTPUT_PERCENT=10`, `CONTEXT_SAFETY_PERCENT=5`. Tổng phần trăm phải bằng100.
+Các phần có trần chung, không cộng hai lần hoặc mượn output/safety; không nạp dữ liệu đệm
+cho đủ ngân sách. System/tool schema quá lớn hoặc riêng lượt hiện tại quá lớn báo lỗi rõ;
+history cũ bỏ theo toàn lượt, giữ đúng thứ tự call/result, summary/memory vừa phần còn lại.
+
+Không còn `AGENT_RUNS_PER_DAY`, `AGENT_TOKENS_PER_DAY`, `AGENT_TOOL_CALLS_PER_DAY`.
+Usage theo ngày vẫn được ghi để thống kê, không dùng để từ chối yêu cầu. Usage xác nhận
+được ghi một lần; không biến estimate chưa rõ thành actual. Unknown billing vẫn giữ
+dự trù ở ledger của run/worker và journal vẫn chặn gọi lại mù. Rate limit/phút giữ nguyên.
+
+Không khai báo `AGENT_MAX_TOTAL_TOKENS`/`AGENT_DOCUMENT_MAX_TOTAL_TOKENS` thì budget
+cộng dồn mặc định = `AGENT_MAX_STEPS × (input cap + output reservation + 64)`:
+8 bước là7.969.672 token. Đây không phải quota ngày hoặc lượng dùng bắt buộc. Có thể đặt
+hai biến đó thành số nguyên nếu cần trần run riêng thấp hơn. Giới hạn thời gian không tăng.
+History vẫn lấy các message gần đây và summary; retrieval vẫn tối đa10 chunk, Fast/Deep
+không đổi; không tự đưa cả file vào context. Bộ đếm context vẫn là ước tính UTF-8 bytes/3,
+usage thực tế lấy từ provider; safety5% chưa phải bảo đảm đếm chính xác ở biên1M.
+
+Restart cả web và background worker như hướng dẫn đợt6; không cần migration/reindex.
+Job đang lưu snapshot cũ vẫn đọc được: chuyển cap cũ sang các nhóm tương ứng, output
+dự phòng2048; không tự nâng lên context1M cho job cũ. Job mới pin output cap vào snapshot.
+Test cấu hình mới bằng hội thoại/yêu cầu mới.
+
+Kiểm tay: chat thường chỉ gửi nội dung hiện có; gọi tool rồi hỏi nối tiếp thấy observation
+và history giữ đúng; chọn PDF hỏi semantic chunking vẫn có nguồn; usage ngày cao không
+báo hết quota. Không cần tạo history hàng trăm nghìn token hoặc gọi API để lấp đầy context.
+
 ## Đợt 1 — Vòng chung cho hội thoại chưa chọn tài liệu
 
 Bật `AGENT_REACT_ENABLED=true` trong `.env`, restart web. Windows chạy một worker,

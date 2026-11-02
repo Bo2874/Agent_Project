@@ -1,11 +1,10 @@
-"""Smoke-test PostgreSQL rate limits and daily quotas."""
+"""Smoke-test PostgreSQL request rate limiting and usage accounting without daily quotas."""
 
 import asyncio
 from uuid import uuid4
 
 from sqlalchemy import delete
 
-from agent_core.graph import AgentQuotaLimitError
 from backend.database import SessionFactory, engine
 from backend.models import User
 from backend.services.usage_limits import (
@@ -48,14 +47,13 @@ async def run_check() -> int:
         else:
             rate_limit_blocked = False
 
-        run_limit = UsageLimit(metric="agent_run", limit=1, window_seconds=DAY_SECONDS)
-        await consume_usage_limits(user_id, (run_limit,))
+        await add_usage(user_id, metric="agent_run", amount=1000)
         try:
             await consume_usage_limits(
                 user_id,
                 (
                     UsageLimit(metric="tool_call", limit=10, window_seconds=DAY_SECONDS),
-                    run_limit,
+                    request_limit,
                 ),
             )
         except UsageLimitExceeded:
@@ -74,19 +72,16 @@ async def run_check() -> int:
             metric="llm_token",
             window_seconds=DAY_SECONDS,
         )
-        guard = AgentQuotaGuard(user_id=user_id, token_limit=42, tool_call_limit=10)
-        try:
-            await guard.before_execution("model")
-        except AgentQuotaLimitError:
-            token_quota_blocked = True
-        else:
-            token_quota_blocked = False
+        guard = AgentQuotaGuard(user_id=user_id)
+        await guard.before_execution("model")
+        async with guard.reserve_tokens(10_000_000) as receipt:
+            receipt.actual = 0
 
         checks = {
             "rate_limit_blocked": rate_limit_blocked,
             "multi_limit_transaction_rollback": (bundle_blocked and tool_usage_after_rollback == 0),
             "token_usage_recorded": token_usage == 42,
-            "token_quota_blocked": token_quota_blocked,
+            "daily_usage_does_not_block": True,
         }
         for name, passed in checks.items():
             print(f"{name}: {'PASSED' if passed else 'FAILED'}")

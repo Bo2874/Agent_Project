@@ -490,13 +490,15 @@ async def test_agent_graph_measures_context_and_trims_old_history() -> None:
             registry=ToolRegistry(),
             context=make_context(),
             event_handler=capture,
-            context_budget=ContextTokenBudget(
-                max_input_tokens=900,
-                system_tokens=300,
-                memory_tokens=0,
-                history_tokens=500,
-                tool_tokens=100,
-                rag_tokens=0,
+            context_budget=ContextTokenBudget.from_payload(
+                dict(
+                    max_input_tokens=900,
+                    system_tokens=300,
+                    memory_tokens=0,
+                    history_tokens=500,
+                    tool_tokens=100,
+                    rag_tokens=0,
+                )
             ),
         )
     ]
@@ -522,17 +524,36 @@ async def test_agent_graph_stops_before_model_when_current_turn_exceeds_context_
                 messages=[{"role": "user", "content": "large request " * 100}],
                 registry=ToolRegistry(),
                 context=make_context(),
-                context_budget=ContextTokenBudget(
-                    max_input_tokens=30,
-                    system_tokens=5,
-                    memory_tokens=0,
-                    history_tokens=20,
-                    tool_tokens=5,
-                    rag_tokens=0,
+                context_budget=ContextTokenBudget.from_payload(
+                    dict(
+                        max_input_tokens=30,
+                        system_tokens=5,
+                        memory_tokens=0,
+                        history_tokens=20,
+                        tool_tokens=5,
+                        rag_tokens=0,
+                    )
                 ),
             )
         ]
 
+    assert model.requests == []
+
+
+async def test_agent_graph_rejects_model_output_above_context_reservation() -> None:
+    model = FakeModel(responses=[])
+    model.max_tokens = 104_858
+    with pytest.raises(AgentContextLimitError, match="Output Reservation"):
+        _ = [
+            item
+            async for item in stream_agent_graph(
+                model=model,
+                messages=[{"role": "user", "content": "Question"}],
+                registry=ToolRegistry(),
+                context=make_context(),
+                context_budget=ContextTokenBudget(),
+            )
+        ]
     assert model.requests == []
 
 

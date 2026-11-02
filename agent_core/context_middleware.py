@@ -6,7 +6,13 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
 from agent_core.context_budget import (
@@ -118,17 +124,8 @@ class ContextAssemblyMiddleware(AgentMiddleware):
             deepcopy(message) for message in messages if not isinstance(message, SystemMessage)
         ]
         active_memory = self._memory if memory is None else tuple(memory)
-        fitted_memory = fit_context_blocks(
-            "memory",
-            active_memory,
-            self.budget.memory_tokens,
-        )
-        memory_messages = _as_langchain_messages(_render_data_section("memory", fitted_memory))
         active_rag = self._rag if rag is None else tuple(rag)
         rag_messages = _as_langchain_messages(_render_data_section("rag", active_rag))
-        summary_messages = _as_langchain_messages(
-            _render_data_section("history_summary", self._history_summaries)
-        )
         status_messages = _as_langchain_messages(_render_status_section(status))
         skill_message = render_skill_system_message(self._skill)
         skill_messages = [] if skill_message is None else [skill_message]
@@ -141,51 +138,33 @@ class ContextAssemblyMiddleware(AgentMiddleware):
         )
 
         system_tokens = _measure_messages(system_messages)
-        memory_tokens = _measure_messages(memory_messages)
         tool_tokens = estimate_tokens(copied_tools) if copied_tools else 0
         rag_tokens = _measure_messages(rag_messages)
-        summary_tokens = _measure_messages(summary_messages)
         status_tokens = _measure_messages(status_messages)
         skill_tokens = _measure_messages(skill_messages)
-        fixed_sections = (
-            ("System prompt", system_tokens, self.budget.system_tokens),
-            ("Memory", memory_tokens, self.budget.memory_tokens),
-            ("Tool definitions", tool_tokens, self.budget.tool_tokens),
-            ("RAG", rag_tokens, self.budget.rag_tokens),
-        )
-        for label, used, limit in fixed_sections:
-            if used > limit:
-                raise ContextBudgetError(f"{label} dùng {used} token, vượt budget {limit}")
-        if system_tokens + skill_tokens + status_tokens > self.budget.system_tokens:
+        control_tokens = system_tokens + skill_tokens + status_tokens + tool_tokens
+        if control_tokens > self.budget.system_tool_tokens:
             raise ContextBudgetError(
-                "System prompt, Skill và status dùng "
-                f"{system_tokens + skill_tokens + status_tokens} token, vượt budget "
-                f"{self.budget.system_tokens}"
+                "System prompt, Skill, status và tool schemas dùng "
+                f"{control_tokens} token, vượt budget {self.budget.system_tool_tokens}"
             )
-        if summary_tokens > self.budget.history_tokens:
+        if rag_tokens > self.budget.rag_tool_result_tokens:
             raise ContextBudgetError(
-                f"History summary dùng {summary_tokens} token, vượt budget "
-                f"{self.budget.history_tokens}"
+                f"RAG dùng {rag_tokens} token, vượt budget {self.budget.rag_tool_result_tokens}"
             )
-
-        fixed_tokens = (
-            system_tokens
-            + skill_tokens
-            + status_tokens
-            + memory_tokens
-            + tool_tokens
-            + rag_tokens
-            + summary_tokens
-        )
         turns = _history_turns(history_messages)
         trimmed_messages = 0
         while turns:
             flattened_history = [message for turn in turns for message in turn]
-            history_tokens = _measure_messages(flattened_history)
-            total_tokens = fixed_tokens + history_tokens
+            history_tokens = _measure_messages(
+                [m for m in flattened_history if not isinstance(m, ToolMessage)]
+            )
+            tool_result_tokens = _measure_messages(
+                [m for m in flattened_history if isinstance(m, ToolMessage)]
+            )
             if (
-                history_tokens + summary_tokens <= self.budget.history_tokens
-                and total_tokens <= self.budget.max_input_tokens
+                history_tokens <= self.budget.memory_history_tokens
+                and rag_tokens + tool_result_tokens <= self.budget.rag_tool_result_tokens
             ):
                 break
             if len(turns) == 1:
@@ -197,7 +176,29 @@ class ContextAssemblyMiddleware(AgentMiddleware):
         else:
             flattened_history = []
             history_tokens = 0
-            total_tokens = fixed_tokens
+            tool_result_tokens = 0
+
+        # Current turn/observations are indivisible. Trim only whole old turns;
+        # optional summaries/memories use the shared space left by retained history.
+        remaining = self.budget.memory_history_tokens - history_tokens
+        summaries = fit_context_blocks("history_summary", self._history_summaries, remaining)
+        summary_messages = _as_langchain_messages(
+            _render_data_section("history_summary", summaries)
+        )
+        summary_tokens = _measure_messages(summary_messages)
+        fitted_memory = fit_context_blocks("memory", active_memory, remaining - summary_tokens)
+        memory_messages = _as_langchain_messages(_render_data_section("memory", fitted_memory))
+        memory_tokens = _measure_messages(memory_messages)
+        total_tokens = (
+            control_tokens
+            + memory_tokens
+            + summary_tokens
+            + history_tokens
+            + rag_tokens
+            + tool_result_tokens
+        )
+        if total_tokens > self.budget.max_input_tokens:
+            raise ContextBudgetError("Context vượt ngân sách input sau khi dành output và safety")
 
         sections = LangChainContextSections(
             system=system_messages,
@@ -246,6 +247,10 @@ class ContextAssemblyMiddleware(AgentMiddleware):
             summary_tokens=summary_tokens,
             skill_tokens=skill_tokens,
             selected_skill=self._skill.name if self._skill is not None else None,
+            tool_result_tokens=tool_result_tokens,
+            context_window_tokens=self.budget.context_window_tokens,
+            output_reserved_tokens=self.budget.output_tokens,
+            safety_tokens=self.budget.safety_tokens,
         )
         return LangChainPreparedContext(
             messages=prepared_messages,

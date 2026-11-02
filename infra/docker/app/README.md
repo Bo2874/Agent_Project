@@ -264,3 +264,13 @@ Root/task checkpoints, operation journal, run events và approval dùng PostgreS
 thêm dependency/reindex. Host chạy `python -m scripts.run_background_worker` ở terminal riêng.
 Lease/journal chặn phát lại mù khi outcome chưa rõ; không bảo đảm exactly-once API ngoài.
 Chưa build/test Docker hoặc hard-kill/distributed load; xem manual/report đợt6.
+
+2026-11-02: budget mới dùng toàn context1.048.576 theo tỷ lệ5/65/15/10/5. Compose truyền
+`DEV_CONTEXT_WINDOW_TOKENS`, `DEV_CONTEXT_SYSTEM_TOOLS_PERCENT`,
+`DEV_CONTEXT_MEMORY_HISTORY_PERCENT`, `DEV_CONTEXT_RAG_TOOL_RESULTS_PERCENT`,
+`DEV_CONTEXT_OUTPUT_PERCENT`, `DEV_CONTEXT_SAFETY_PERCENT` và
+`DEV_DEEPSEEK_MAX_TOKENS=104857` cho cả app/worker. Xem `.env.docker.example`.
+Đã bỏ quota theo ngày, giữ thống kê usage và rate limit/phút. Budget token run mặc định
+tự tính theo số bước, không còn cap20k/60k. Unknown billing giữ dự trù trong run/worker,
+không còn dự trù để chặn cả ngày. Rebuild/recreate app và worker sau thay đổi;
+không cần migration/reindex. Các đoạn đợt3–5 phía trên ghi hành vi ở thời điểm cũ.

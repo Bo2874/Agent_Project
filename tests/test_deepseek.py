@@ -489,7 +489,8 @@ async def test_qa_backend_owns_all_supplied_references(monkeypatch, scenario) ->
             recorder=AsyncMock(),
             quota_guard=SimpleNamespace(before_execution=AsyncMock(), record_tokens=AsyncMock()),
             limits=AgentLimits(),
-            context_budget=ContextTokenBudget(),
+            # Keep this fixture small so summary still exercises map/reduce.
+            context_budget=ContextTokenBudget(rag_tool_result_tokens=8000),
             result=result,
         )
     ]

@@ -120,46 +120,42 @@ async def test_time_limit_unknown_tool_outcome_is_not_retried():
     assert len(events) == 1 and events[0].tool_result.error_code == "tool_outcome_unknown"
 
 
-async def test_daily_reservation_settles_actual_once_including_overrun(monkeypatch):
-    consume, settle, add = AsyncMock(), AsyncMock(), AsyncMock()
+async def test_usage_receipt_records_actual_once_including_overrun(monkeypatch):
+    consume, add = AsyncMock(), AsyncMock()
     monkeypatch.setattr(usage_limits, "consume_usage_limits", consume)
-    monkeypatch.setattr(usage_limits, "settle_reserved_usage", settle)
     monkeypatch.setattr(usage_limits, "add_usage", add)
-    guard = usage_limits.AgentQuotaGuard(user_id=uuid4(), token_limit=100_000, tool_call_limit=10)
+    guard = usage_limits.AgentQuotaGuard(user_id=uuid4())
     async with guard.reserve_tokens(10_000):
         await guard.record_event(
             AgentLoopEvent(
                 kind="tool_completed", step_number=1, usage=TokenUsage(total_tokens=12_000)
             )
         )
-    assert consume.await_count == settle.await_count == 1 and add.await_count == 0
-    assert settle.call_args.kwargs["actual"] == 12_000
-    assert settle.call_args.kwargs["reserved"] == 10_000
-    assert (
-        settle.call_args.kwargs["window_start"].date()
-        == consume.call_args.kwargs["observed_at"].date()
-    )
+    consume.assert_not_awaited()
+    assert add.await_count == 1
+    assert add.call_args.kwargs["amount"] == 12_000
+    assert add.call_args.kwargs["observed_at"] is not None
 
 
-async def test_unknown_billing_keeps_reservation_and_known_zero_is_refunded(monkeypatch):
+async def test_unknown_billing_is_not_invented_as_actual_usage(monkeypatch):
     monkeypatch.setattr(usage_limits, "consume_usage_limits", AsyncMock())
-    settle = AsyncMock()
-    monkeypatch.setattr(usage_limits, "settle_reserved_usage", settle)
-    guard = usage_limits.AgentQuotaGuard(user_id=uuid4(), token_limit=100_000, tool_call_limit=10)
+    add = AsyncMock()
+    monkeypatch.setattr(usage_limits, "add_usage", add)
+    guard = usage_limits.AgentQuotaGuard(user_id=uuid4())
     with pytest.raises(TimeoutError):
         async with guard.reserve_tokens(10_000):
             raise TimeoutError
-    settle.assert_not_awaited()
+    add.assert_not_awaited()
     async with guard.reserve_tokens(10_000):
         await guard.record_event(
             AgentLoopEvent(kind="tool_completed", step_number=1, usage=TokenUsage())
         )
-    assert settle.call_args.kwargs["actual"] == 0
+    add.assert_not_awaited()
     with pytest.raises(TimeoutError):
         async with guard.reserve_tokens(10_000) as receipt:
             receipt.known_tokens = 12_000
             raise TimeoutError
-    assert settle.call_args.kwargs["actual"] == 12_000
+    assert add.call_args.kwargs["amount"] == 12_000
 
 
 async def test_model_quota_denial_returns_partial_without_calling_provider():
