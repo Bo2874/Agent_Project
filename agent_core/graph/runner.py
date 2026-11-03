@@ -124,6 +124,38 @@ from agent_core.tracing import AgentTraceConfig
 logger = logging.getLogger(__name__)
 
 
+def _web_sources_missing(rows) -> bool:
+    return any(
+        r["tool_name"] == "search_web" and r.get("error_code") == "web_search_missing_sources"
+        for r in rows
+    )
+
+
+def _current_task_observations(state, planning=None):
+    attempt = (planning or {}).get("attempt") or {}
+    return state["tool_observations"][attempt.get("observation_offset", 0) :]
+
+
+def _unresolved_web_sources(rows) -> bool:
+    return _web_sources_missing(rows) and not any(
+        r["tool_name"] == "search_web" and not r["is_error"] and r["data"].get("sources")
+        for r in rows
+    )
+
+
+def _missing_sources_answer(rows) -> str:
+    actual = sum(
+        r["tool_name"] == "search_web" and r.get("error_code") == "web_search_missing_sources"
+        for r in rows
+    )
+    return (
+        f"Đã thực hiện {actual} lần gọi tìm web, nhưng dịch vụ chưa cung cấp nguồn URL hợp lệ "
+        "để xác minh thông tin. Yêu cầu chưa hoàn tất.\n\n"
+        "Hệ thống đã dừng việc tự tìm lại để chữa cùng lỗi thiếu nguồn. "
+        "Chưa thể sử dụng nội dung không có nguồn làm câu trả lời đã xác minh."
+    )
+
+
 def _usage_to_state(usage: TokenUsage) -> dict[str, int]:
     return {
         "prompt_tokens": usage.prompt_tokens,
@@ -1255,6 +1287,8 @@ async def run_agent_graph_stream(
                 definitions = [
                     d for d in tool_definitions if d["function"]["name"] != "finish_task"
                 ]
+            if react_enabled and _web_sources_missing(_current_task_observations(state, plan)):
+                definitions = [d for d in definitions if d["function"]["name"] != "search_web"]
             active_rag = _memory_blocks_from_state(state.get("rag_context", []))
             if plan and not (
                 dag.allowed_names(plan, registry) & {"search_documents", "summarize_documents"}
@@ -1585,6 +1619,17 @@ async def run_agent_graph_stream(
                     code="empty_model_response",
                 )
             if react_enabled:
+                rows = state["tool_observations"]
+                if (
+                    worker_plan is None
+                    and not state.get("planning")
+                    and _unresolved_web_sources(rows)
+                    and not any(not r["is_error"] for r in rows)
+                ):
+                    # No usable observations exist. Host facts, not model prose,
+                    # determine the failure explanation and actual search count.
+                    content = _missing_sources_answer(rows)
+                    content_parts = [content]
                 # A model may emit prose before a tool call, even in another language.
                 # Publish only a confirmed final response; activity stays on the timeline.
                 for part in content_parts:
@@ -1775,6 +1820,14 @@ async def run_agent_graph_stream(
             )
             if cached_result is not None:
                 estimate = 0
+            source_retry_blocked = (
+                react_enabled
+                and request.name == "search_web"
+                and cached_result is None
+                and _web_sources_missing([*_current_task_observations(state, plan), *observations])
+            )
+            if source_retry_blocked:
+                estimate = 0
             if react_enabled and budget_stop is None:
                 if deadline <= perf_counter():
                     budget_stop = "time_limit"
@@ -1793,7 +1846,7 @@ async def run_agent_graph_stream(
                 if (
                     execution_guard is not None
                     and budget_stop is None
-                    and not (control or mixed_controls or task_error)
+                    and not (control or mixed_controls or task_error or source_retry_blocked)
                     and cached_result is None
                 ):
                     try:
@@ -1810,7 +1863,7 @@ async def run_agent_graph_stream(
             elif (
                 execution_guard is not None
                 and budget_stop is None
-                and not (control or mixed_controls or task_error)
+                and not (control or mixed_controls or task_error or source_retry_blocked)
                 and cached_result is None
             ):
                 try:
@@ -1891,6 +1944,12 @@ async def run_agent_graph_stream(
                     if request.name == "create_plan":
                         if plan is not None:
                             raise ValueError("Only one plan is allowed; no nested plan or replan")
+                        if _web_sources_missing(state["tool_observations"]) and any(
+                            "search_web" in t.get("tools", [])
+                            for t in request.arguments.get("tasks", [])
+                            if isinstance(t, dict)
+                        ):
+                            raise ValueError("Cannot retry missing web sources through a new plan")
                         plan = dag.create_plan(
                             request.arguments,
                             goal=state["goal"],
@@ -1933,6 +1992,14 @@ async def run_agent_graph_stream(
                         ),
                         error_code="planning_validation",
                     )
+            elif source_retry_blocked:
+                result = ToolResult.failure(
+                    "Không thực hiện lại search_web: task này đã gặp lỗi thiếu citation. "
+                    "Hãy hoàn tất với phần thông tin còn thiếu; không tự khẳng định đã tìm thêm.",
+                    error_code="web_search_retry_blocked",
+                    data={"retryable": False, "search_performed": False, "search_requests": 0},
+                    usage=TokenUsage(),
+                )
             elif budget_stop is not None:
                 result = ToolResult.failure(
                     "Chưa thực hiện: không đủ ngân sách cho hành động và câu trả lời cuối.",
@@ -2154,6 +2221,21 @@ async def run_agent_graph_stream(
         }
 
     async def build_final_node(state: AgentState) -> Mapping[str, Any]:
+        if worker_plan is None and _unresolved_web_sources(state["tool_observations"]):
+            await publish(
+                AgentLoopEvent(
+                    kind="pipeline_progress",
+                    step_number=state["step_number"],
+                    progress={
+                        "id": "budget.partial",
+                        "label": "Chưa xác minh được nguồn tìm web",
+                        "state": "completed",
+                        "partial": True,
+                        "stop_reason": "web_sources_missing",
+                        "duration_ms": 0,
+                    },
+                )
+            )
         if (
             worker_plan is None
             and state.get("planning")

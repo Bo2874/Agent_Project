@@ -568,7 +568,7 @@ if (chatApp) {
     timeline.count.textContent = parts.join(" · ");
     const remaining = timeline.statusBlock.querySelector(".status-remaining");
     if (remaining && statusValue === "completed") remaining.textContent = partial
-      ? "Còn lại: Yêu cầu chưa hoàn tất do giới hạn thực thi." : "Còn lại: Đã hoàn thành.";
+      ? "Còn lại: Yêu cầu chưa hoàn tất; xem tiến trình và kết quả để biết phần còn thiếu." : "Còn lại: Đã hoàn thành.";
   }
 
   function addResumeButton(timeline, runId) {

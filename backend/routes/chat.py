@@ -174,6 +174,8 @@ def agent_status_payload(event: AgentLoopEvent) -> dict[str, object]:
             }
         if event.tool_result.error_code:
             payload["error_code"] = event.tool_result.error_code
+            if event.tool_result.error_code == "web_search_retry_blocked":
+                payload["message"] = "Không gọi lại tìm web vì task chưa có nguồn hợp lệ."
     if event.approval_id is not None:
         payload["approval"] = {
             "id": event.approval_id,

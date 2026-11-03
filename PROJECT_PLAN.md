@@ -1,6 +1,6 @@
 # Kế hoạch phát triển Personal AI Agent
 
-Cập nhật: 2026-11-02
+Cập nhật: 2026-11-03
 
 Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memory, Skills, sandbox và trang quản trị đủ tốt để học và trình bày khi phỏng vấn.
 
@@ -16,6 +16,10 @@ Budget run mặc định tự tính từ số bước và dung lượng mỗi ca
 History chuyển sang LLM tóm tắt đồng bộ trước khi chạy Agent: giữ ít nhất20 message gần nhất,
 batch10/gộp4 cùng tầng, bỏ cap6000 ký tự; độ dài theo ngân sách Memory+History còn lại.
 Các kết quả W02/quota trong ghi chép trước là lịch sử, chưa chạy lại LLM để nghiệm thu.
+Ngày 2026-11-03: đã tái hiện một lần web thời tiết bằng API thật, xác nhận response thiếu
+annotations/link nguồn. Thêm chẩn đoán nguồn, chặn retry chữa cùng lỗi trong task, giữ usage
+và đánh dấu partial khi chưa có bằng chứng web. Không bảo đảm provider luôn trả citation;
+lỗi missing usage vẫn hoãn. Xem notes/manual cho phạm vi kiểm thử và giới hạn.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),
 [mapping module](#4-mapping-module-và-dữ-liệu-dự-kiến),

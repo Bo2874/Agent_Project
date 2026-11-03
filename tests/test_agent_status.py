@@ -163,6 +163,10 @@ def test_model_status_includes_context_breakdown() -> None:
         "status_tokens": 0,
         "skill_tokens": 0,
         "selected_skill": None,
+        "tool_result_tokens": 0,
+        "context_window_tokens": 0,
+        "output_reserved_tokens": 0,
+        "safety_tokens": 0,
     }
 
 

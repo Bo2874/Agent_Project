@@ -38,7 +38,7 @@ def actions(*names):
     ]
 
 
-async def run(model, *, handler, limits=None, reserver=None):
+async def run(model, *, handler, limits=None, reserver=None, planning=False):
     registry = ToolRegistry()
     registry.register(
         create_context_tool(
@@ -61,6 +61,7 @@ async def run(model, *, handler, limits=None, reserver=None):
             context=ToolContext(user_id=uuid4(), conversation_id=uuid4(), user_role="user"),
             limits=limits,
             react_enabled=True,
+            planning_enabled=planning,
             usage_reservation=reserver,
         )
     ]
@@ -251,3 +252,132 @@ def test_execution_history_excludes_arguments_payload_secrets_and_bad_urls():
     assert payload["actions"][0]["sources"] == ["https://example.com/path"]
     assert "never-copy" not in blocks[0].content and "Ignore system" not in blocks[0].content
     assert not agent_context.execution_rows([(tool, run_row)], token_budget=1)
+
+
+@pytest.mark.parametrize("same_batch", [False, True])
+async def test_missing_web_sources_blocks_paid_retry_and_reports_actual_count(same_batch):
+    handler = AsyncMock(
+        return_value=ToolResult.failure(
+            "Search performed but citations missing",
+            error_code="web_search_missing_sources",
+            data={
+                "search_performed": True,
+                "sources": [],
+                "search_requests": 1,
+                "retryable": False,
+            },
+            usage=TokenUsage(total_tokens=120),
+        )
+    )
+    replies = (
+        [actions("search_web", "search_web")]
+        if same_batch
+        else [
+            actions("search_web"),
+            actions("search_web"),
+        ]
+    )
+    replies.append(
+        [LLMChunk(content="I tried three times and know the weather.", finish_reason="stop")]
+    )
+    model = Model(replies)
+    model.requests = []
+    original = model.stream
+
+    async def stream(messages, tools=None, **kwargs):
+        model.requests.append(tools)
+        async for chunk in original(messages, tools=tools, **kwargs):
+            yield chunk
+
+    model.stream = stream
+    items = await run(model, handler=handler)
+    assert handler.await_count == 1
+    assert "1 lần gọi" in text(items) and "three times" not in text(items)
+    assert "Yêu cầu chưa hoàn tất" in text(items)
+    assert not any(t["function"]["name"] == "search_web" for t in (model.requests[1] or []))
+    results = [i for i in items if isinstance(i, AgentLoopEvent) and i.kind == "tool_completed"]
+    assert [i.tool_result.error_code for i in results] == [
+        "web_search_missing_sources",
+        "web_search_retry_blocked",
+    ]
+    assert results[-1].usage.total_tokens == 0
+    assert any(
+        isinstance(i, AgentLoopEvent)
+        and i.progress
+        and i.progress.get("stop_reason") == "web_sources_missing"
+        for i in items
+    )
+
+
+def test_missing_web_source_policy_is_scoped_to_task_and_recognizes_recovery():
+    from agent_core.graph.runner import (
+        _current_task_observations,
+        _unresolved_web_sources,
+        _web_sources_missing,
+    )
+
+    failure = {
+        "tool_name": "search_web",
+        "is_error": True,
+        "error_code": "web_search_missing_sources",
+        "data": {},
+    }
+    state = {"tool_observations": [failure]}
+    assert _web_sources_missing(_current_task_observations(state))
+    assert not _web_sources_missing(
+        _current_task_observations(
+            state,
+            {"attempt": {"observation_offset": 1}},
+        )
+    )
+    success = {
+        "tool_name": "search_web",
+        "is_error": False,
+        "error_code": None,
+        "data": {"sources": [{"url": "https://example.com"}]},
+    }
+    assert _unresolved_web_sources([failure])
+    assert not _unresolved_web_sources([failure, success])
+
+
+async def test_missing_sources_cannot_be_retried_through_a_new_plan():
+    handler = AsyncMock(
+        return_value=ToolResult.failure(
+            "Missing citation",
+            error_code="web_search_missing_sources",
+            usage=TokenUsage(total_tokens=120),
+        )
+    )
+    create = LLMChunk(
+        finish_reason="tool_calls",
+        usage=TokenUsage(total_tokens=100),
+        tool_call_deltas=(
+            LLMToolCallDelta(
+                index=0,
+                id="plan",
+                name="create_plan",
+                arguments=json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "task_id": "retry",
+                                "goal": "Retry the same web search",
+                                "tools": ["search_web"],
+                                "acceptance_criteria": ["Have sources"],
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ),
+    )
+    model = Model(
+        [actions("search_web"), [create], [LLMChunk(content="Stopped", finish_reason="stop")]]
+    )
+    items = await run(model, handler=handler, planning=True)
+    assert handler.await_count == 1
+    results = [
+        i.tool_result for i in items if isinstance(i, AgentLoopEvent) and i.kind == "tool_completed"
+    ]
+    assert [r.error_code for r in results] == ["web_search_missing_sources", "planning_validation"]
+    assert "1 lần gọi" in text(items)

@@ -1744,3 +1744,64 @@
   token mô phỏng; lượt sau0 call mới. Tài khoản fixture tạo riêng và đã xóa, không sửa
   hội thoại user. Ruff/format, Node syntax, Compose config và diff check đạt. Chưa gọi
   LLM thật hoặc test browser/semantic retention của summary; không tự restart/commit/push.
+
+### 2026-11-03 — Sửa worker chưa khởi tạo LangSmith tracing
+
+- User test CHAT_OK gặp RuntimeError ở stream_assistant_response khi lấy trace_config.
+  Web lifespan đã gọi start_langsmith_tracing nhưng worker riêng chỉ mở checkpoint/tools;
+  singleton tracing là trạng thái riêng từng process nên worker vẫn None, kể cả khi tracing
+  tắt mặc định. Lỗi xảy ra ở bước chuẩn bị trước graph model, không do query hoặc DeepSeek.
+- scripts/run_background_worker.py khởi tạo tracing trước checkpoint/tool và trước khi
+  nhận job; đóng/flush tracing khi shutdown. Giữ hành vi enabled/key hiện có, không lazy
+  bật export, không yêu cầu LangSmith key và không sửa accessor để che thiếu startup.
+- Bổ sung regression trong tests/test_langsmith_tracing.py hiện có: worker không chạy
+  FastAPI lifespan vẫn lấy được trace_config; tracing bật/tắt, --once/run_forever, model
+  giả trả CHAT_OK và worker ném lỗi; client được flush/close và singleton reset khi thoát.
+  Mock queue/DB/tool lifecycle và model/provider ở biên, không đụng job hoặc mail thực tế.
+- 17 test tracing/jobs đạt; Ruff/format và git diff --check đạt. Không gọi LLM/LangSmith
+  thật, không migration/dependency/file mới; chưa restart app hoặc commit/push. User restart
+  worker và gửi yêu cầu mới; không cần đổi query hoặc thêm biến/key vào .env.
+
+### 2026-11-03 — Chẩn đoán web thiếu citation, chặn retry và báo partial
+
+- User yêu cầu sửa sau khi hai tool search_web trả web_search_missing_sources nhưng Agent
+  nói đã thử3 lần và hiển thị hoàn thành. Đọc đúng run4c40a9d1-8975-4f7a-aa44-d685d9cd44ff
+  của user@personalagent.vn:2 call HTTP200/OpenAI/search1 mỗi call, sources[] và actual cost.
+  Không sửa run/hội thoại lịch sử, key, model, provider/engine hoặc quota/budget.
+- Tái hiện đúng một paid call bằng WebSearchHandler và transport capture: query thời tiết
+  Hà Nội tối03/11/2026, request gen-1793695288-NEHQXjRdkD8PnmmyrzfI,5040 token,
+  search_requests1, cost0.0114535USD. Provider trả text dự báo hoàn chỉnh nhưng không có
+  annotations và không có link trong content. Parser chuẩn nested url_citation không bỏ
+  sót nguồn ở mẫu này; không thêm parser phỏng đoán hay nhận link Markdown là nguồn xác minh.
+  Bản response đã bỏ reasoning cùng request/result/replay-result ở thư mục Git-ignored
+  data/web-search-testing/20261103-d903ee36/. Không gọi paid call thứ hai.
+- agent_core/tools/web_search.py: ghi bounded response_diagnostics (request ID, finish,
+  message fields, annotations present/count, reject reasons, độ dài; excerpt chỉ khi thiếu
+  nguồn), search_performed/source_status/retryable. Không copy headers/API key/reasoning;
+  excerpt loại key nếu xuất hiện. Prompt nhấn mạnh dùng trang web/URL kể cả thời tiết,
+  không coi widget không có citation là đủ. Provider vẫn có thể không trả nguồn.
+- graph/runtime.py bỏ diagnostics ra khỏi model observation; record/journal giữ theo owner
+  để chẩn đoán, không cho model dùng text dự báo chưa có nguồn như evidence. Giữ usage thật
+  và fail-closed khi thiếu nguồn/search proof/usage; không tự chuyển provider hoặc engine.
+- graph/runner.py: sau thiếu nguồn, lọc schema web và chặn dispatch lại cùng task dù model
+  đổi query, cùng batch hoặc cố tạo plan mới để retry. Trả web_search_retry_blocked/usage0,
+  không RPC/journal begin/day tool count cho lượt bị chặn. Scope theo observation_offset
+  task, worker độc lập trong plan cũ không bị chặn lây; yêu cầu mới có thể thử lại.
+- Final chưa có web evidence sau lỗi phát budget.partial/web_sources_missing; DB stop_reason
+  theo recorder sẵn có, SSE và reload dùng partial. Nếu root không plan và toàn observation
+  đều lỗi, host tạo thông báo thiếu nguồn với số actual missing-source calls, không dùng lời
+  model bịa ba lần hoặc dự báo. Các task/observation thành công khác vẫn được tổng hợp.
+  frontend footer partial đổi sang lý do chung thay vì luôn gán hết ngân sách; API tool card
+  phân biệt lượt bị chặn với search thực sự. Không đổi trạng thái lịch sử hoặc DB schema.
+- Dùng tests hiện có: parser chuẩn/URL loại/no annotations, diagnostics redaction và không
+  lộ unverified content/reasoning vào model; chặn retry cùng batch/lượt kế tiếp, plan bypass,
+  task scope và recovery evidence. Sửa expectation context payload trong test_agent_status
+  đang thiếu4 field đã thêm ở đợt budget trước; không đổi contract implementation để né test.
+-124 test mục tiêu đạt (tools/executor/budget/runtime/recorder/status/planner/worker/jobs/
+  timeline); Ruff/format, Node syntax và diff check. Replay bằng MockTransport trên response
+  thật đạt, không gọi API thêm. Không chạy full suite/browser E2E hoặc test engine khác.
+  Không tạo file code/test mới, migration/dependency; giữ các thay đổi worker/tracing đang
+  có sẵn, chỉ append manual/notes. Chưa restart app/worker hoặc stage/commit/push.
+- Giới hạn: đợt này sửa chẩn đoán, chống retry và trạng thái thiếu bằng chứng; không bảo đảm
+  nhà cung cấp luôn trả citation hoặc câu thời tiết đã trả lời thành công. Prompt mới chưa
+  có paid retest. Lỗi missing_usage riêng vẫn hoãn, unknown billing vẫn dừng paid calls.

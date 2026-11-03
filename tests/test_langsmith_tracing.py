@@ -1,8 +1,12 @@
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
 from langchain_core.callbacks import BaseCallbackHandler
+from pydantic import SecretStr
 
 from agent_core.graph import stream_agent_graph
 from agent_core.llm.types import LLMChunk, ModelMessage
@@ -241,3 +245,122 @@ async def test_agent_graph_uses_trace_callback_without_exposing_ids_in_tags() ->
 
     assert callback.names
     assert any(isinstance(item, LLMChunk) and item.content == "Đã trace." for item in items)
+
+
+@pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled"])
+@pytest.mark.parametrize("once", [True, False], ids=["once", "forever"])
+@pytest.mark.parametrize("failed", [False, True], ids=["chat-ok", "worker-error"])
+async def test_background_worker_initializes_tracing_before_agent_and_closes_it(
+    monkeypatch,
+    enabled,
+    once,
+    failed,
+):
+    import asyncio
+
+    from backend.services import langsmith_tracing as tracing
+    from scripts import run_background_worker as worker_cli
+
+    service_class = tracing.LangSmithTracingService
+    services, clients = [], []
+    entered = []
+
+    def service_factory(**kwargs):
+        service = service_class(**kwargs, client_factory=FakeClient, tracer_factory=FakeTracer)
+        services.append(service)
+        if service.client is not None:
+            clients.append(service.client)
+        return service
+
+    settings = SimpleNamespace(
+        langsmith_tracing_enabled=enabled,
+        langsmith_api_key=SecretStr("test-key"),
+        langsmith_endpoint="https://example.test",
+        langsmith_project="worker-test",
+        langsmith_sampling_rate=1.0,
+        auth_secret_key=SecretStr("worker-test-secret-with-32-characters"),
+        app_env="test",
+        background_worker_heartbeat_path=None,
+        background_queue_name="test",
+        background_worker_poll_seconds=1,
+        background_job_lease_seconds=30,
+        background_job_control_poll_seconds=1,
+        background_job_retry_base_seconds=1,
+        background_job_retry_max_seconds=60,
+    )
+    monkeypatch.setattr(tracing, "_tracing_service", None)
+    monkeypatch.setattr(tracing, "LangSmithTracingService", service_factory)
+    monkeypatch.setattr(tracing, "get_settings", lambda: settings)
+    monkeypatch.setattr(worker_cli, "get_settings", lambda: settings)
+    monkeypatch.setattr(worker_cli, "default_worker_id", lambda: "test-worker")
+    monkeypatch.setattr(worker_cli, "PostgresJobQueue", lambda: object())
+    monkeypatch.setattr(worker_cli, "build_background_job_registry", lambda: object())
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda *args: None)
+
+    class Model:
+        provider, model = "test", "controlled-chat-model"
+
+        async def stream(self, messages, **kwargs):
+            yield LLMChunk(content="CHAT_OK", finish_reason="stop")
+
+    async def execute():
+        # Same accessor used by stream_assistant_response; no FastAPI lifespan is run.
+        service = tracing.get_langsmith_tracing()
+        entered.append(service)
+        assert service.enabled is enabled
+        if failed:
+            raise RuntimeError("controlled worker error")
+        user_id, run_id = uuid4(), uuid4()
+        items = [
+            item
+            async for item in stream_agent_graph(
+                model=Model(),
+                messages=[{"role": "user", "content": "Only answer CHAT_OK. No tools or plan."}],
+                registry=ToolRegistry(),
+                context=ToolContext(user_id, uuid4(), "user", run_id=run_id),
+                react_enabled=True,
+                trace_config=service.trace_config(
+                    run_id=run_id,
+                    user_id=user_id,
+                    provider="test",
+                    model="controlled-chat-model",
+                ),
+            )
+        ]
+        assert "".join(item.content for item in items if isinstance(item, LLMChunk)) == "CHAT_OK"
+        return True
+
+    class Worker:
+        def __init__(self, **kwargs):
+            self.worker_id, self.queue_name = kwargs["worker_id"], kwargs["queue_name"]
+
+        async def run_once(self):
+            return await execute()
+
+        async def run_forever(self, stop):
+            await execute()
+
+    monkeypatch.setattr(worker_cli, "BackgroundWorker", Worker)
+    for name in (
+        "start_langgraph_checkpoints",
+        "start_tool_connections",
+        "close_tool_connections",
+        "close_langgraph_checkpoints",
+        "close_reranker_client",
+        "close_embedding_client",
+    ):
+        monkeypatch.setattr(worker_cli, name, AsyncMock())
+    dispose = AsyncMock()
+    monkeypatch.setattr(worker_cli, "engine", SimpleNamespace(dispose=dispose))
+
+    if failed:
+        with pytest.raises(RuntimeError, match="controlled worker error"):
+            await worker_cli.run(once=once)
+    else:
+        await worker_cli.run(once=once)
+
+    assert len(services) == 1 and entered == services
+    assert tracing._tracing_service is None
+    assert not services[0].enabled
+    assert all(client.flushed and client.closed for client in clients)
+    dispose.assert_awaited_once()

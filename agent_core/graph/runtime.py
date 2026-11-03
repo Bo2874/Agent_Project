@@ -277,6 +277,10 @@ async def _execute_tool(
 
 def _tool_result_message(request: ToolCallRequest, result: ToolResult) -> ModelMessage:
     data = dict(result.data)
+    if request.name == "search_web":
+        # Diagnostic excerpts can contain an unsourced answer. Keep them in the
+        # owner-scoped tool record, never expose them as usable model evidence.
+        data.pop("response_diagnostics", None)
     if request.name in {"search_documents", "summarize_documents"}:
         # Durable source bindings belong to the backend, not repeated model input.
         # In particular, a 64-chunk summary must not spend its context on 64 UUID records.

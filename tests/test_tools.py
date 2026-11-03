@@ -173,6 +173,75 @@ async def test_web_search_missing_usage_keeps_billing_unknown_after_paid_post():
     assert len(requests) == 2 and result.data["billing_status"] == "unknown"
 
 
+@pytest.mark.parametrize(
+    "annotations",
+    [
+        None,
+        [],
+        [
+            {"type": "url_citation", "url_citation": {"url": "javascript:alert(1)"}},
+        ],
+    ],
+)
+async def test_web_missing_sources_records_diagnostics_without_leaking_answer_to_model(annotations):
+    from agent_core.graph import ToolCallRequest
+    from agent_core.graph.runtime import _tool_result_message
+
+    payload = web_payload()
+    payload["id"] = "gen-test-diagnostic"
+    message = payload["choices"][0]["message"]
+    message["content"] = "UNVERIFIED_WEATHER SECRET"
+    message["reasoning_details"] = [{"data": "NEVER_RETAIN_REASONING"}]
+    if annotations is None:
+        message.pop("annotations")
+    else:
+        message["annotations"] = annotations
+    transport, requests = web_transport(payload)
+    result = await WebSearchHandler(
+        WebSearchConfig(api_key=SecretStr("SECRET")), transport=transport
+    )(
+        ToolContext(user_id=uuid4(), conversation_id=uuid4(), user_role="user"),
+        {"query": "Weather tonight"},
+    )
+    assert result.error_code == "web_search_missing_sources" and len(requests) == 2
+    assert result.data["search_performed"] is True
+    assert result.data["source_status"] == "missing" and result.data["retryable"] is False
+    diagnostic = result.data["response_diagnostics"]
+    assert diagnostic["request_id"] == "gen-test-diagnostic"
+    assert diagnostic["annotations_present"] == (annotations is not None)
+    assert diagnostic["answer_excerpt"] == "UNVERIFIED_WEATHER [REDACTED]"
+    assert "SECRET" not in repr(result) and "NEVER_RETAIN_REASONING" not in repr(result)
+    request = ToolCallRequest(id="c1", name="search_web", arguments={}, raw_arguments="{}")
+    observation = _tool_result_message(request, result)["content"]
+    assert "UNVERIFIED_WEATHER" not in observation and "response_diagnostics" not in observation
+    assert "Hãy thử lại" not in result.content
+
+
+def test_web_source_parser_reports_rejections_and_preserves_canonical_citations():
+    from agent_core.tools.web_search import _sources
+
+    annotations = web_payload()["choices"][0]["message"]["annotations"]
+    invalid = [
+        None,
+        {"type": "other"},
+        {"type": "url_citation"},
+        {
+            "type": "url_citation",
+            "url_citation": {"url": "https://user:password@example.com"},
+        },
+    ]
+    rejected = {}
+    assert _sources([*invalid, *annotations, *annotations], rejected) == [
+        {"url": "https://www.python.org/", "title": "Python"},
+    ]
+    assert rejected == {
+        "not_url_citation": 2,
+        "citation_not_object": 1,
+        "unsafe_or_incomplete_url": 1,
+        "duplicate_url": 1,
+    }
+
+
 @pytest.mark.parametrize("status", [401, 402, 403, 429, 500])
 async def test_web_search_sanitizes_errors(status):
     transport, _ = web_transport({"error": {"message": "SECRET provider detail"}}, status=status)

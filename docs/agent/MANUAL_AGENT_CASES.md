@@ -1,5 +1,10 @@
 # Kiểm thử agent ReAct và M4
 
+Bản vá2026-11-03: worker riêng khởi tạo và đóng LangSmith tracing giống vòng đời web.
+Không cần bật tracing hoặc thêm LangSmith key để chat; khi tắt, trace_config trả None.
+Nếu gặp lỗi cũ “LangSmith tracing service chưa được khởi động”, restart terminal worker
+bằng `python -m scripts.run_background_worker` rồi gửi yêu cầu mới để test lại CHAT_OK.
+
 ## Cấu hình hiện tại — 2026-11-02
 
 History mới dùng LLM DeepSeek (`llm-history-v1`), vẫn giữ ít nhất20 message gần nhất và
@@ -348,3 +353,29 @@ thêm LLM. Chỉ chạy lại W02 khi quota đủ. Report: `data/agent-testing/s
 hard-kill process, browser E2E, Docker build hoặc distributed load. Chưa nghiệm thu toàn M4.
 
 Không chạy lại paid suite chỉ để kiểm tra một thay đổi tài liệu hoặc định dạng report.
+
+## 2026-11-03 — Tìm web thiếu nguồn và retry
+
+- Giữ OpenRouter key, model OpenAI/native và không fallback engine. Prompt yêu cầu trang
+  web/URL nguồn, kể cả câu hỏi thời tiết; điều này không bảo đảm provider luôn trả citation.
+- Nếu provider xác nhận search nhưng không có URL citation hợp lệ: tool vẫn báo
+  `web_search_missing_sources`, thêm search_performed/source_status/retryable và chẩn đoán
+  bounded (request ID, finish reason, annotations, lý do loại nguồn). Excerpt chưa có nguồn
+  chỉ lưu trong ToolCall theo owner, không đưa vào observation cho model dùng làm bằng chứng.
+  Không lưu API key/headers hoặc reasoning. Link Markdown đơn thuần không thay thế citation.
+- Trong ReAct, bỏ schema search_web và chặn dispatch lại sau lỗi thiếu nguồn trong cùng
+  task; đổi query hoặc tạo plan sau lỗi để gọi lại web cũng không vượt chặn. Các task độc lập
+  đã có trong plan vẫn chạy và yêu cầu mới được thử lại. Lượt bị chặn không POST, không cộng
+  phí/token provider hoặc tool-call quota. Tool card cho biết không gọi lại, không phải search mới.
+- Run chưa có web evidence sau lỗi được đánh dấu partial, giữ qua SSE/history/reload.
+  Với lượt chỉ có tìm web thất bại, thông báo cuối do host tạo và đếm các lỗi search thực sự,
+  không dùng lời model tự nhận đã thử ba lần. Không tự nhận đã có dự báo xác minh.
+- Test tay: hỏi Hà Nội tối nay có ngày cụ thể; nếu thiếu nguồn phải báo chưa hoàn tất,
+  không có lần POST trả phí thứ hai nhằm chữa cùng lỗi. Nguồn hợp lệ vẫn trả lời bình thường.
+  Thử plan có task web lỗi và task count độc lập: count vẫn được xử lý, web không thành công
+  phải được nêu rõ. Restart web và worker; không migration/reindex.
+- Chỉ một lần paid diagnostic trong đợt này: request gen-1793695288-NEHQXjRdkD8PnmmyrzfI,
+  HTTP200/OpenAI/search1,5040 token,0.0114535USD. Response thực sự không có annotations hoặc
+  link trong content; parser không bỏ sót citation ở lần này. Raw đã bỏ reasoning và replay
+  offline ở data/web-search-testing/20261103-d903ee36/ (Git ignore). Chưa gọi paid lại sau
+  khi đổi prompt, chưa nghiệm thu khả năng luôn lấy được nguồn của provider.

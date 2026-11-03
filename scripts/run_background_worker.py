@@ -24,6 +24,10 @@ from backend.services.langgraph_checkpoints import (
     close_langgraph_checkpoints,
     start_langgraph_checkpoints,
 )
+from backend.services.langsmith_tracing import (
+    close_langsmith_tracing,
+    start_langsmith_tracing,
+)
 
 
 def default_worker_id() -> str:
@@ -60,6 +64,7 @@ async def run(*, once: bool) -> None:
         heartbeat_handler=heartbeat,
     )
     try:
+        start_langsmith_tracing()
         await start_langgraph_checkpoints()
         await start_tool_connections()
         if once:
@@ -76,6 +81,7 @@ async def run(*, once: bool) -> None:
         await close_langgraph_checkpoints()
         await close_reranker_client()
         await close_embedding_client()
+        await close_langsmith_tracing()
         if heartbeat_path is not None:
             heartbeat_path.unlink(missing_ok=True)
         await engine.dispose()
