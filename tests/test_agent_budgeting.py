@@ -71,6 +71,68 @@ def text(items):
     return "".join(i.content for i in items if isinstance(i, LLMChunk))
 
 
+async def test_unbounded_react_keeps_reading_same_error_beyond_eight_turns():
+    handler = AsyncMock(
+        return_value=ToolResult.failure(
+            "Controlled repeated error",
+            error_code="fixture_failure",
+            usage=TokenUsage(),
+        )
+    )
+    model = Model(
+        [
+            *[actions("search_web") for _ in range(40)],
+            [LLMChunk(content="Finished after observations", finish_reason="stop")],
+        ]
+    )
+    items = await run(
+        model,
+        handler=handler,
+        limits=AgentLimits(max_total_tokens=2_000_000),
+    )
+    assert model.calls == 41
+    assert handler.await_count == 40
+    assert text(items) == "Finished after observations"
+
+
+async def test_unbounded_react_still_obeys_caller_cancellation():
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def blocked(*args):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    model = Model([actions("search_web")])
+    job = asyncio.create_task(
+        run(
+            model,
+            handler=blocked,
+            limits=AgentLimits(
+                max_steps=None,
+                max_duration_seconds=None,
+                max_identical_tool_calls=None,
+                max_repeated_observations=None,
+                max_total_tokens=80_000,
+            ),
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        job.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await job
+        assert stopped.is_set()
+        assert model.calls == 1
+    finally:
+        if not job.done():
+            job.cancel()
+            await asyncio.gather(job, return_exceptions=True)
+
+
 async def test_two_paid_calls_are_admitted_sequentially_and_previous_result_survives():
     handler = AsyncMock(
         return_value=ToolResult.success(
@@ -338,6 +400,84 @@ def test_missing_web_source_policy_is_scoped_to_task_and_recognizes_recovery():
     }
     assert _unresolved_web_sources([failure])
     assert not _unresolved_web_sources([failure, success])
+
+
+async def test_retrieval_sources_without_inline_citations_are_a_successful_observation():
+    handler = AsyncMock(
+        return_value=ToolResult.success(
+            "Published forecast from a retrieved page.",
+            data={
+                "source_status": "retrieved",
+                "citations": [],
+                "sources": [{"url": "https://example.com/forecast", "title": "Forecast"}],
+            },
+            usage=TokenUsage(total_tokens=120),
+        )
+    )
+    model = Model(
+        [actions("search_web"), [LLMChunk(content="Sourced answer", finish_reason="stop")]]
+    )
+    items = await run(model, handler=handler)
+    assert text(items) == "Sourced answer"
+    handler.assert_awaited_once()
+    assert not any(
+        isinstance(i, AgentLoopEvent)
+        and i.progress
+        and i.progress.get("stop_reason") == "web_sources_missing"
+        for i in items
+    )
+
+
+def test_web_source_footer_uses_structured_sources_and_escapes_markdown():
+    from backend.services.agent_runs import web_search_source_footer
+
+    footer = web_search_source_footer(
+        [
+            {"url": "https://example.com/a(b)", "title": "Forecast [one]"},
+            {"url": "https://example.com/a(b)", "title": "Duplicate"},
+            {"url": "javascript:alert(1)", "title": "Unsafe"},
+        ]
+    )
+    assert footer.startswith("\n\n**Nguồn đã tra cứu**")
+    assert footer.count("[W1]") == 1 and "[W2]" not in footer
+    assert r"Forecast \[one\]" in footer
+    assert "https://example.com/a%28b%29" in footer
+    assert "javascript:" not in footer and "Duplicate" not in footer
+    assert web_search_source_footer([]) == ""
+
+
+async def test_web_source_restore_query_is_scoped_to_owned_run(monkeypatch):
+    from backend.services import agent_runs
+
+    captured = []
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        async def scalars(self, statement):
+            captured.append(statement)
+            return SimpleNamespace(
+                all=lambda: [
+                    {"sources": [{"url": "https://example.com/source", "title": "Source"}]},
+                    {"sources": [{"url": "https://example.com/source", "title": "Repeated"}]},
+                ]
+            )
+
+    owner, conversation, run_id = uuid4(), uuid4(), uuid4()
+    monkeypatch.setattr(agent_runs, "SessionFactory", Session)
+    sources = await agent_runs.load_web_search_sources(
+        owner=owner, conversation_id=conversation, agent_run_id=run_id
+    )
+    assert sources == [{"url": "https://example.com/source", "title": "Source"}]
+    query = captured[0]
+    assert {owner, conversation, run_id}.issubset(set(query.compile().params.values()))
+    sql = str(query)
+    assert "conversations.user_id" in sql and "tool_calls.status" in sql
+    assert "agent_runs.id" in sql and "conversations.id" in sql
 
 
 async def test_missing_sources_cannot_be_retried_through_a_new_plan():

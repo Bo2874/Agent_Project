@@ -1805,3 +1805,131 @@
 - Giới hạn: đợt này sửa chẩn đoán, chống retry và trạng thái thiếu bằng chứng; không bảo đảm
   nhà cung cấp luôn trả citation hoặc câu thời tiết đã trả lời thành công. Prompt mới chưa
   có paid retest. Lỗi missing_usage riêng vẫn hoãn, unknown billing vẫn dừng paid calls.
+
+### 2026-11-03 — Retry có giới hạn cho DeepSeek quá tải
+
+- User gặp HTTP503 ở extract_memory_candidates và node model của Agent. Trước đây adapter
+  đặt SDK max_retries=0 và không có retry riêng, nên lỗi tạm thời làm thất bại ngay call.
+  Giữ SDK retry bằng0; thêm một vòng retry duy nhất trong agent_core/llm/deepseek.py.
+- Chỉ retry APIStatusError có HTTP429/500/502/503 trước khi nhận bất kỳ AIMessageChunk nào.
+  Mặc định thêm2 lần, tổng tối đa3 request/call; chờ1 rồi2 giây với jitter tối đa0,25 giây.
+  Retry-After hỗ trợ số giây và HTTP-date; không gọi sớm hơn chỉ dẫn. Nếu header yêu cầu
+  chờ hơn30 giây thì dừng thay vì vượt giới hạn hoặc gọi sớm. Outer timeout/cancel của
+  memory/history/Agent vẫn có hiệu lực. Không fallback provider/model, không lặp tool.
+- Không retry nội dung stream đã bắt đầu, kể cả chunk rỗng/reasoning/usage/tool arguments;
+  không phát lại timeout, connection error, HTTP408/504 hoặc lỗi auth/balance/request.
+  Sau503 còn tồn tại, thông báo rõ provider đang quá tải và số lần gọi thực tế. Lỗi cuối
+  giữ cause để debug; warning retry chỉ có HTTP status, số lần và delay, không có prompt/key.
+- Thêm DEEPSEEK_MAX_RETRIES=2, DEEPSEEK_RETRY_BACKOFF_SECONDS=1 trong Settings/factory và
+  .env.example; Compose app/worker cùng nhận biến DEV_ tương ứng từ .env.docker.example.
+  Mặc định có hiệu lực khi restart, không cần sửa .env thật. Agent, memory extraction,
+  history compression và các luồng dùng chung create_chat_model đều hưởng cùng chính sách.
+  Retry transport nằm trong một bước logic, không tăng số bước ReAct hoặc tạo tool call mới.
+- Bổ sung tests/test_deepseek.py hiện có: lỗi LangChain OpenAIAPIError giống traceback,
+  hồi phục/exhaustion, giữ nguyên tools/JSON/user/messages, Retry-After, hủy trong lúc chờ,
+  không retry stream dở dang hoặc lỗi chưa rõ kết quả, không lộ dữ liệu qua warning.
+  Integration dùng adapter thật với stream provider giả: memory hồi phục; Agent gặp503,
+  retry rồi gọi tool đúng1 lần và tạo câu trả lời cuối. Không gọi DeepSeek/OpenRouter thật.
+- 137 test DeepSeek/memory extraction/history compression/graph runtime/budget đạt;
+  Ruff check/format, kiểm YAML Compose app/worker dùng chung retry và git diff --check đạt.
+  Pytest có warning cache_dir vì chủ động tắt cacheprovider; không phải lỗi kiểm thử.
+  Không thêm file, dependency, migration hay đổi dữ liệu hội thoại; chưa restart/commit/push.
+- Giới hạn: retry giảm gián đoạn tạm thời, không bảo đảm nhà cung cấp hồi phục trong3 lần.
+  Không thay cơ chế checkpoint/journal cho call đã kết thúc bằng lỗi hoặc chưa rõ kết quả;
+  sau khi provider hết lỗi, user gửi yêu cầu mới. Chưa live-test tình trạng quá tải thực tế.
+  Đối chiếu mã lỗi: https://api-docs.deepseek.com/quick_start/error_codes/.
+
+### 2026-11-03 — Web search dùng Responses và nguồn do backend quản lý
+
+- User cho phép gọi search_web thật để sửa lỗi citation. Đối chiếu tài liệu OpenAI/OpenRouter
+  và probe bằng key thật, giữ model openai/gpt-5.4-mini, first-party OpenAI/native và không
+  fallback engine. OpenRouter trả HTTP400 khi gửi include=web_search_call.action.sources:
+  field này chưa nằm trong danh sách include hợp lệ của endpoint. Không đưa cờ đó vào code.
+- Probe Responses với openrouter:web_search/native vẫn có weather lookup nhưng thiếu nguồn.
+  Probe tool native web_search của Responses đã có URL annotations; thử domain filters trả
+  nguồn và thử không filters với chỉ dẫn dùng trang công khai cũng trả nguồn. Production dùng
+  web_search không giới hạn sẵn domain, yêu cầu trang dự báo thay vì chỉ widget/feed. Tối đa2
+  native calls trong một request như trước, không POST lại tự động để chữa lỗi thiếu nguồn.
+- agent_core/tools/web_search.py: POST /responses, input/max_output_tokens; đọc output_text
+  và flat annotations, các action.sources nếu response cung cấp. Chuẩn hóa citations,
+  retrieved_sources, sources hợp nhất/khử trùng lặp; source_status=cited/retrieved/missing.
+  Không lấy URL từ prose/Markdown làm bằng chứng. Giữ parser nested Chat Completions ở
+  biên chuẩn hóa cho format cũ; runtime mới dùng Responses. Nguồn không có URL/định danh
+  truy xuất được (ví dụ chỉ tên feed) chưa được nhận thay cho nguồn web có thể đối chiếu.
+- Native execution được kiểm qua preflight OpenAI endpoint, provider pin/allow_fallbacks=false,
+  model identity, completed web_search_call và usage server_tool_use_details. Responses thật
+  không có provider field; không đòi field không được trả về. Map input/output/cache tokens
+  sang TokenUsage ổn định; giữ actual cost/search_requests, không biến unknown usage thành0.
+- Runtime loại diagnostics và hai danh sách nguồn lặp khỏi observation, giữ sources chuẩn hóa.
+  Runner chỉ xử lý web_search_missing_sources khi tool thật sự lỗi; thiếu inline citation
+  nhưng có retrieval sources hợp lệ được nhận là thành công. Nguồn trống vẫn partial/chặn
+  tự gọi lại cùng task. Prompt v8 giải thích nguồn tra cứu không chứng minh mọi nhận định,
+  không tự tạo footer/URL; giữ citation có sẵn, phân biệt ngày/giờ/địa điểm dự báo.
+- backend/services/agent_runs.py truy xuất sources từ ToolCall completed theo đúng owner,
+  conversation/run, gồm tool events worker được relay về root; chuẩn hóa/khử trùng lặp lại.
+  Footer Markdown escape title/URL, nhãn W1... và Nguồn đã tra cứu do backend tạo. chat.py
+  phát footer qua delta rồi lưu cùng content; đọc nguồn lại từ DB khi resume. Không đổi schema,
+  API response contract hay frontend; footer dùng renderer hiện có, không giả thành citation
+  theo từng câu. Source metadata nằm trong result_data đã có sẵn và content cuối.
+- Hai lần gọi chính WebSearchHandler sau sửa bằng key thật đều đạt: thời tiết Hà Nội có2
+  nguồn,9051 token,0.0171904USD; Python3.14.0 có1 nguồn python.org,8937 token,0.0157999USD.
+  Tổng hai case này0.0329903USD. Ba probe Responses HTTP200 trước sửa có usage/cost riêng;
+  tất cả request/response đã bỏ key/headers/reasoning nằm ở data/web-search-testing/20261103-sources
+  (Git ignore). Không coi số liệu dự báo trong test là đã kiểm chứng nội dung từng trang.
+- 125 test tools/budget/status/recorder/graph/jobs/planner/worker đạt, có nguồn riêng không
+  inline citation, URL xấu, thiếu nguồn, thiếu execution proof/usage, không retry mù, owner query
+  và footer. Cập nhật test_agent_status theo SYSTEM_PROMPT_VERSION thay literalv7. Ngoài các
+  file đã dự kiến, chỉ thêm chỉnh expectation trong test hiện có này; không tạo file code/test mới.
+- API replay dùng auth/SSE/PostgreSQL queue-worker thật với model giả và response OpenRouter
+  thật đã lưu: footer1 lần, stream trùng message reload, owner khác không lấy được sources;
+  tài khoản fixture đã xóa. Không có API inference mới trong replay. Đây không phải LLM E2E.
+- Test toàn luồng bằng DeepSeek thật ban đầu bị proxy môi trường của tiến trình test chặn;
+  bỏ proxy chỉ trong tiến trình kiểm tra rồi gặp503/timeout memory và partial_time_limit ở
+  model chính trước khi gọi web. Fixture đã xóa. Không sửa proxy/.env/model/quota của user.
+  Chưa xác nhận toàn luồng live hay browser; không tự restart/stage/commit/push.
+- Thử lại API/worker với output cap2048 chỉ trong factory của tiến trình test (không sửa
+  cấu hình production) vẫn timeout memory/503 và partial_time_limit trước web. Kết quả ở
+  LIVE_REPORT-capped.json, fixture đã xóa. Không suy ra chỉ cần giảm max_tokens là hết503.
+
+
+### 2026-11-04 — Bỏ trần bước, tổng thời gian và chống lặp của Agent
+
+- User chốt bỏ cả ba cơ chế tự dừng; khi chạy lâu user chủ động bấm Dừng. Không dùng một
+  số hữu hạn rất lớn để thay cap. AgentLimits/AgentBudget/Settings nhận None; env trống,
+  none/null/unlimited đều chuẩn hóa về None. Đã để trống bốn AGENT_MAX_* tương ứng trong
+  .env hiện tại, đồng bộ env mẫu và DEV_ Compose app/worker; không đổi key/model của user.
+- Root/task bỏ xét step/time/repeated-call/repeated-observation khi capNone; graph không
+  còn recursion cap hữu hạn. create_plan không chia cap bước/tool count/thời gian cho task
+  khi host unbounded, nên plan4 task14 bước không còn bị từ chối chỉ vì còn6 bước như lỗi cũ.
+  Contract task cho phép null, checkpoint JSON giữ null; finite policy cũ vẫn hoạt động.
+- Giữ ngân sách token cả run7.969.672 mặc định, nay độc lập với max_steps; giữ token task,
+  context/output/safety, schema/quyền/approval, rate limit/phút, lease và journal chống phát lại
+  outcome/billing chưa rõ. Giới hạn số task/song song và phạm vi tài liệu không đổi.
+  Timeout RPC provider/model/tool riêng vẫn có hiệu lực; không coi bỏ deadline tổng là bỏ
+  timeout mạng. Không có thay đổi quota ngày trong đợt này (đã bỏ ở đợt trước).
+- Worker cấp step ID động, có journal/row lock để pin ID khi resume; giữ luồng lease finite
+  cho checkpoint cũ. Review tái hiện terminal child có progress-only step cao hơn model_steps;
+  đã sửa khôi phục high-water từ step_number checkpoint để root không dùng lại số đó.
+  Run đã thành công/failed trước fan-in không tự gọi lại tool chỉ vì root bị ngắt.
+- Summary bridge không tự đặt lại7 bước/120s. summarize_documents có timeout tổngNone khi
+  root unbounded; search_documents giữ timeout RPC hữu hạn. ToolExecutionPolicy hỗ trợNone,
+  xử lý cả TimeoutError từ RPC bên trong mà không lỗi định dạng None. Map/reduce vẫn giữ
+  timeout provider từng lần gọi, token budget và giới hạn toàn văn64 chunk như trước.
+- Status/SSE trả null cap/remaining; UI hiển thị bước hiện tại và thời gian đã chạy, không
+  hiện /null hay thời gian còn lại giả. Nút Dừng/cancel tiếp tục hủy và drain model/tool/worker;
+  không hoàn tác hành động ngoài đã hoàn thành trước khi cancel. Đóng tab không tự dừng job.
+- Regression được chạy đỏ trước, rồi xanh: plan4 task;41 vòng model với40 observation giống
+  nhau; task dài/phụ thuộc/song song, cancel, fan-in resume thành công và token-exhaustion,
+  summary unbounded, timeout bên trong và status JSONnull. Toàn pytest1051 passed/49,81s;
+  warning cache_dir do chủ động tắt cacheprovider, không có test failed. Ruff check/format,
+  Node syntax, Compose config và git diff --check đạt; secret scan diff đạt, .env vẫn Git ignore.
+- Integration dùng OperationJournal/AgentRunRecorder/AsyncPostgresSaver thật và model fixture:
+  ngắt sau child fan-in, resume bằng recorder mới không lặp tool;6 model-step ID duy nhất;
+  4 allocator đồng thời cấp ID riêng và journal mới đọc lại ID đã pin. Fixture DB/checkpoint đã
+  xóa. Hai lỗi review đã sửa, review độc lập cuối không còn finding trong phạm vi task này.
+- Không tạo file tracked mới/dependency/migration, không reindex. Đã cập nhật PROJECT_PLAN,
+  manual Agent và Docker README; không restart, stage/commit/push. Không gọi LLM trả phí,
+  chưa thử browser/LLM E2E, hard-kill/distributed load hay build Docker cho thay đổi này.
+  Cần restart cả web và worker, rồi gửi request mới. Resume checkpoint cũ vẫn dùng cap đã pin;
+  không sửa lịch sử run để ép thành unbounded. Đây là thay đổi policy, không bảo đảm mọi yêu
+  cầu luôn hoàn tất khi provider/quyền/dữ liệu/token không đủ.

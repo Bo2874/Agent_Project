@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
+import logging
+import math
+import random
 from collections.abc import AsyncIterator, Mapping
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from langchain_core.messages import (
@@ -15,6 +21,7 @@ from langchain_core.messages import (
 )
 from langchain_core.runnables import Runnable
 from langchain_deepseek import ChatDeepSeek
+from openai import APIStatusError
 
 from agent_core.llm.types import (
     LLMChunk,
@@ -23,6 +30,33 @@ from agent_core.llm.types import (
     ModelToolDefinition,
     TokenUsage,
 )
+
+logger = logging.getLogger(__name__)
+_RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503})
+_MAX_RETRY_DELAY_SECONDS = 30.0
+
+
+def _retry_delay(error: APIStatusError, retry: int, base_seconds: float) -> float | None:
+    """Bound backoff, respecting Retry-After without retrying earlier than requested."""
+    delay = min(
+        base_seconds * 2**retry + random.uniform(0, base_seconds / 4), _MAX_RETRY_DELAY_SECONDS
+    )
+    retry_after = error.response.headers.get("retry-after")
+    if retry_after:
+        try:
+            seconds = float(retry_after)
+        except ValueError:
+            try:
+                when = parsedate_to_datetime(retry_after)
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=UTC)
+                seconds = (when - datetime.now(UTC)).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                return delay
+        if not math.isfinite(seconds) or seconds > _MAX_RETRY_DELAY_SECONDS:
+            return None
+        delay = max(delay, seconds)
+    return delay
 
 
 class LLMConfigurationError(RuntimeError):
@@ -158,6 +192,8 @@ class LangChainDeepSeekChatModel:
         model: str,
         thinking: bool,
         max_tokens: int,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 1.0,
         chat_model: ChatDeepSeek | None = None,
     ) -> None:
         self.api_key = api_key.strip()
@@ -165,6 +201,10 @@ class LangChainDeepSeekChatModel:
         self.model = model
         self.thinking = thinking
         self.max_tokens = max_tokens
+        if not 0 <= max_retries <= 5 or not 0 < retry_backoff_seconds <= 10:
+            raise LLMConfigurationError("Cấu hình retry DeepSeek không hợp lệ")
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
         self._chat_model = chat_model
         if self._chat_model is None and self.api_key:
             self._chat_model = ChatDeepSeek(
@@ -218,27 +258,58 @@ class LangChainDeepSeekChatModel:
         if user_id:
             extra_body["user_id"] = user_id
 
-        try:
-            async for raw_chunk in runnable.astream(
-                to_langchain_messages(messages),
-                stream_usage=True,
-                extra_body=extra_body,
-                **({"response_format": {"type": "json_object"}} if json_mode else {}),
-            ):
-                if not isinstance(raw_chunk, AIMessageChunk):
-                    raise LLMProviderError("LangChain trả về stream chunk không hợp lệ")
-                metadata: Mapping[str, Any] = raw_chunk.response_metadata
-                yield LLMChunk(
-                    content=str(raw_chunk.text),
-                    usage=_token_usage(raw_chunk),
-                    finish_reason=metadata.get("finish_reason"),
-                    tool_call_deltas=_tool_call_deltas(raw_chunk),
+        converted = to_langchain_messages(messages)
+        received_chunk = False
+        for attempt in range(self.max_retries + 1):
+            try:
+                async for raw_chunk in runnable.astream(
+                    converted,
+                    stream_usage=True,
+                    extra_body=extra_body,
+                    **({"response_format": {"type": "json_object"}} if json_mode else {}),
+                ):
+                    # Even an empty/reasoning/usage-only chunk means generation has started.
+                    received_chunk = True
+                    if not isinstance(raw_chunk, AIMessageChunk):
+                        raise LLMProviderError("LangChain trả về stream chunk không hợp lệ")
+                    metadata: Mapping[str, Any] = raw_chunk.response_metadata
+                    yield LLMChunk(
+                        content=str(raw_chunk.text),
+                        usage=_token_usage(raw_chunk),
+                        finish_reason=metadata.get("finish_reason"),
+                        tool_call_deltas=_tool_call_deltas(raw_chunk),
+                    )
+                return
+            except (LLMConfigurationError, LLMProviderError):
+                raise
+            except Exception as exc:
+                status_code = getattr(exc, "status_code", None)
+                if (
+                    isinstance(exc, APIStatusError)
+                    and status_code in _RETRYABLE_STATUS_CODES
+                    and not received_chunk
+                    and attempt < self.max_retries
+                ):
+                    delay = _retry_delay(exc, attempt, self.retry_backoff_seconds)
+                    if delay is not None:
+                        # Do not log prompts, keys, response bodies or model reasoning.
+                        logger.warning(
+                            "DeepSeek HTTP %s; retry %s/%s in %.2fs",
+                            status_code,
+                            attempt + 1,
+                            self.max_retries,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                if status_code == 503:
+                    raise LLMProviderError(
+                        f"DeepSeek trả về HTTP 503: dịch vụ đang quá tải sau {attempt + 1} "
+                        "lần gọi. Vui lòng thử lại sau."
+                    ) from exc
+                prefix = (
+                    f"DeepSeek trả về HTTP {status_code}"
+                    if status_code
+                    else "Không thể gọi DeepSeek"
                 )
-        except (LLMConfigurationError, LLMProviderError):
-            raise
-        except Exception as exc:
-            status_code = getattr(exc, "status_code", None)
-            prefix = (
-                f"DeepSeek trả về HTTP {status_code}" if status_code else "Không thể gọi DeepSeek"
-            )
-            raise LLMProviderError(f"{prefix}: {str(exc)[:300]}") from exc
+                raise LLMProviderError(f"{prefix}: {str(exc)[:300]}") from exc

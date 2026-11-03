@@ -10,7 +10,7 @@ from agent_core.context_budget import ContextTokenBudget
 from agent_core.contracts.retrieval import RetrievalResult
 from agent_core.graph import AgentLoopEvent, stream_agent_graph
 from agent_core.llm.types import LLMChunk, LLMToolCallDelta, TokenUsage
-from agent_core.tools import ToolContext, ToolExecutor, ToolRegistry
+from agent_core.tools import ToolContext, ToolExecutor, ToolRegistry, ToolResult
 from agent_core.tools.documents import (
     DocumentQueryInput,
     create_document_registry,
@@ -424,6 +424,8 @@ async def test_summary_delegate_preserves_actual_usage_and_returns_once_to_paren
     async def summary(**kwargs):
         calls.append(kwargs)
         assert kwargs["planned_query"].mode == "summary" and kwargs["preserve_limits"]
+        assert kwargs["limits"].max_steps is None
+        assert kwargs["limits"].max_duration_seconds is None
         await kwargs["recorder"](
             AgentLoopEvent(
                 kind="model_completed",
@@ -450,6 +452,34 @@ async def test_summary_delegate_preserves_actual_usage_and_returns_once_to_paren
         [] if failed else [service.result.evidence[0].model_dump(mode="json", exclude={"text"})]
     )
     model.aclose.assert_awaited_once()
+
+
+@pytest.mark.parametrize("inner_timeout", [False, True])
+async def test_summary_has_no_workflow_timeout_but_search_keeps_rpc_timeout(bridge, inner_timeout):
+    service, context = bridge
+
+    async def summary(context, arguments):
+        if inner_timeout:
+            raise TimeoutError("Inner model RPC timed out")
+        return ToolResult.success("Summary complete")
+
+    registry = create_document_registry(
+        ToolRegistry(),
+        search=service.search,
+        summarize=summary,
+        timeout_seconds=None,
+        search_timeout_seconds=600,
+    )
+    assert registry.get("summarize_documents").policy.timeout_seconds is None
+    assert registry.get("search_documents").policy.timeout_seconds == 600
+    result = await ToolExecutor().execute(
+        registry, context, "summarize_documents", {"query": "Summarize all"}
+    )
+    assert result.is_error is inner_timeout
+    if inner_timeout:
+        assert result.error_code == "tool_timeout"
+    else:
+        assert result.content == "Summary complete"
 
 
 async def test_real_summary_subgraph_map_reduce_inside_tool_keeps_step_usage_and_all_sources(

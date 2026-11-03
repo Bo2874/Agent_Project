@@ -459,10 +459,14 @@ if (chatApp) {
     remaining.textContent = `Còn lại: ${statusData.remaining_work.join(" ")}`;
     const budgetView = document.createElement("p");
     budgetView.className = "status-budget";
-    budgetView.textContent =
-      `Budget: step ${budget.steps.current}/${budget.steps.limit} · ` +
-      `${budget.tokens.used}/${budget.tokens.limit} token · ` +
-      `${budget.time_seconds.remaining}s`;
+    const stepText = budget.steps.limit == null
+      ? `Bước ${budget.steps.current} · không giới hạn bước`
+      : `Bước ${budget.steps.current}/${budget.steps.limit}`;
+    const timeText = budget.time_seconds.limit == null
+      ? `đã chạy ${budget.time_seconds.elapsed}s`
+      : `còn ${budget.time_seconds.remaining}s`;
+    budgetView.textContent = `${stepText} · ` +
+      `${budget.tokens.used}/${budget.tokens.limit} token · ${timeText}`;
     timeline.statusBlock.replaceChildren(goal, progress, remaining, budgetView);
     timeline.statusBlock.hidden = false;
   }

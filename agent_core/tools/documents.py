@@ -22,7 +22,9 @@ class DocumentQueryInput(BaseModel):
         return value.strip()
 
 
-def register_document_tools(registry: ToolRegistry, *, search, summarize, timeout_seconds):
+def register_document_tools(
+    registry: ToolRegistry, *, search, summarize, timeout_seconds, search_timeout_seconds=None
+):
     descriptions = {
         "search_documents": (
             "Search private documents selected for this conversation. Returns original passages "
@@ -46,7 +48,14 @@ def register_document_tools(registry: ToolRegistry, *, search, summarize, timeou
                 args_schema=DocumentQueryInput,
                 coroutine=handler,
             ),
-            policy=ToolExecutionPolicy(timeout_seconds=timeout_seconds, max_retries=0),
+            policy=ToolExecutionPolicy(
+                timeout_seconds=(
+                    search_timeout_seconds
+                    if name == "search_documents" and search_timeout_seconds is not None
+                    else timeout_seconds
+                ),
+                max_retries=0,
+            ),
             capability=CapabilityDescriptor(
                 capability_id=name,
                 kind="tool",
@@ -59,10 +68,16 @@ def register_document_tools(registry: ToolRegistry, *, search, summarize, timeou
         )
 
 
-def create_document_registry(base: ToolRegistry, *, search, summarize, timeout_seconds):
+def create_document_registry(
+    base: ToolRegistry, *, search, summarize, timeout_seconds, search_timeout_seconds=None
+):
     """Never attach a user's document handlers to the shared host/plugin registry."""
     registry = base.fork()
     register_document_tools(
-        registry, search=search, summarize=summarize, timeout_seconds=timeout_seconds
+        registry,
+        search=search,
+        summarize=summarize,
+        timeout_seconds=timeout_seconds,
+        search_timeout_seconds=search_timeout_seconds,
     )
     return registry

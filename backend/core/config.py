@@ -105,6 +105,8 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-flash"
     deepseek_thinking: bool = False
     deepseek_max_tokens: int = Field(default=104_857, ge=128, le=393_216)
+    deepseek_max_retries: int = Field(default=2, ge=0, le=5)
+    deepseek_retry_backoff_seconds: float = Field(default=1.0, gt=0, le=10)
     deepseek_cache_hit_price_per_million_usd: float = Field(default=0.006, ge=0)
     deepseek_cache_miss_price_per_million_usd: float = Field(default=0.30, ge=0)
     deepseek_output_price_per_million_usd: float = Field(default=1.20, ge=0)
@@ -137,15 +139,15 @@ class Settings(BaseSettings):
     memory_retention_normal_days: int = Field(default=365, ge=1, le=3650)
     memory_retention_personal_days: int = Field(default=180, ge=1, le=3650)
     memory_retention_sensitive_days: int = Field(default=30, ge=1, le=3650)
-    agent_max_steps: int = Field(default=8, ge=1, le=50)
+    agent_max_steps: int | None = Field(default=None, ge=1)
     agent_react_enabled: bool = False
     agent_web_search_estimated_tokens: int = Field(default=10_000, ge=1_000, le=100_000)
-    # None derives a cumulative run ceiling from max_steps and per-call capacity.
+    # The token ceiling is independent from optional step/time/repetition caps.
     agent_document_max_total_tokens: int | None = Field(default=None, ge=128, le=100_000_000)
     agent_max_total_tokens: int | None = Field(default=None, ge=128, le=100_000_000)
-    agent_max_duration_seconds: float = Field(default=120, gt=0, le=3600)
-    agent_max_identical_tool_calls: int = Field(default=3, ge=1, le=20)
-    agent_max_repeated_observations: int = Field(default=3, ge=1, le=20)
+    agent_max_duration_seconds: float | None = Field(default=None, gt=0)
+    agent_max_identical_tool_calls: int | None = Field(default=None, ge=1)
+    agent_max_repeated_observations: int | None = Field(default=None, ge=1)
     agent_requests_per_minute: int = Field(default=10, ge=1, le=10_000)
     mcp_demo_enabled: bool = True
     mcp_stdio_config_path: Path = PROJECT_ROOT / "plugins/stdio/servers.json"
@@ -208,13 +210,26 @@ class Settings(BaseSettings):
     @property
     def agent_run_token_budget(self) -> int:
         budget = self.context_budget
-        return self.agent_max_total_tokens or self.agent_max_steps * (
+        return self.agent_max_total_tokens or 8 * (
             budget.max_input_tokens + budget.output_tokens + 64
         )
 
     @property
     def agent_document_run_token_budget(self) -> int:
         return self.agent_document_max_total_tokens or self.agent_run_token_budget
+
+    @field_validator(
+        "agent_max_steps",
+        "agent_max_duration_seconds",
+        "agent_max_identical_tool_calls",
+        "agent_max_repeated_observations",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_agent_limits(cls, value):
+        if isinstance(value, str) and value.strip().lower() in {"", "none", "null", "unlimited"}:
+            return None
+        return value
 
     @field_validator("background_worker_heartbeat_path", mode="before")
     @classmethod

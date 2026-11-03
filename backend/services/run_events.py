@@ -58,6 +58,36 @@ class OperationJournal:
     def __init__(self, run_id):
         self.run_id = run_id
 
+    async def allocate_step(self, key, minimum):
+        """Stable per-worker model-step IDs, including replay after a fan-in crash."""
+        operation_key = "step." + key
+        async with runtime_session() as session:
+            run = await session.scalar(
+                select(AgentRun).where(AgentRun.id == self.run_id).with_for_update()
+            )
+            row = await session.scalar(
+                select(AgentOperation).where(
+                    AgentOperation.agent_run_id == self.run_id,
+                    AgentOperation.key == operation_key,
+                )
+            )
+            if row is not None:
+                return row.result["step"]
+            run.current_step = max(run.current_step + 1, minimum)
+            step = run.current_step
+            session.add(
+                AgentOperation(
+                    agent_run_id=self.run_id,
+                    key=operation_key,
+                    fingerprint=fingerprint(key),
+                    status="completed",
+                    result={"step": step},
+                    actual_tokens=0,
+                )
+            )
+            await session.commit()
+            return step
+
     async def load(self, key, digest):
         async with runtime_session() as session:
             row = await session.scalar(

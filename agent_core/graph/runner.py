@@ -10,6 +10,7 @@ from contextvars import copy_context
 from copy import deepcopy
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from math import isfinite
 from time import perf_counter
 from typing import Any, NoReturn
 from uuid import uuid4
@@ -126,7 +127,9 @@ logger = logging.getLogger(__name__)
 
 def _web_sources_missing(rows) -> bool:
     return any(
-        r["tool_name"] == "search_web" and r.get("error_code") == "web_search_missing_sources"
+        r["tool_name"] == "search_web"
+        and r["is_error"]
+        and r.get("error_code") == "web_search_missing_sources"
         for r in rows
     )
 
@@ -149,8 +152,8 @@ def _missing_sources_answer(rows) -> str:
         for r in rows
     )
     return (
-        f"Đã thực hiện {actual} lần gọi tìm web, nhưng dịch vụ chưa cung cấp nguồn URL hợp lệ "
-        "để xác minh thông tin. Yêu cầu chưa hoàn tất.\n\n"
+        f"Đã thực hiện {actual} lần gọi tìm web, nhưng dịch vụ chưa cung cấp nguồn có thể "
+        "truy xuất, cả trong citation và kết quả tìm kiếm. Yêu cầu chưa hoàn tất.\n\n"
         "Hệ thống đã dừng việc tự tìm lại để chữa cùng lỗi thiếu nguồn. "
         "Chưa thể sử dụng nội dung không có nguồn làm câu trả lời đã xác minh."
     )
@@ -176,14 +179,16 @@ def _usage_from_state(usage: Mapping[str, int]) -> TokenUsage:
     )
 
 
-def _budget_with_elapsed(state: AgentState, deadline: float) -> AgentBudget:
+def _budget_with_elapsed(state: AgentState, deadline: float, started_at: float) -> AgentBudget:
     budget = state["budget"]
     return AgentBudget(
         **{
             **budget,
             "elapsed_seconds": max(
                 0,
-                budget["max_duration_seconds"] - (deadline - perf_counter()),
+                (perf_counter() - started_at)
+                if budget["max_duration_seconds"] is None
+                else budget["max_duration_seconds"] - (deadline - perf_counter()),
             ),
         }
     )
@@ -197,6 +202,11 @@ def _limits_from_budget(budget: AgentBudget) -> AgentLimits:
         max_identical_tool_calls=budget["max_identical_tool_calls"],
         max_repeated_observations=budget["max_repeated_observations"],
     )
+
+
+def _remaining_timeout(deadline, remaining=None):
+    seconds = min(deadline - perf_counter(), remaining["seconds"] if remaining else float("inf"))
+    return max(0.001, seconds) if isfinite(seconds) else None
 
 
 def _public_limit_error(error: AgentGraphLimitError) -> BaseException:
@@ -330,7 +340,9 @@ async def run_agent_graph_stream(
     thread_id = agent_thread_id(checkpoint_id or run_id)
     graph_config = agent_checkpoint_config(
         checkpoint_id or run_id,
-        recursion_limit=max(25, limits.max_steps * 4 + 5),
+        recursion_limit=float("inf")
+        if limits.max_steps is None
+        else max(25, limits.max_steps * 4 + 5),
     )
     if trace_config is not None:
         graph_config = trace_config.apply(graph_config)
@@ -359,6 +371,11 @@ async def run_agent_graph_stream(
         working_messages = to_model_messages(list(restored["messages"]))
         cumulative_usage = _usage_from_state(restored.get("usage", {}))
         restored_budget = restored.get("budget", {})
+        if restored_budget:
+            limits = _limits_from_budget(restored_budget)
+            graph_config["recursion_limit"] = (
+                float("inf") if limits.max_steps is None else max(25, limits.max_steps * 4 + 5)
+            )
         elapsed_seconds = (
             float(restored_budget.get("elapsed_seconds", 0))
             if isinstance(restored_budget, Mapping)
@@ -695,7 +712,11 @@ async def run_agent_graph_stream(
         raise AgentNodeExecutionError(
             "Plugin runtime changed; start a new run", code="plugin_runtime_changed"
         )
-    deadline = started_at + limits.max_duration_seconds
+    deadline = (
+        started_at + limits.max_duration_seconds
+        if limits.max_duration_seconds is not None
+        else float("inf")
+    )
     tool_executor = ToolExecutor(
         expected_tools={tool.name: registry.get(tool.name) for tool in selection.tools},
         force_approval=bool(selected_skill and selected_skill.requires_approval),
@@ -829,6 +850,14 @@ async def run_agent_graph_stream(
         writer = get_stream_writer()
         writer_context = copy_context()
         event_lock = asyncio.Lock()
+        dynamic_steps = state["budget"]["max_steps"] is None
+
+        async def allocate_worker_step(task_id, local_step):
+            nonlocal step
+            key = f"plan{plan['spec']['plan_version']}.{task_id}.{local_step}"
+            number = await operation_journal.allocate_step(key, step) if operation_journal else step
+            step = max(step, number + 1)
+            return number
 
         @asynccontextmanager
         async def reserve(amount):
@@ -860,25 +889,35 @@ async def run_agent_graph_stream(
                     t.task_id in past_workers
                     or t.budget.max_tokens <= pool.available - pool.spent - pool.held
                 )
-                and step + t.budget.max_steps <= state["budget"]["max_steps"]
+                and (dynamic_steps or step + t.budget.max_steps <= state["budget"]["max_steps"])
             ]
             if not wave:
                 break
             leases = {}
+            step_maps = {}
             for task in wave:
-                leases[task.task_id] = step
-                step += task.budget.max_steps
+                if dynamic_steps:
+                    first = await allocate_worker_step(task.task_id, 1)
+                    step_maps[task.task_id] = {1: first}
+                    leases[task.task_id] = first
+                else:
+                    leases[task.task_id] = step
+                    step += task.budget.max_steps
                 plan["statuses"][task.task_id] = "running"
                 plan.setdefault("attempts", {})[task.task_id] = {
                     "first_step": leases[task.task_id],
                     "tokens_start": aggregate.total_tokens,
                     "observation_offset": len(state["tool_observations"]) + len(rows),
-                    "start_elapsed": _budget_with_elapsed(state, deadline)["elapsed_seconds"],
+                    "start_elapsed": _budget_with_elapsed(state, deadline, started_at)[
+                        "elapsed_seconds"
+                    ],
                 }
             await publish_plan(plan, state["step_number"])
             worker_timings = {}
 
-            async def execute_worker(task, leases=leases, plan=plan, timings=worker_timings):
+            async def execute_worker(
+                task, leases=leases, plan=plan, timings=worker_timings, step_maps=step_maps
+            ):
                 first = leases[task.task_id]
                 captured = None
                 known_usage = TokenUsage()
@@ -909,14 +948,23 @@ async def run_agent_graph_stream(
                         if event.progress
                         else None
                     )
-                    mapped = replace(
-                        event,
-                        step_number=first + event.step_number - 1,
-                        planning_sync=False,
-                        planning_snapshot=None,
-                        progress=progress_row,
-                    )
                     async with event_lock:
+                        if dynamic_steps:
+                            mapping = step_maps[task.task_id]
+                            if event.step_number not in mapping:
+                                mapping[event.step_number] = await allocate_worker_step(
+                                    task.task_id, event.step_number
+                                )
+                            mapped_step = mapping[event.step_number]
+                        else:
+                            mapped_step = first + event.step_number - 1
+                        mapped = replace(
+                            event,
+                            step_number=mapped_step,
+                            planning_sync=False,
+                            planning_snapshot=None,
+                            progress=progress_row,
+                        )
                         await _emit(event_handler, mapped)
                         writer_context.run(
                             writer, AgentGraphStreamEvent(channel="agent_status", item=mapped)
@@ -927,7 +975,14 @@ async def run_agent_graph_stream(
                 try:
                     async with (
                         asyncio.timeout(
-                            max(0.001, min(task.timeout_seconds, deadline - perf_counter()))
+                            _remaining_timeout(
+                                deadline,
+                                {
+                                    "seconds": task.timeout_seconds
+                                    if task.timeout_seconds is not None
+                                    else float("inf")
+                                },
+                            )
                         ),
                         capacity_slot(),
                         (worker_registry_factory or default_registry)(task) as scoped,
@@ -944,14 +999,18 @@ async def run_agent_graph_stream(
                             event_handler=record,
                             limits=AgentLimits(
                                 # One host-only closing transition beyond paid task steps.
-                                max_steps=task.budget.max_steps + 1,
+                                max_steps=task.budget.max_steps + 1
+                                if task.budget.max_steps is not None
+                                else None,
                                 max_total_tokens=task.budget.max_tokens,
-                                max_duration_seconds=max(
-                                    0.001,
-                                    min(
-                                        task.timeout_seconds - (perf_counter() - worker_started),
-                                        deadline - perf_counter(),
-                                    ),
+                                max_duration_seconds=_remaining_timeout(
+                                    deadline,
+                                    {
+                                        "seconds": task.timeout_seconds
+                                        - (perf_counter() - worker_started)
+                                        if task.timeout_seconds is not None
+                                        else float("inf"),
+                                    },
                                 ),
                                 max_identical_tool_calls=limits.max_identical_tool_calls,
                                 max_repeated_observations=limits.max_repeated_observations,
@@ -1001,9 +1060,22 @@ async def run_agent_graph_stream(
                 task, output, captured, known = job.result()
                 aggregate += known
                 attempt = plan["attempts"][task.task_id]
-                attempt["last_step"] = leases[task.task_id] + max(
-                    0, min(task.budget.max_steps, output["usage"]["model_steps"]) - 1
-                )
+                if dynamic_steps:
+                    # A terminal child may emit no events during durable replay.
+                    # Recover its last mapping before assigning a root/join step.
+                    last_local = max(
+                        1,
+                        output["usage"]["model_steps"],
+                        (captured or {}).get("step_number", 1),
+                    )
+                    mapping = step_maps[task.task_id]
+                    if last_local not in mapping:
+                        mapping[last_local] = await allocate_worker_step(task.task_id, last_local)
+                    attempt["last_step"] = max(mapping.values())
+                else:
+                    attempt["last_step"] = leases[task.task_id] + max(
+                        0, min(task.budget.max_steps, output["usage"]["model_steps"]) - 1
+                    )
                 plan = workers.merge_result(plan, output, attempt)
                 rows.extend((captured or {}).get("tool_observations", []))
             pairs = list(worker_timings.values())
@@ -1208,7 +1280,7 @@ async def run_agent_graph_stream(
             }
             plan = state["planning"]
         if plan:
-            elapsed = _budget_with_elapsed(state, deadline)["elapsed_seconds"]
+            elapsed = _budget_with_elapsed(state, deadline, started_at)["elapsed_seconds"]
             for _ in range(9):
                 if worker_plan is not None and not plan.get("active_task"):
                     break
@@ -1235,7 +1307,7 @@ async def run_agent_graph_stream(
                 "model_content": result["summary"] if result else "Worker đã dừng.",
             }
         usage = _usage_from_state(state["usage"])
-        current_budget = _budget_with_elapsed(state, deadline)
+        current_budget = _budget_with_elapsed(state, deadline, started_at)
         status_block = _build_status_block(
             goal=state["goal"][:160] if planning_enabled else state["goal"],
             progress=[p[:90] for p in state["progress"][-3:]]
@@ -1324,7 +1396,7 @@ async def run_agent_graph_stream(
             **routing_update,
             "prepared_messages": prepared.messages,
             "tool_definitions": prepared.tools,
-            "budget": _budget_with_elapsed(state, deadline),
+            "budget": _budget_with_elapsed(state, deadline, started_at),
             "memory_context": _memory_blocks_to_state(active_memory),
             "memory_loaded": memory_loaded,
             **({"planning": plan} if planning_enabled else {}),
@@ -1433,7 +1505,9 @@ async def run_agent_graph_stream(
             - state.get("budget_held_tokens", 0)
         )
         remaining = dag.task_remaining(
-            state.get("planning"), state, _budget_with_elapsed(state, deadline)["elapsed_seconds"]
+            state.get("planning"),
+            state,
+            _budget_with_elapsed(state, deadline, started_at)["elapsed_seconds"],
         )
         if remaining and (estimate > remaining["tokens"] or remaining["seconds"] <= 0):
             # No paid call: turn the host-validated failure into a task completion.
@@ -1488,15 +1562,7 @@ async def run_agent_graph_stream(
                 async with (usage_reservation or unreserved_usage)(estimate) as receipt:
                     if operation_journal:
                         await operation_journal.begin(operation_key, digest)
-                    async with asyncio.timeout(
-                        max(
-                            0.001,
-                            min(
-                                deadline - perf_counter(),
-                                remaining["seconds"] if remaining else float("inf"),
-                            ),
-                        )
-                    ):
+                    async with asyncio.timeout(_remaining_timeout(deadline, remaining)):
                         update = await call_model_unreserved(state, receipt=receipt)
                     if operation_journal:
                         await operation_journal.finish(
@@ -1641,7 +1707,7 @@ async def run_agent_graph_stream(
                 "pending_tool_calls": [],
                 "finish_reason": finish_reason,
                 "usage": _usage_to_state(cumulative),
-                "budget": _budget_with_elapsed(state, deadline),
+                "budget": _budget_with_elapsed(state, deadline, started_at),
             }
 
         raw_tool_calls: list[dict[str, Any]] = []
@@ -1690,7 +1756,7 @@ async def run_agent_graph_stream(
             "pending_tool_calls": pending_calls,
             "finish_reason": finish_reason,
             "usage": _usage_to_state(cumulative),
-            "budget": _budget_with_elapsed(state, deadline),
+            "budget": _budget_with_elapsed(state, deadline, started_at),
             "tool_call_counts": call_counts,
         }
 
@@ -1795,7 +1861,7 @@ async def run_agent_graph_stream(
                     "usage": _usage_to_state(_usage_from_state(state["usage"]) + tool_usage),
                     "tool_observations": [*state["tool_observations"], *observations],
                 },
-                _budget_with_elapsed(state, deadline)["elapsed_seconds"],
+                _budget_with_elapsed(state, deadline, started_at)["elapsed_seconds"],
             )
             task_error = None
             if plan and not control:
@@ -1907,20 +1973,18 @@ async def run_agent_graph_stream(
                             ),
                             # Delegated paid models must leave room for the root final turn.
                         ),
-                        remaining_steps=max(
-                            0,
-                            min(
-                                state["budget"]["max_steps"] - step_number - child_calls,
-                                task_limits["steps"] - 1 if task_limits else 999,
-                            ),
+                        remaining_steps=(
+                            max(
+                                0,
+                                min(
+                                    state["budget"]["max_steps"] - step_number - child_calls,
+                                    task_limits["steps"] - 1 if task_limits else float("inf"),
+                                ),
+                            )
+                            if state["budget"]["max_steps"] is not None
+                            else None
                         ),
-                        remaining_seconds=max(
-                            0,
-                            min(
-                                deadline - perf_counter(),
-                                task_limits["seconds"] if task_limits else float("inf"),
-                            ),
-                        ),
+                        remaining_seconds=_remaining_timeout(deadline, task_limits),
                         progress_callback=tool_progress,
                     ),
                     request,
@@ -1956,8 +2020,12 @@ async def run_agent_graph_stream(
                             registry=registry,
                             role=context.user_role,
                             remaining_tokens=max(0, available - final_reserve),
-                            remaining_steps=state["budget"]["max_steps"] - step_number - 1,
-                            remaining_seconds=max(0.001, deadline - perf_counter()),
+                            remaining_steps=state["budget"]["max_steps"] - step_number - 1
+                            if state["budget"]["max_steps"] is not None
+                            else None,
+                            remaining_seconds=max(0.001, deadline - perf_counter())
+                            if isfinite(deadline)
+                            else None,
                             document_versions=planning_document_versions,
                         )
                         plan["final_reserve"] = final_reserve
@@ -2015,15 +2083,7 @@ async def run_agent_graph_stream(
                         if operation_journal and cached_result is None:
                             await operation_journal.begin(op_key, op_digest)
                         if react_enabled:
-                            async with asyncio.timeout(
-                                max(
-                                    0.001,
-                                    min(
-                                        deadline - perf_counter(),
-                                        task_limits["seconds"] if task_limits else float("inf"),
-                                    ),
-                                )
-                            ):
+                            async with asyncio.timeout(_remaining_timeout(deadline, task_limits)):
                                 if cached_result is not None:
                                     result = ToolResult(
                                         **{
@@ -2137,7 +2197,14 @@ async def run_agent_graph_stream(
                 )
             if request.name == "summarize_documents":
                 count = result.data.get("internal_model_calls", 0)
-                if type(count) is int and 0 <= count <= state["budget"]["max_steps"]:
+                if (
+                    type(count) is int
+                    and count >= 0
+                    and (
+                        state["budget"]["max_steps"] is None
+                        or count <= state["budget"]["max_steps"]
+                    )
+                ):
                     internal_model_calls += count
             if (
                 len(state["pending_tool_calls"]) == 1
@@ -2197,7 +2264,7 @@ async def run_agent_graph_stream(
             )
             await publish_plan(plan, step_number)
 
-        current_budget = _budget_with_elapsed(state, deadline)
+        current_budget = _budget_with_elapsed(state, deadline, started_at)
         if worker_plan is not None and plan and not plan.get("active_task"):
             direct_content = plan["results"][context.task_id]["summary"]
         return {
@@ -2317,7 +2384,9 @@ async def run_agent_graph_stream(
         store=memory_store,
         # ReAct enforces the shared deadline inside each paid operation; allow
         # cancellation/usage settlement/final persistence to finish afterwards.
-        node_timeout_seconds=limits.max_duration_seconds + (10 if react_enabled else 0),
+        node_timeout_seconds=limits.max_duration_seconds + (10 if react_enabled else 0)
+        if limits.max_duration_seconds is not None
+        else None,
         retry_model=not react_enabled,
     )
     graph_input: AgentState | Command | None = (

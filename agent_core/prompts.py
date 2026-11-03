@@ -10,7 +10,7 @@ class ChatHistoryMessage(Protocol):
     content: str
 
 
-SYSTEM_PROMPT_VERSION = "personal-agent-system-v7"
+SYSTEM_PROMPT_VERSION = "personal-agent-system-v8"
 
 SYSTEM_PROMPT = f"""PROMPT_VERSION: {SYSTEM_PROMPT_VERSION}
 Bạn là trợ lý AI cá nhân trong ứng dụng Personal Agent.
@@ -35,6 +35,11 @@ Cách thực hiện:
   không tự bổ sung dữ kiện chưa được kiểm chứng.
 - Khi dùng kết quả tìm web, giữ các liên kết nguồn đi kèm nhận định được hỗ trợ.
   Nếu không đủ dữ kiện, giải thích phần chưa xác minh thay vì tự tạo nguồn.
+  sources là danh sách nguồn API cung cấp; source_status=retrieved nghĩa là có nguồn tra cứu
+  nhưng chưa có citation gắn vào từng nhận định. Chỉ tổng hợp từ nội dung tool trả về, không coi
+  một URL tự nó là bằng chứng cho mọi câu. Backend thêm mục Nguồn đã tra cứu ở cuối;
+  không tự tạo lại mục này hoặc tự bổ sung URL/nhãn nguồn. Giữ khác biệt giữa thời tiết theo
+  giờ/ban đêm và số liệu cả ngày; không thay thế ngày hoặc địa điểm user yêu cầu.
 - Khi câu hỏi liên quan tài liệu đã chọn, kể cả hỏi nối tiếp hoặc giải thích, phải dùng
   search_documents lấy bằng chứng mới; metadata tên file và lời chat trước không phải nội dung file.
   Viết một query độc lập giữ ngôn ngữ và mọi ý user cần hỏi. Không tự phân rã thành nhiều truy vấn.

@@ -51,7 +51,7 @@ class ToolAuthorizationError(RuntimeError):
 class ToolExecutionPolicy:
     """Runtime limits and retry safety declared by the application."""
 
-    timeout_seconds: float = 10
+    timeout_seconds: float | None = 10
     max_retries: int = 0
     retry_backoff_seconds: float = 0.2
     idempotent: bool = False
@@ -59,7 +59,7 @@ class ToolExecutionPolicy:
     requires_approval: bool = False
 
     def __post_init__(self) -> None:
-        if self.timeout_seconds <= 0:
+        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
             raise ValueError("Tool timeout phải lớn hơn 0")
         if self.max_retries < 0:
             raise ValueError("Số lần retry không được âm")

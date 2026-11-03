@@ -28,7 +28,7 @@ def test_initial_agent_state_is_complete_and_uses_langchain_messages() -> None:
     assert state["step_number"] == 1
     assert state["usage"]["total_tokens"] == 0
     assert state["pending_tool_calls"] == []
-    assert state["budget"]["max_steps"] == 8
+    assert state["budget"]["max_steps"] is None
     assert state["budget"]["max_total_tokens"] == 20_000
     assert state["node_trace"] == []
 

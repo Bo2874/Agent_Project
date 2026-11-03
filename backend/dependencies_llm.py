@@ -18,6 +18,8 @@ def create_chat_model(*, max_tokens: int | None = None) -> ChatModel:
         model=settings.deepseek_model,
         thinking=settings.deepseek_thinking,
         max_tokens=max_tokens if max_tokens is not None else settings.deepseek_max_tokens,
+        max_retries=settings.deepseek_max_retries,
+        retry_backoff_seconds=settings.deepseek_retry_backoff_seconds,
     )
 
 

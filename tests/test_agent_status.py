@@ -3,6 +3,7 @@ import json
 from agent_core.context_budget import ContextTokenUsage
 from agent_core.graph import AgentLoopEvent, ToolCallRequest
 from agent_core.llm.types import LLMChunk, TokenUsage
+from agent_core.prompts import SYSTEM_PROMPT_VERSION
 from agent_core.status import AgentStatusBlock, AgentStatusBudget
 from agent_core.tools import ToolResult
 from backend.routes.chat import agent_status_payload, agent_stream_sse, sse_event
@@ -39,6 +40,39 @@ def test_tool_status_payload_contains_safe_progress_only() -> None:
     assert "secret argument" not in serialized
     assert "secret result" not in serialized
     assert "private data" not in serialized
+
+
+def test_unbounded_status_tracks_progress_without_fake_step_or_time_remaining():
+    budget = AgentStatusBudget(
+        current_step=125,
+        max_steps=None,
+        used_tokens=1000,
+        max_tokens=80_000,
+        elapsed_seconds=7200,
+        max_seconds=None,
+    ).to_payload()
+    assert budget["steps"] == {"current": 125, "limit": None, "remaining": None}
+    assert budget["time_seconds"] == {"elapsed": 7200, "limit": None, "remaining": None}
+    assert json.loads(json.dumps(budget, allow_nan=False)) == budget
+
+
+def test_settings_can_disable_all_run_caps_without_changing_token_budget():
+    from backend.core.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        db_password="test-only",
+        auth_secret_key="test-only-secret-key-32-characters",
+        agent_max_steps="",
+        agent_max_duration_seconds="null",
+        agent_max_identical_tool_calls="None",
+        agent_max_repeated_observations="unlimited",
+    )
+    assert settings.agent_max_steps is settings.agent_max_duration_seconds is None
+    assert (
+        settings.agent_max_identical_tool_calls is settings.agent_max_repeated_observations is None
+    )
+    assert settings.agent_run_token_budget == 7_969_672
 
 
 def test_web_search_progress_exposes_cost_and_usage_without_query_or_sources():
@@ -155,7 +189,7 @@ def test_model_status_includes_context_breakdown() -> None:
         "total_tokens": 90,
         "budget_tokens": 32_000,
         "trimmed_messages": 2,
-        "prompt_version": "personal-agent-system-v7",
+        "prompt_version": SYSTEM_PROMPT_VERSION,
         "prefix_fingerprint": "",
         "available_tool_count": 0,
         "loaded_tool_count": 0,

@@ -13,7 +13,7 @@ def agent_thread_id(run_id: UUID | str) -> str:
 def agent_checkpoint_config(
     run_id: UUID | str,
     *,
-    recursion_limit: int | None = None,
+    recursion_limit: int | float | None = None,
 ) -> dict[str, Any]:
     """Build the config shared by normal execution and resume requests."""
 

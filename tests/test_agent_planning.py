@@ -116,6 +116,73 @@ def snapshots(items):
     ]
 
 
+def test_unbounded_plan_accepts_four_tasks_without_host_step_or_time_caps():
+    proposed = [
+        task("book", ("alpha",), max_steps=4),
+        task("web", ("beta",), max_steps=4),
+        task("calc", ("alpha",), max_steps=3),
+        task("table", deps=("book", "web", "calc"), max_steps=3),
+    ]
+    plan = dag.create_plan(
+        {"tasks": proposed},
+        goal="Compare and calculate",
+        registry=registry([]),
+        role="user",
+        remaining_tokens=80_000,
+        remaining_steps=None,
+        remaining_seconds=None,
+    )
+    for spec in plan["spec"]["tasks"]:
+        assert spec["budget"]["max_steps"] is None
+        assert spec["budget"]["max_tool_calls"] is None
+        assert spec["timeout_seconds"] is None
+
+
+async def test_unbounded_plan_executes_past_eight_model_turns():
+    log = []
+    tasks = [
+        task("a", ("alpha",)),
+        task("b", ("beta",)),
+        task("c", ("alpha",)),
+        task("table", deps=("a", "b", "c")),
+    ]
+    model = Model(
+        [
+            response(action("create_plan", {"tasks": tasks})),
+            response(action("alpha", {"query": "one"})),
+            finish(),
+            response(action("beta", {"query": "two"})),
+            finish(),
+            response(action("alpha", {"query": "three"})),
+            finish(),
+            finish(summary="Combined table"),
+            [LLMChunk(content="COMPLETE", finish_reason="stop")],
+        ]
+    )
+    items = [
+        i
+        async for i in stream_agent_graph(
+            model=model,
+            messages=[{"role": "user", "content": "Plan four tasks"}],
+            registry=registry(log),
+            context=context(),
+            react_enabled=True,
+            planning_enabled=True,
+            limits=AgentLimits(
+                max_steps=None,
+                max_duration_seconds=None,
+                max_identical_tool_calls=None,
+                max_repeated_observations=None,
+                max_total_tokens=80_000,
+            ),
+        )
+    ]
+    assert log == ["alpha", "beta", "alpha"]
+    assert len(model.requests) == 9
+    assert set(snapshots(items)[-1]["statuses"].values()) == {"succeeded"}
+    assert "".join(i.content for i in items if isinstance(i, LLMChunk)) == "COMPLETE"
+
+
 @pytest.mark.parametrize(
     "tasks",
     [

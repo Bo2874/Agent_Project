@@ -32,8 +32,8 @@ class TaskBudget(ContractModel):
     """Requested upper bounds; the orchestrator must reserve shared quota separately."""
 
     max_tokens: PositiveInt
-    max_tool_calls: NonNegativeInt
-    max_steps: PositiveInt
+    max_tool_calls: NonNegativeInt | None
+    max_steps: PositiveInt | None
 
 
 class TaskInputReference(ContractModel):
@@ -60,7 +60,7 @@ class TaskSpec(ContractModel):
     allowed_capability_ids: Annotated[tuple[Identifier, ...], Field(max_length=50)] = ()
     output_schema: dict[str, JsonValue]
     acceptance_criteria: Annotated[tuple[ShortText, ...], Field(min_length=1, max_length=16)]
-    timeout_seconds: Annotated[float, Field(strict=True, gt=0, le=3600)]
+    timeout_seconds: Annotated[float, Field(strict=True, gt=0)] | None
     budget: TaskBudget
     side_effect: SideEffect = "unknown"
 

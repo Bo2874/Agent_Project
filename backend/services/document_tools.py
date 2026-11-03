@@ -68,7 +68,7 @@ class DocumentToolSession:
         self._merge_lock = asyncio.Lock()
 
     @asynccontextmanager
-    async def worker_registry(self, task, base, timeout_seconds):
+    async def worker_registry(self, task, base, timeout_seconds, *, search_timeout_seconds=None):
         """Private retrieval state per worker, with one synchronous source label authority."""
         from agent_core.tools.documents import register_document_tools
 
@@ -92,6 +92,7 @@ class DocumentToolSession:
             search=child.search,
             summarize=child.summarize,
             timeout_seconds=timeout_seconds,
+            search_timeout_seconds=search_timeout_seconds,
         )
         try:
             yield scoped
@@ -474,10 +475,14 @@ class DocumentToolSession:
         started = perf_counter()
         try:
             # Reserve a caller model turn after the delegated workflow.
-            steps = (context.remaining_steps if context.remaining_steps is not None else 7) - 1
+            steps = context.remaining_steps - 1 if context.remaining_steps is not None else None
             tokens = context.remaining_tokens if context.remaining_tokens is not None else 20_000
-            seconds = context.remaining_seconds if context.remaining_seconds is not None else 120
-            if steps < 1 or tokens < 1 or seconds <= 0:
+            seconds = context.remaining_seconds
+            if (
+                (steps is not None and steps < 1)
+                or tokens < 1
+                or (seconds is not None and seconds <= 0)
+            ):
                 raise DocumentServiceError(
                     "Không đủ budget để tóm tắt và trả lời.", code="document_qa_budget"
                 )

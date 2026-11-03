@@ -67,22 +67,22 @@ class AgentNodeExecutionError(AgentLoopError):
 
 @dataclass(frozen=True, slots=True)
 class AgentLimits:
-    max_steps: int = 8
+    max_steps: int | None = None
     max_total_tokens: int = 20_000
-    max_duration_seconds: float = 120
-    max_identical_tool_calls: int = 3
-    max_repeated_observations: int = 3
+    max_duration_seconds: float | None = None
+    max_identical_tool_calls: int | None = None
+    max_repeated_observations: int | None = None
 
     def __post_init__(self) -> None:
-        if self.max_steps < 1:
+        if self.max_steps is not None and self.max_steps < 1:
             raise ValueError("max_steps phải lớn hơn hoặc bằng 1")
         if self.max_total_tokens < 1:
             raise ValueError("max_total_tokens phải lớn hơn hoặc bằng 1")
-        if self.max_duration_seconds <= 0:
+        if self.max_duration_seconds is not None and self.max_duration_seconds <= 0:
             raise ValueError("max_duration_seconds phải lớn hơn 0")
-        if self.max_identical_tool_calls < 1:
+        if self.max_identical_tool_calls is not None and self.max_identical_tool_calls < 1:
             raise ValueError("max_identical_tool_calls phải lớn hơn hoặc bằng 1")
-        if self.max_repeated_observations < 1:
+        if self.max_repeated_observations is not None and self.max_repeated_observations < 1:
             raise ValueError("max_repeated_observations phải lớn hơn hoặc bằng 1")
 
 
@@ -281,6 +281,9 @@ def _tool_result_message(request: ToolCallRequest, result: ToolResult) -> ModelM
         # Diagnostic excerpts can contain an unsourced answer. Keep them in the
         # owner-scoped tool record, never expose them as usable model evidence.
         data.pop("response_diagnostics", None)
+        # The normalized union is enough for synthesis; avoid repeating URLs three times.
+        data.pop("citations", None)
+        data.pop("retrieved_sources", None)
     if request.name in {"search_documents", "summarize_documents"}:
         # Durable source bindings belong to the backend, not repeated model input.
         # In particular, a 64-chunk summary must not spend its context on 64 UUID records.

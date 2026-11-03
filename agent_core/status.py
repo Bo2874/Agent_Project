@@ -5,18 +5,20 @@ from typing import Any
 @dataclass(frozen=True, slots=True)
 class AgentStatusBudget:
     current_step: int
-    max_steps: int
+    max_steps: int | None
     used_tokens: int
     max_tokens: int
     elapsed_seconds: float
-    max_seconds: float
+    max_seconds: float | None
 
     def __post_init__(self) -> None:
-        if self.current_step < 1 or self.current_step > self.max_steps:
+        if self.current_step < 1 or (
+            self.max_steps is not None and self.current_step > self.max_steps
+        ):
             raise ValueError("Current step không hợp lệ")
         if self.used_tokens < 0 or self.used_tokens > self.max_tokens:
             raise ValueError("Token usage không hợp lệ")
-        if self.elapsed_seconds < 0 or self.max_seconds <= 0:
+        if self.elapsed_seconds < 0 or (self.max_seconds is not None and self.max_seconds <= 0):
             raise ValueError("Time budget không hợp lệ")
 
     def to_payload(self) -> dict[str, Any]:
@@ -24,7 +26,9 @@ class AgentStatusBudget:
             "steps": {
                 "current": self.current_step,
                 "limit": self.max_steps,
-                "remaining": self.max_steps - self.current_step + 1,
+                "remaining": self.max_steps - self.current_step + 1
+                if self.max_steps is not None
+                else None,
             },
             "tokens": {
                 "used": self.used_tokens,
@@ -34,7 +38,9 @@ class AgentStatusBudget:
             "time_seconds": {
                 "elapsed": round(self.elapsed_seconds, 1),
                 "limit": self.max_seconds,
-                "remaining": round(max(self.max_seconds - self.elapsed_seconds, 0), 1),
+                "remaining": round(max(self.max_seconds - self.elapsed_seconds, 0), 1)
+                if self.max_seconds is not None
+                else None,
             },
         }
 

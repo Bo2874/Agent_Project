@@ -279,3 +279,14 @@ History sau thay đổi2026-11-02 gọi LLM để tóm tắt:20 message gần nh
 bỏ trần6000 ký tự. App đợi summary lưu xong trước khi enqueue Agent. Compose nhận
 `DEV_HISTORY_SUMMARY_TIMEOUT_SECONDS=180`; restart/rebuild app cùng worker, không cần
 migration. DeepSeek key dùng chung cấu hình model hiện có; mỗi batch/gộp có phát sinh API usage.
+
+2026-11-04: mặc định bỏ trần bước, tổng thời gian và lặp kết quả của Agent.
+Compose app/worker nhận bốn biến để trống trong `.env.docker`:
+`DEV_AGENT_MAX_STEPS`, `DEV_AGENT_MAX_DURATION_SECONDS`,
+`DEV_AGENT_MAX_IDENTICAL_TOOL_CALLS`, `DEV_AGENT_MAX_REPEATED_OBSERVATIONS`.
+Giá trị trống/null/none/unlimited tương ứng không giới hạn; số dương khôi phục cap hữu hạn.
+Ngân sách token run mặc định7.969.672 nay độc lập với số bước, thay mô tả tự tính theo số bước
+ở ghi chú2026-11-02. Provider/tool RPC vẫn có timeout riêng; workflow summary không có
+trần thời gian tổng khi root unbounded. Context/token/approval/journal vẫn được kiểm.
+Rebuild/recreate app và worker để nhận code/config; tạo request mới vì checkpoint cũ giữ cap cũ.
+Không cần migration/reindex. Đã kiểm Compose config, chưa build image cho thay đổi này.

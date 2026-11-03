@@ -75,7 +75,9 @@ from backend.services.agent_runs import (
     create_agent_run,
     fail_agent_run,
     list_agent_run_timelines,
+    load_web_search_sources,
     prepare_agent_run_resume,
+    web_search_source_footer,
 )
 from backend.services.chat import (
     ConversationBusyError,
@@ -287,9 +289,12 @@ async def stream_assistant_response(
     quota_guard = AgentQuotaGuard(user_id=user_id)
     partial_reason = None
     plan_snapshot = None
+    web_tools_used = False
 
     async def record_event(event: AgentLoopEvent) -> None:
-        nonlocal partial_reason, plan_snapshot
+        nonlocal partial_reason, plan_snapshot, web_tools_used
+        if event.tool_call and event.tool_call.name == "search_web":
+            web_tools_used = True
         if event.planning_sync:
             plan_snapshot = event.planning_snapshot
         if event.progress and event.progress.get("id") == "budget.partial":
@@ -388,7 +393,9 @@ async def stream_assistant_response(
                 max_total_tokens=settings.agent_document_run_token_budget,
                 max_duration_seconds=max(
                     limits.max_duration_seconds, settings.document_qa_timeout_seconds
-                ),
+                )
+                if limits.max_duration_seconds is not None
+                else None,
             )
         yield sse_event(
             "start",
@@ -496,6 +503,7 @@ async def stream_assistant_response(
                     search=document_tools.search,
                     summarize=document_tools.summarize,
                     timeout_seconds=limits.max_duration_seconds,
+                    search_timeout_seconds=settings.document_qa_timeout_seconds,
                 )
                 original_guard = runtime.context.authorization_guard
 
@@ -543,7 +551,10 @@ async def stream_assistant_response(
                 yield execution_registry
             else:
                 async with document_tools.worker_registry(
-                    task, execution_registry, limits.max_duration_seconds
+                    task,
+                    execution_registry,
+                    limits.max_duration_seconds,
+                    search_timeout_seconds=settings.document_qa_timeout_seconds,
                 ) as scoped:
                     yield scoped
 
@@ -609,6 +620,15 @@ async def stream_assistant_response(
         content = "".join(parts).strip()
         if not content:
             raise LLMProviderError("DeepSeek không trả về nội dung")
+
+        if web_tools_used or resume:
+            sources = await load_web_search_sources(
+                owner=user_id, conversation_id=conversation_id, agent_run_id=agent_run_id
+            )
+            footer = web_search_source_footer(sources)
+            if footer and not content.endswith(footer.strip()):
+                content += footer
+                yield sse_event("delta", {"content": footer})
 
         if document_tools is not None and document_tools.used:
             await document_tools.validate()

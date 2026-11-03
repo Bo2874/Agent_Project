@@ -124,7 +124,9 @@ class ToolExecutor:
                     raise TypeError("LangChain tool không trả về ToolResult")
             except TimeoutError:
                 result = ToolResult.failure(
-                    f"Tool '{tool_name}' vượt quá giới hạn {policy.timeout_seconds:g} giây.",
+                    f"Tool '{tool_name}' vượt quá giới hạn {policy.timeout_seconds:g} giây."
+                    if policy.timeout_seconds is not None
+                    else f"Một lời gọi bên trong tool '{tool_name}' vượt giới hạn thời gian.",
                     error_code="tool_timeout",
                 )
             except Exception:

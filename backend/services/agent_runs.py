@@ -1,6 +1,8 @@
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from urllib.parse import quote
 from uuid import UUID
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_core.graph.checkpointing import agent_checkpoint_config
 from agent_core.graph.runtime import AgentLoopEvent
+from agent_core.tools.web_search import normalize_web_sources
 from backend.core.redaction import redact_text
 from backend.database import SessionFactory
 from backend.models import (
@@ -25,6 +28,49 @@ from backend.services.run_events import fence
 
 class AgentRunResumeError(RuntimeError):
     pass
+
+
+async def load_web_search_sources(
+    *, owner: UUID, conversation_id: UUID, agent_run_id: UUID
+) -> list[dict]:
+    """Read successful source records from this owned run, including relayed workers."""
+    async with SessionFactory() as session:
+        await fence(session)
+        records = (
+            await session.scalars(
+                select(ToolCall.result_data)
+                .join(RunStep, ToolCall.run_step_id == RunStep.id)
+                .join(AgentRun, RunStep.agent_run_id == AgentRun.id)
+                .join(Conversation, AgentRun.conversation_id == Conversation.id)
+                .where(
+                    Conversation.user_id == owner,
+                    Conversation.id == conversation_id,
+                    AgentRun.id == agent_run_id,
+                    ToolCall.tool_name == "search_web",
+                    ToolCall.status == "completed",
+                )
+                .order_by(ToolCall.created_at, ToolCall.id)
+                .limit(200)
+            )
+        ).all()
+    sources = []
+    for record in records:
+        if isinstance(record, dict) and isinstance(record.get("sources"), list):
+            sources.extend(record["sources"])
+    return normalize_web_sources(sources)
+
+
+def web_search_source_footer(sources: list[dict]) -> str:
+    sources = normalize_web_sources(sources)
+    if not sources:
+        return ""
+    lines = ["\n\n**Nguồn đã tra cứu**", ""]
+    for index, source in enumerate(sources, 1):
+        title = " ".join(source["title"].split())
+        title = re.sub(r"([\\`*_{}\[\]()#+.!|<>])", r"\\\1", title)
+        url = quote(source["url"], safe=":/?&=#%+;,@!$*~-._")
+        lines.append(f"- [W{index}] [{title}]({url})")
+    return "\n".join(lines)
 
 
 @dataclass(frozen=True, slots=True)

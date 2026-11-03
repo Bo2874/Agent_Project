@@ -161,6 +161,66 @@ async def test_parallel_graph_isolates_messages_and_joins_dependencies():
     assert "".join(i.content for i in events if isinstance(i, LLMChunk)) == "Workers complete"
 
 
+async def test_unbounded_parallel_workers_allocate_unique_steps_and_finish_dependencies():
+    calls = {"alpha": 0, "beta": 0, "join": 0}
+
+    async def read(context, args):
+        key = args["key"]
+        calls[key] += 1
+        await asyncio.sleep(0)
+        return ToolResult.success("Verified " + key)
+
+    class LongWorkers(Model):
+        async def stream(self, messages, **kwargs):
+            brief = next(
+                (m["content"] for m in messages if "HOST_TASK:" in (m.get("content") or "")), None
+            )
+            if brief:
+                key = json.loads(brief.split("\n", 1)[1])["task"]["task_id"]
+                if calls[key] < {"alpha": 5, "beta": 3, "join": 1}[key]:
+                    yield call("read_value", {"key": key})
+                else:
+                    yield call("finish_task", {"status": "succeeded", "summary": "Verified " + key})
+            else:
+                async for part in super().stream(messages, **kwargs):
+                    yield part
+
+    model = LongWorkers([proposal("alpha"), proposal("beta"), proposal("join", ("alpha", "beta"))])
+    events = [
+        e
+        async for e in stream_agent_graph(
+            model=model,
+            messages=[{"role": "user", "content": "Long parallel plan"}],
+            registry=registry(read),
+            context=ToolContext(uuid4(), uuid4(), "user"),
+            react_enabled=True,
+            planning_enabled=True,
+            parallel_enabled=True,
+            limits=AgentLimits(
+                max_steps=None,
+                max_duration_seconds=None,
+                max_identical_tool_calls=None,
+                max_repeated_observations=None,
+                max_total_tokens=80_000,
+            ),
+        )
+    ]
+    starts = [
+        e.step_number for e in events if isinstance(e, AgentLoopEvent) and e.kind == "model_started"
+    ]
+    assert calls == {"alpha": 5, "beta": 3, "join": 1}
+    assert len(starts) == len(set(starts)) == 14
+    final = next(
+        e.planning_snapshot
+        for e in reversed(events)
+        if isinstance(e, AgentLoopEvent) and e.planning_sync
+    )
+    assert set(final["statuses"].values()) == {"succeeded"}
+    assert final["attempts"]["join"]["first_step"] > max(
+        final["attempts"][k]["last_step"] for k in ("alpha", "beta")
+    )
+
+
 async def test_shared_budget_blocks_overlapping_and_unknown_reservations():
     budget = SharedWorkerBudget(100)
     async with budget.reserve(70, unreserved_usage) as receipt:

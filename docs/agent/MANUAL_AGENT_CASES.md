@@ -379,3 +379,84 @@ Không chạy lại paid suite chỉ để kiểm tra một thay đổi tài li�
   link trong content; parser không bỏ sót citation ở lần này. Raw đã bỏ reasoning và replay
   offline ở data/web-search-testing/20261103-d903ee36/ (Git ignore). Chưa gọi paid lại sau
   khi đổi prompt, chưa nghiệm thu khả năng luôn lấy được nguồn của provider.
+
+## 2026-11-03 — DeepSeek quá tải tạm thời
+
+- Restart web và worker để nhận retry; không cần sửa key hay chạy migration. Cấu hình
+  mặc định DEEPSEEK_MAX_RETRIES=2 (hai lần gọi lại, tổng ba request) và
+  DEEPSEEK_RETRY_BACKOFF_SECONDS=1. Đặt retries=0 để tắt. Docker dùng biến DEV_ tương ứng.
+- Khi provider trả HTTP429/500/502/503 trước chunk đầu tiên, call tự thử lại với backoff
+  khoảng1 rồi2 giây. Terminal có `DeepSeek HTTP 503; retry 1/2 in ...s`; giao diện tiếp
+  tục chờ tại bước model hiện tại. Không có lần chạy tool mới do retry transport.
+- Nếu provider hồi phục, câu trả lời tiếp tục bình thường. Nếu503 còn tồn tại sau tối đa
+  ba request, báo DeepSeek quá tải; gửi yêu cầu mới sau khi dịch vụ hồi phục.
+- Không retry stream đã bắt đầu (kể cả chunk rỗng/reasoning/tool/usage), timeout/kết nối
+  chưa rõ kết quả, lỗi API key/hết tiền/tham số. Hủy hoặc hết deadline thì ngừng chờ retry.
+  Retry-After được tôn trọng; nếu yêu cầu chờ quá30 giây thì dừng, không gọi sớm.
+- Trích xuất memory và nén history dùng chung retry. Memory extraction vẫn có thể ghi
+  lỗi rồi bỏ qua sau khi hết lượt thử; lỗi ở model chính vẫn làm yêu cầu thất bại.
+- 137 test offline liên quan đã đạt, có Agent gọi tool đúng1 lần sau503 và memory hồi phục.
+  Chưa gọi API thật để thử lại tình trạng quá tải; không cần cố tạo lỗi bằng cách spam API.
+
+## 2026-11-03 — Web search Responses và danh sách nguồn
+
+- Thay đường gọi Chat Completions bằng OpenRouter Responses + native web_search. Giữ
+  OPENROUTER_API_KEY và model hiện tại. Không cần thêm key, migration hay reindex.
+  OpenRouter hiện từ chối include=web_search_call.action.sources; code không gửi cờ này.
+- Tool đọc URL citation từ output_text.annotations và nguồn riêng từ action.sources nếu có;
+  nguồn có nhưng thiếu citation không bị coi là lỗi. Nếu không có cả hai thì vẫn báo partial
+  và không POST lại để chữa cùng lỗi. Widget/feed không có nguồn truy xuất chưa được dùng
+  làm bằng chứng. Không lấy URL do model viết trong prose thay cho metadata nguồn.
+- Backend thêm Nguồn đã tra cứu ở cuối, khử trùng lặp URL. Đây là nguồn API cung cấp, không
+  phải cam kết mỗi nguồn hỗ trợ từng câu. Giữ liên kết inline đã có; footer tồn tại sau reload.
+- Restart web và worker, tạo hội thoại mới để không dùng kết quả lỗi cũ. Test:
+  1. `Dùng search_web tìm dự báo thời tiết Hà Nội tối nay, cho biết nhiệt độ và khả năng mưa.`
+  2. `Dùng search_web kiểm tra trên python.org ngày phát hành chính thức Python 3.14.0.`
+  Phải có tool execution thật, câu trả lời và liên kết nguồn; Python trả7/10/2025. Reload kiểm
+  tra footer còn nguyên. Khi nguồn không đủ/khác ngày/địa điểm phải nói rõ, không tự đoán.
+- Hai case WebSearchHandler thật sau sửa đã trả nguồn (weather2, Python1); API replay với
+  DB/queue-worker thật kiểm stream/lưu/reload/owner đạt. Model chính DeepSeek đang gặp503 và
+  timeout trong thử toàn luồng live, nên kết quả tool riêng chưa phải nghiệm thu browser E2E.
+
+## 2026-11-04 — Agent chạy đến khi hoàn tất hoặc user bấm Dừng
+
+Mặc định bốn biến sau để trống (cũng nhận `none`, `null`, `unlimited`):
+
+```dotenv
+AGENT_MAX_STEPS=
+AGENT_MAX_DURATION_SECONDS=
+AGENT_MAX_IDENTICAL_TOOL_CALLS=
+AGENT_MAX_REPEATED_OBSERVATIONS=
+```
+
+- Root và task không còn tự dừng vì số bước, tổng thời gian hoặc lặp tool/observation.
+  Planner không còn chia các trần bước/thời gian/tool count hữu hạn cho task khi host để trống.
+  UI hiển thị bước hiện tại, không giới hạn bước và thời gian đã chạy.
+- Ngân sách token toàn run vẫn là7.969.672 mặc định, độc lập với số bước. Context/output/safety,
+  token từng task, quyền/approval, lease/journal và chặn outcome/billing chưa rõ vẫn có hiệu lực.
+  Không đổi trần bước thành một số hữu hạn rất lớn.
+- Timeout riêng của provider/model, search_documents, search_web, SMTP/MCP vẫn giữ nguyên.
+  summarize_documents không còn timeout tổng khi caller không giới hạn; từng model RPC của
+  map/reduce vẫn có timeout. Giới hạn tóm tắt toàn văn64 chunk và top-k retrieval không đổi.
+- Restart cả web và background worker để nhận cấu hình/code. Không cần migration hoặc reindex.
+  Với run cũ, resume giữ chính sách đã lưu trong checkpoint (có thể vẫn có trần hữu hạn).
+  Gửi yêu cầu mới để thử chính sách mới; không resume lượt cũ rồi kỳ vọng bỏ trần đã pin.
+
+Test tay sau khi chọn `Hiểu sâu về AI Agent.pdf` đã sẵn sàng:
+
+> Lập kế hoạch xử lý yêu cầu này: theo tài liệu đã chọn, so sánh ANNOY và HNSW về bộ nhớ
+> và cập nhật gia tăng; dùng search_web tìm tài liệu chính thức hnswlib để đối chiếu khả năng
+> thêm dữ liệu; dùng demo__calculate tính số vector sau khi 1 triệu vector tăng25%.
+> Cuối cùng tổng hợp thành bảng, phân biệt thông tin từ sách, web và phép tính.
+
+Kỳ vọng: không lặp planning_validation chỉ vì tổng task steps lớn hơn số bước còn lại;
+Agent có thể thực hiện RAG/web/phép tính và tổng hợp từ observation thật. Kết quả phép tính
+là1.250.000; lỗi provider/quyền/dữ liệu vẫn phải báo đúng, không tự nhận hoàn tất.
+
+Trong một yêu cầu dài, bấm **Dừng** khi đang chạy model/tool/worker; tiến trình phải chuyển
+sang đã dừng, không tiếp tục phát sinh model/tool mới sau khi hủy đã được xử lý. Các thao tác
+ngoài đã hoàn thành trước khi hủy không bị hoàn tác. Tắt subscriber/tab không thay cho nút Dừng.
+
+Các case lịch sử kiểm step/time/repeat cap chỉ còn áp dụng khi chủ động đặt lại biến hữu hạn
+và tạo run mới. Muốn khôi phục giới hạn, điền số dương rồi restart app/worker.
+Đợt thay đổi này không gọi API LLM trả phí; fixture tự động không thay thế browser/LLM E2E.

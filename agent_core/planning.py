@@ -34,9 +34,9 @@ class ProposedTask(BaseModel):
     tools: Annotated[tuple[Identifier, ...], Field(max_length=20)] = ()
     acceptance_criteria: Annotated[tuple[ShortText, ...], Field(min_length=1, max_length=8)]
     max_tokens: Annotated[int, Field(strict=True, ge=128)] | None = None
-    max_steps: Annotated[int, Field(strict=True, ge=1, le=50)] | None = None
-    max_tool_calls: Annotated[int, Field(strict=True, ge=0, le=50)] = 2
-    timeout_seconds: Annotated[float, Field(gt=0, le=3600)] | None = None
+    max_steps: Annotated[int, Field(strict=True, ge=1)] | None = None
+    max_tool_calls: Annotated[int, Field(strict=True, ge=0)] = 2
+    timeout_seconds: Annotated[float, Field(gt=0)] | None = None
 
 
 class PlanRequest(BaseModel):
@@ -68,6 +68,7 @@ def control_definitions():
                 "exact granted names; depends_on lists task IDs. Omit budgets to let the host "
                 "allocate the ONE root budget. Up to 8 tasks; the host schedules dependencies "
                 "and bounded workers. No nested plans or replanning. "
+                "When host step/time limits are null, tasks have no step/time/tool-count cap. "
                 "Simple questions need no plan.",
                 "parameters": PlanRequest.model_json_schema(),
             },
@@ -142,16 +143,22 @@ def create_plan(
                     "additionalProperties": False,
                 },
                 acceptance_criteria=proposed.acceptance_criteria,
-                timeout_seconds=float(
-                    proposed.timeout_seconds or remaining_seconds / len(request.tasks)
+                timeout_seconds=(
+                    float(proposed.timeout_seconds or remaining_seconds / len(request.tasks))
+                    if remaining_seconds is not None
+                    else None
                 ),
                 budget=TaskBudget(
                     max_tokens=proposed.max_tokens
                     or (remaining_tokens - explicit)
                     * (2 if proposed.tools else 1)
                     // max(1, missing),
-                    max_steps=proposed.max_steps or (2 if entries else 1),
-                    max_tool_calls=proposed.max_tool_calls if entries else 0,
+                    max_steps=(proposed.max_steps or (2 if entries else 1))
+                    if remaining_steps is not None
+                    else None,
+                    max_tool_calls=(proposed.max_tool_calls if entries else 0)
+                    if remaining_steps is not None
+                    else None,
                 ),
                 side_effect=effect,
             )
@@ -159,9 +166,12 @@ def create_plan(
     plan = PlanSpec(goal=goal[:1000], tasks=tuple(tasks))
     if sum(t.budget.max_tokens for t in tasks) > remaining_tokens:
         raise ValueError("Task token budgets exceed the remaining shared budget")
-    if sum(t.budget.max_steps for t in tasks) > remaining_steps:
+    if remaining_steps is not None and sum(t.budget.max_steps for t in tasks) > remaining_steps:
         raise ValueError("Task step budgets leave no final model turn")
-    if sum(t.timeout_seconds for t in tasks) > remaining_seconds + 0.001:
+    if (
+        remaining_seconds is not None
+        and sum(t.timeout_seconds for t in tasks) > remaining_seconds + 0.001
+    ):
         raise ValueError("Task deadlines exceed the root deadline")
     return {
         "version": PLANNING_VERSION,
@@ -332,9 +342,15 @@ def task_remaining(planning, state, elapsed):
     )
     return {
         "tokens": task.budget.max_tokens - (state["usage"]["total_tokens"] - a["tokens_start"]),
-        "steps": task.budget.max_steps - (state["step_number"] - a["first_step"]),
-        "tools": task.budget.max_tool_calls - tools,
-        "seconds": task.timeout_seconds - (elapsed - a["start_elapsed"]),
+        "steps": task.budget.max_steps - (state["step_number"] - a["first_step"])
+        if task.budget.max_steps is not None
+        else float("inf"),
+        "tools": task.budget.max_tool_calls - tools
+        if task.budget.max_tool_calls is not None
+        else float("inf"),
+        "seconds": task.timeout_seconds - (elapsed - a["start_elapsed"])
+        if task.timeout_seconds is not None
+        else float("inf"),
     }
 
 

@@ -51,12 +51,12 @@ class AgentTokenUsage(TypedDict):
 
 
 class AgentBudget(TypedDict):
-    max_steps: int
+    max_steps: int | None
     max_total_tokens: int
-    max_duration_seconds: float
+    max_duration_seconds: float | None
     elapsed_seconds: float
-    max_identical_tool_calls: int
-    max_repeated_observations: int
+    max_identical_tool_calls: int | None
+    max_repeated_observations: int | None
 
 
 class AgentState(TypedDict):
@@ -117,24 +117,24 @@ def empty_token_usage() -> AgentTokenUsage:
 
 def create_agent_budget(
     *,
-    max_steps: int = 8,
+    max_steps: int | None = None,
     max_total_tokens: int = 20_000,
-    max_duration_seconds: float = 120,
+    max_duration_seconds: float | None = None,
     elapsed_seconds: float = 0,
-    max_identical_tool_calls: int = 3,
-    max_repeated_observations: int = 3,
+    max_identical_tool_calls: int | None = None,
+    max_repeated_observations: int | None = None,
 ) -> AgentBudget:
-    if max_steps < 1:
+    if max_steps is not None and max_steps < 1:
         raise ValueError("max_steps phải lớn hơn hoặc bằng 1")
     if max_total_tokens < 1:
         raise ValueError("max_total_tokens phải lớn hơn hoặc bằng 1")
-    if max_duration_seconds <= 0:
+    if max_duration_seconds is not None and max_duration_seconds <= 0:
         raise ValueError("max_duration_seconds phải lớn hơn 0")
     if elapsed_seconds < 0:
         raise ValueError("elapsed_seconds không được âm")
-    if max_identical_tool_calls < 1:
+    if max_identical_tool_calls is not None and max_identical_tool_calls < 1:
         raise ValueError("max_identical_tool_calls phải lớn hơn hoặc bằng 1")
-    if max_repeated_observations < 1:
+    if max_repeated_observations is not None and max_repeated_observations < 1:
         raise ValueError("max_repeated_observations phải lớn hơn hoặc bằng 1")
     return AgentBudget(
         max_steps=max_steps,

@@ -174,7 +174,7 @@ async def stream_document_qa(
     persist_trace: Callable[[dict], Awaitable[None]] | None = None,
     preserve_limits: bool = False,
 ) -> AsyncIterator[LLMChunk | AgentLoopEvent]:
-    if not preserve_limits:
+    if not preserve_limits and limits.max_duration_seconds is not None:
         limits = replace(limits, max_duration_seconds=get_settings().document_qa_timeout_seconds)
 
     async def save_trace():
@@ -270,7 +270,9 @@ async def stream_document_qa(
         repair_reason=None,
     ):
         nonlocal calls, total_usage
-        if calls >= limits.max_steps or total_usage.total_tokens >= limits.max_total_tokens:
+        if (
+            limits.max_steps is not None and calls >= limits.max_steps
+        ) or total_usage.total_tokens >= limits.max_total_tokens:
             raise DocumentServiceError(
                 "Yêu cầu vượt budget hỏi đáp tài liệu. Hãy thu hẹp phạm vi.",
                 status_code=422,
@@ -607,7 +609,7 @@ async def stream_document_qa(
             and measure_context_blocks("rag", blocks) > context_budget.rag_tokens
         ):
             groups = batches(blocks)
-            if calls + len(groups) + 1 > limits.max_steps:
+            if limits.max_steps is not None and calls + len(groups) + 1 > limits.max_steps:
                 raise DocumentServiceError(
                     "Tóm tắt toàn bộ vượt budget số lần gọi model. Hãy chọn "
                     "ít file hơn hoặc hỏi một chủ đề cụ thể.",

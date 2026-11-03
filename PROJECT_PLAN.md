@@ -20,6 +20,13 @@ Ngày 2026-11-03: đã tái hiện một lần web thời tiết bằng API th�
 annotations/link nguồn. Thêm chẩn đoán nguồn, chặn retry chữa cùng lỗi trong task, giữ usage
 và đánh dấu partial khi chưa có bằng chứng web. Không bảo đảm provider luôn trả citation;
 lỗi missing usage vẫn hoãn. Xem notes/manual cho phạm vi kiểm thử và giới hạn.
+Đã bổ sung retry DeepSeek tại lớp provider: tối đa hai lần gọi lại trước chunk đầu tiên cho
+HTTP 429/500/502/503, backoff tăng dần; dùng chung cho Agent, memory và nén history.
+Không phát lại stream đã bắt đầu hoặc timeout/kết nối chưa rõ kết quả. Chi tiết trong notes.
+Web search chuyển sang OpenRouter Responses với tool OpenAI native web_search, giữ key/model
+và provider pin. Backend chuẩn hóa citation/nguồn tra cứu, bổ sung footer nguồn vào stream và
+message lưu. Hai case tool thật (thời tiết Hà Nội, Python) đã trả nguồn; kiểm tra API/worker
+với provider replay đạt. Test toàn luồng bằng DeepSeek thật đang gặp503/time limit, chưa nghiệm thu.
 Kết quả và cảnh báo release: [Baseline Ngày 76](reports/baselines/2026-10-18-day76/BASELINE.md).
 Tra cứu nhanh: [thứ tự các mốc](#3-thứ-tự-triển-khai-và-phạm-vi-từng-bản),
 [mapping module](#4-mapping-module-và-dữ-liệu-dự-kiến),
@@ -1423,6 +1430,32 @@ Không mặc định các số liệu hiệu năng trong sách áp dụng cho pr
 - Cập nhật checkbox này và `PROJECT_NOTES.md` nếu kỹ thuật đã dùng thật.
 
 ## Task tiếp theo
+
+### Điều chỉnh 2026-11-04 — Agent do user chủ động dừng
+
+Yêu cầu đã chốt: bỏ trần số bước, tổng thời gian và chống lặp của root/task; dùng None
+cho không giới hạn. Giữ context/output/safety và ngân sách token cả run, quyền/approval,
+timeout riêng của từng model/tool, journal chống phát lại hành động chưa rõ kết quả.
+Không tăng8 thành một số lớn, không tạo file mới, không commit/push tự động. Làm trực tiếp
+trong workspace hiện có, giữ nguyên các chỉnh sửa chưa commit của user.
+
+- [x] Contract/config/status: hỗ trợ None; gỡ phụ thuộc budget token vào max_steps;
+  UI hiện bước hiện tại/thời gian đã chạy, không /null hoặc giả thời gian còn lại.
+- [x] Regression đỏ trước: plan4 task14 bước vẫn được nhận khi không cap; ReAct vượt8
+  và lặp observation không tự dừng; worker dài hơn cap cũ; task phụ thuộc, cancel/resume.
+- [x] Scheduler/graph: không kiểm step/time/repeat khi capNone; task không tự nhận cap2
+  tool/model calls; bỏ recursion cap hữu hạn LangGraph cho policy unbounded; vẫn kiểm
+  token/permission/schema/unknown outcome. Map step worker động, journal pin khi durable.
+- [x] Bridge tài liệu: summary không tự dùng7 bước/120s khi caller unbounded; giữ timeout
+  riêng cho truy xuất/model, không mở rộng số nguồn hoặc cap toàn văn.
+- [x] Kiểm xanh target + toàn pytest, Ruff/Node/Compose; đọc lại diff và review độc lập;
+  cập nhật cuối PROJECT_NOTES và manual/env. Không gọi LLM trả phí cho kiểm tra này.
+
+Hoàn tất2026-11-04: toàn bộ1051 test đạt; Ruff, Node syntax, Compose config và diff check đạt.
+Đã kiểm PostgreSQL/checkpoint/journal thật với model fixture: resume không gọi lặp tool,
+allocator cấp ID duy nhất; dữ liệu fixture đã dọn. Review độc lập không còn finding trong
+phạm vi. Không gọi API LLM trả phí, chưa browser E2E/hard-kill/Docker build. Restart web/worker,
+gửi request mới để nhận policy; checkpoint run cũ vẫn giữ giới hạn cũ.
 
 Ngày 2026-11-02: đã triển khai code ReAct đợt1–6 và context budget theo tỷ lệ5/65/15/10/5
 trên1.048.576 token; bỏ quota ngày theo yêu cầu user. Report đợt6 W01 đạt, W02 partial do quota

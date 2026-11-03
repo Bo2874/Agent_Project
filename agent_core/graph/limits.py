@@ -30,56 +30,65 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
     phase = state["phase"]
 
     if phase == "context_ready":
-        if state["step_number"] > budget["max_steps"]:
+        if budget["max_steps"] is not None and state["step_number"] > budget["max_steps"]:
             return "step_limit"
         if (
             state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
             >= budget["max_total_tokens"]
         ):
             return "token_limit"
-        if any(
+        if budget["max_identical_tool_calls"] is not None and any(
             count > budget["max_identical_tool_calls"]
             for count in state["tool_call_counts"].values()
         ):
             return "repeated_tool_call"
-        if any(
+        if budget["max_repeated_observations"] is not None and any(
             count > budget["max_repeated_observations"]
             for count in state["observation_counts"].values()
         ):
             return "repeated_observation"
-        if budget["elapsed_seconds"] >= budget["max_duration_seconds"]:
+        if (
+            budget["max_duration_seconds"] is not None
+            and budget["elapsed_seconds"] >= budget["max_duration_seconds"]
+        ):
             return "time_limit"
 
     if phase == "model_completed" and state["pending_tool_calls"]:
-        if state["step_number"] >= budget["max_steps"]:
+        if budget["max_steps"] is not None and state["step_number"] >= budget["max_steps"]:
             return "step_limit"
         if (
             state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
             >= budget["max_total_tokens"]
         ):
             return "token_limit"
-        if budget["elapsed_seconds"] >= budget["max_duration_seconds"]:
+        if (
+            budget["max_duration_seconds"] is not None
+            and budget["elapsed_seconds"] >= budget["max_duration_seconds"]
+        ):
             return "time_limit"
-        if any(
+        if budget["max_identical_tool_calls"] is not None and any(
             count > budget["max_identical_tool_calls"]
             for count in state["tool_call_counts"].values()
         ):
             return "repeated_tool_call"
 
     if phase == "tools_completed":
-        if state["step_number"] > budget["max_steps"]:
+        if budget["max_steps"] is not None and state["step_number"] > budget["max_steps"]:
             return "step_limit"
         if (
             state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
             >= budget["max_total_tokens"]
         ):
             return "token_limit"
-        if any(
+        if budget["max_repeated_observations"] is not None and any(
             count > budget["max_repeated_observations"]
             for count in state["observation_counts"].values()
         ):
             return "repeated_observation"
-        if budget["elapsed_seconds"] >= budget["max_duration_seconds"]:
+        if (
+            budget["max_duration_seconds"] is not None
+            and budget["elapsed_seconds"] >= budget["max_duration_seconds"]
+        ):
             return "time_limit"
 
     return None

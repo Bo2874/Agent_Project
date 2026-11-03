@@ -1,9 +1,13 @@
+import asyncio
 import json
+import logging
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID
 
+import httpx
 import pytest
 from langchain_core.messages import (
     AIMessage,
@@ -12,11 +16,14 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_openai.chat_models.base import OpenAIAPIError
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import SecretStr, ValidationError
 
 from agent_core.context_budget import ContextTokenBudget
 from agent_core.contracts.retrieval import RetrievalResult
 from agent_core.graph import AgentLimits
+from agent_core.llm import deepseek
 from agent_core.llm.deepseek import (
     LangChainDeepSeekChatModel,
     LLMConfigurationError,
@@ -78,6 +85,8 @@ def test_cli_and_fastapi_share_the_same_model_factory(monkeypatch: pytest.Monkey
         deepseek_model = "deepseek-test"
         deepseek_thinking = False
         deepseek_max_tokens = 512
+        deepseek_max_retries = 1
+        deepseek_retry_backoff_seconds = 0.5
 
     monkeypatch.setattr(dependencies_llm, "get_settings", FakeSettings)
 
@@ -86,6 +95,274 @@ def test_cli_and_fastapi_share_the_same_model_factory(monkeypatch: pytest.Monkey
     assert isinstance(model, LangChainDeepSeekChatModel)
     assert model.provider == "deepseek"
     assert model.model == "deepseek-test"
+    assert model.max_retries == 1
+    assert model.retry_backoff_seconds == 0.5
+    assert model._chat_model.max_retries == 0  # Only the adapter owns retry.
+
+
+class ScriptedLangChainModel(FakeLangChainModel):
+    def __init__(self, attempts: list[list[AIMessageChunk | Exception]]) -> None:
+        super().__init__()
+        self.attempts = attempts
+        self.requests: list[tuple[list[Any], dict[str, Any]]] = []
+
+    async def astream(self, messages: list[Any], **kwargs: Any) -> Any:
+        index = len(self.requests)
+        self.requests.append((messages, kwargs))
+        for item in self.attempts[index]:
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
+
+def provider_status_error(status: int, retry_after: str | None = None) -> APIStatusError:
+    response = httpx.Response(
+        status,
+        request=httpx.Request("POST", "https://api.deepseek.com/chat/completions"),
+        headers={"Retry-After": retry_after} if retry_after is not None else {},
+    )
+    error_class = OpenAIAPIError if status >= 500 else APIStatusError
+    # Match the SDK/LangChain exception from the real 503 traceback.
+    return error_class("Service busy; private body", response=response, body=None)
+
+
+@pytest.fixture
+def retry_sleep(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    sleep = AsyncMock()
+    monkeypatch.setattr(deepseek, "asyncio", SimpleNamespace(sleep=sleep))
+    monkeypatch.setattr(deepseek.random, "uniform", lambda *_: 0.0)
+    return sleep
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+async def test_provider_retries_explicit_transient_error_before_stream(
+    status: int, retry_sleep: AsyncMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    model = ScriptedLangChainModel(
+        [[provider_status_error(status)], [AIMessageChunk(content="OK")]]
+    )
+    client = make_client(model)
+    tools = [{"type": "function", "function": {"name": "echo_text", "parameters": {}}}]
+    with caplog.at_level(logging.WARNING, logger=deepseek.__name__):
+        chunks = [
+            chunk
+            async for chunk in client.stream(
+                [{"role": "user", "content": "private prompt"}],
+                tools=tools,
+                user_id="private-user",
+                json_mode=True,
+            )
+        ]
+    assert [chunk.content for chunk in chunks] == ["OK"]
+    assert len(model.requests) == 2
+    assert model.requests[0] == model.requests[1]
+    assert model.bound_tools == tools
+    assert model.requests[1][1]["response_format"] == {"type": "json_object"}
+    retry_sleep.assert_awaited_once_with(1.0)
+    assert f"DeepSeek HTTP {status}; retry 1/2" in caplog.text
+    assert "private" not in caplog.text
+    assert "test-key" not in caplog.text
+
+
+async def test_provider_stops_after_two_retries_with_friendly_503(
+    retry_sleep: AsyncMock,
+) -> None:
+    model = ScriptedLangChainModel([[provider_status_error(503)] for _ in range(3)])
+    with pytest.raises(LLMProviderError, match="HTTP 503.*3 lần gọi") as raised:
+        _ = [chunk async for chunk in make_client(model).stream([])]
+    assert len(model.requests) == 3
+    assert [call.args[0] for call in retry_sleep.await_args_list] == [1.0, 2.0]
+    assert isinstance(raised.value.__cause__, OpenAIAPIError)
+
+
+@pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 408, 422, 504])
+async def test_provider_does_not_retry_other_http_errors(
+    status: int, retry_sleep: AsyncMock
+) -> None:
+    model = ScriptedLangChainModel([[provider_status_error(status)]])
+    with pytest.raises(LLMProviderError, match=f"HTTP {status}"):
+        _ = [chunk async for chunk in make_client(model).stream([])]
+    assert len(model.requests) == 1
+    retry_sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        APIConnectionError(request=httpx.Request("POST", "https://example.invalid")),
+        APITimeoutError(request=httpx.Request("POST", "https://example.invalid")),
+    ],
+)
+async def test_provider_does_not_retry_unknown_network_outcome(
+    error: Exception, retry_sleep: AsyncMock
+) -> None:
+    model = ScriptedLangChainModel([[error]])
+    with pytest.raises(LLMProviderError):
+        _ = [chunk async for chunk in make_client(model).stream([])]
+    assert len(model.requests) == 1
+    retry_sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "first_chunk",
+    [
+        AIMessageChunk(content="partial answer"),
+        AIMessageChunk(content=""),
+        AIMessageChunk(content="", additional_kwargs={"reasoning_content": "private"}),
+        AIMessageChunk(
+            content="",
+            tool_call_chunks=[{"index": 0, "id": "call_1", "name": "send_email", "args": "{"}],
+        ),
+        AIMessageChunk(
+            content="",
+            usage_metadata={"input_tokens": 10, "output_tokens": 1, "total_tokens": 11},
+        ),
+    ],
+)
+async def test_provider_never_replays_started_stream(
+    first_chunk: AIMessageChunk, retry_sleep: AsyncMock
+) -> None:
+    model = ScriptedLangChainModel([[first_chunk, provider_status_error(503)]])
+    stream = make_client(model).stream([])
+    chunk = await anext(stream)
+    assert chunk.content == first_chunk.text
+    with pytest.raises(LLMProviderError):
+        await anext(stream)
+    assert len(model.requests) == 1
+    retry_sleep.assert_not_awaited()
+
+
+async def test_provider_can_disable_retry(retry_sleep: AsyncMock) -> None:
+    model = ScriptedLangChainModel([[provider_status_error(503)]])
+    client = make_client(model)
+    client.max_retries = 0
+    with pytest.raises(LLMProviderError, match="1 lần gọi"):
+        _ = [chunk async for chunk in client.stream([])]
+    assert len(model.requests) == 1
+    retry_sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"), [("5", 5.0), ("-2", 1.0), ("bad", 1.0), ("60", None), ("inf", None)]
+)
+def test_retry_after_is_respected_and_bounded(
+    header: str, expected: float | None, retry_sleep: AsyncMock
+) -> None:
+    assert deepseek._retry_delay(provider_status_error(503, header), 0, 1.0) == expected
+
+
+def test_retry_after_http_date(monkeypatch: pytest.MonkeyPatch, retry_sleep: AsyncMock) -> None:
+    monkeypatch.setattr(
+        deepseek, "datetime", SimpleNamespace(now=lambda _: datetime(2026, 11, 3, tzinfo=UTC))
+    )
+    error = provider_status_error(503, "Tue, 03 Nov 2026 00:00:07 GMT")
+    assert deepseek._retry_delay(error, 0, 1.0) == 7.0
+
+
+async def test_long_retry_after_does_not_trigger_early_retry(retry_sleep: AsyncMock) -> None:
+    model = ScriptedLangChainModel([[provider_status_error(503, "60")]])
+    with pytest.raises(LLMProviderError):
+        _ = [chunk async for chunk in make_client(model).stream([])]
+    assert len(model.requests) == 1
+    retry_sleep.assert_not_awaited()
+
+
+async def test_cancel_during_retry_wait_prevents_another_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    waiting = asyncio.Event()
+
+    async def wait(_: float) -> None:
+        waiting.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(deepseek, "asyncio", SimpleNamespace(sleep=wait))
+    model = ScriptedLangChainModel([[provider_status_error(503)]])
+
+    async def consume() -> None:
+        _ = [chunk async for chunk in make_client(model).stream([])]
+
+    task = asyncio.create_task(consume())
+    await asyncio.wait_for(waiting.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(model.requests) == 1
+
+
+async def test_memory_extraction_recovers_through_shared_adapter(retry_sleep: AsyncMock) -> None:
+    from agent_core.memory import extract_memory_candidates
+
+    model = ScriptedLangChainModel(
+        [
+            [provider_status_error(503)],
+            [
+                AIMessageChunk(
+                    content='{"memories":[]}',
+                    response_metadata={"finish_reason": "stop"},
+                    usage_metadata={"input_tokens": 10, "output_tokens": 1, "total_tokens": 11},
+                )
+            ],
+        ]
+    )
+    result = await extract_memory_candidates(
+        make_client(model), "Weather tonight?", user_id=UUID(int=1)
+    )
+    assert result.candidates == ()
+    assert result.usage.total_tokens == 11
+    assert len(model.requests) == 2
+    retry_sleep.assert_awaited_once()
+
+
+async def test_agent_recovers_from_503_then_executes_tool_only_once(retry_sleep: AsyncMock) -> None:
+    from agent_core.graph import AgentLoopEvent, stream_agent_graph
+    from agent_core.tools import ToolContext, ToolRegistry, ToolResult, create_context_tool
+
+    handler = AsyncMock(return_value=ToolResult.success("Observation"))
+    registry = ToolRegistry()
+    registry.register(
+        create_context_tool(
+            name="echo_text",
+            description="Echo text",
+            args_schema={"type": "object", "properties": {}},
+            coroutine=handler,
+        )
+    )
+    model = ScriptedLangChainModel(
+        [
+            [provider_status_error(503)],
+            [
+                AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[
+                        {"index": 0, "id": "call_1", "name": "echo_text", "args": "{}"}
+                    ],
+                    response_metadata={"finish_reason": "tool_calls"},
+                )
+            ],
+            [AIMessageChunk(content="Done", response_metadata={"finish_reason": "stop"})],
+        ]
+    )
+    events = [
+        event
+        async for event in stream_agent_graph(
+            model=make_client(model),
+            messages=[{"role": "user", "content": "Echo"}],
+            registry=registry,
+            context=ToolContext(user_id=UUID(int=1), conversation_id=UUID(int=2), user_role="user"),
+            react_enabled=True,
+        )
+    ]
+    assert "".join(event.content for event in events if isinstance(event, LLMChunk)) == "Done"
+    assert len(model.requests) == 3  # Rejected request + tool decision + final answer.
+    handler.assert_awaited_once()
+    completed = [
+        event
+        for event in events
+        if isinstance(event, AgentLoopEvent) and event.kind == "tool_completed"
+    ]
+    assert len(completed) == 1
+    retry_sleep.assert_awaited_once()
 
 
 def test_converts_application_messages_to_langchain_messages() -> None:

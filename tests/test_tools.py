@@ -22,33 +22,47 @@ from agent_core.tools.web_search import (
     SearchWebInput,
     WebSearchConfig,
     WebSearchHandler,
+    normalize_web_sources,
     register_web_search_tool,
 )
 
 
 def web_payload():
     return {
+        "id": "gen-fixture",
+        "model": "openai/gpt-5.4-mini",
         "provider": "OpenAI",
-        "choices": [
+        "status": "completed",
+        "output": [
             {
-                "finish_reason": "stop",
-                "message": {
-                    "content": "Answer ([Python](https://www.python.org/)).",
-                    "annotations": [
-                        {
-                            "type": "url_citation",
-                            "url_citation": {"url": "https://www.python.org/", "title": "Python"},
-                        }
-                    ],
-                },
-            }
+                "type": "web_search_call",
+                "status": "completed",
+                "action": {"type": "search", "query": "Python release"},
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "Answer ([Python](https://www.python.org/)).",
+                        "annotations": [
+                            {
+                                "type": "url_citation",
+                                "url": "https://www.python.org/",
+                                "title": "Python",
+                            }
+                        ],
+                    }
+                ],
+            },
         ],
         "usage": {
-            "prompt_tokens": 100,
-            "completion_tokens": 20,
+            "input_tokens": 100,
+            "output_tokens": 20,
             "total_tokens": 120,
             "cost": 0.0101,
-            "prompt_tokens_details": {"cached_tokens": 40},
+            "input_tokens_details": {"cached_tokens": 40},
             "server_tool_use_details": {"web_search_requests": 1},
         },
     }
@@ -105,14 +119,16 @@ async def test_web_search_uses_native_endpoint_and_preserves_citations():
         },
     )
     assert not result.is_error
-    assert result.content == web_payload()["choices"][0]["message"]["content"]
+    assert result.content == web_payload()["output"][1]["content"][0]["text"]
     assert result.data["sources"] == [{"url": "https://www.python.org/", "title": "Python"}]
     assert result.usage.total_tokens == 120 and result.usage.cached_input_tokens == 40
     assert result.data["cost_usd"] == 0.0101 and result.data["search_requests"] == 1
     body = json.loads(requests[1].content)
     assert body["provider"] == {"only": ["openai"], "allow_fallbacks": False}
-    assert body["tools"][0]["parameters"]["engine"] == "native"
-    assert len(body["messages"]) == 2 and "history" not in body
+    assert body["tools"] == [{"type": "web_search"}]
+    assert requests[1].url.path.endswith("/responses") and "include" not in body
+    assert len(body["input"]) == 2 and "history" not in body
+    assert body["max_tool_calls"] == 2
     assert "test-secret-not-public" not in repr(config) + repr(result)
 
 
@@ -135,15 +151,13 @@ async def test_web_search_fails_closed_without_fallback_or_retry(case, expected)
     if case == "other_provider":
         payload["provider"] = "Azure"
     if case == "no_sources":
-        payload["choices"][0]["message"]["annotations"] = []
+        payload["output"][1]["content"][0]["annotations"] = []
     if case == "unsafe_url":
-        payload["choices"][0]["message"]["annotations"][0]["url_citation"]["url"] = (
-            "javascript:alert(1)"
-        )
+        payload["output"][1]["content"][0]["annotations"][0]["url"] = "javascript:alert(1)"
     if case == "truncated":
-        payload["choices"][0]["finish_reason"] = "length"
+        payload["status"] = "incomplete"
     if case == "bad_data":
-        payload["choices"] = "not-a-list"
+        payload["output"] = "not-a-list"
     transport, requests = web_transport(payload, native=case != "not_native")
     result = await WebSearchHandler(
         WebSearchConfig(api_key=SecretStr("test-secret")), transport=transport
@@ -179,7 +193,7 @@ async def test_web_search_missing_usage_keeps_billing_unknown_after_paid_post():
         None,
         [],
         [
-            {"type": "url_citation", "url_citation": {"url": "javascript:alert(1)"}},
+            {"type": "url_citation", "url": "javascript:alert(1)"},
         ],
     ],
 )
@@ -189,8 +203,8 @@ async def test_web_missing_sources_records_diagnostics_without_leaking_answer_to
 
     payload = web_payload()
     payload["id"] = "gen-test-diagnostic"
-    message = payload["choices"][0]["message"]
-    message["content"] = "UNVERIFIED_WEATHER SECRET"
+    message = payload["output"][1]["content"][0]
+    message["text"] = "UNVERIFIED_WEATHER SECRET"
     message["reasoning_details"] = [{"data": "NEVER_RETAIN_REASONING"}]
     if annotations is None:
         message.pop("annotations")
@@ -208,7 +222,7 @@ async def test_web_missing_sources_records_diagnostics_without_leaking_answer_to
     assert result.data["source_status"] == "missing" and result.data["retryable"] is False
     diagnostic = result.data["response_diagnostics"]
     assert diagnostic["request_id"] == "gen-test-diagnostic"
-    assert diagnostic["annotations_present"] == (annotations is not None)
+    assert diagnostic["annotations_count"] == len(annotations or [])
     assert diagnostic["answer_excerpt"] == "UNVERIFIED_WEATHER [REDACTED]"
     assert "SECRET" not in repr(result) and "NEVER_RETAIN_REASONING" not in repr(result)
     request = ToolCallRequest(id="c1", name="search_web", arguments={}, raw_arguments="{}")
@@ -220,7 +234,15 @@ async def test_web_missing_sources_records_diagnostics_without_leaking_answer_to
 def test_web_source_parser_reports_rejections_and_preserves_canonical_citations():
     from agent_core.tools.web_search import _sources
 
-    annotations = web_payload()["choices"][0]["message"]["annotations"]
+    annotations = [
+        {
+            "type": "url_citation",
+            "url_citation": {
+                "url": "https://www.python.org/",
+                "title": "Python",
+            },
+        }
+    ]
     invalid = [
         None,
         {"type": "other"},
@@ -240,6 +262,73 @@ def test_web_source_parser_reports_rejections_and_preserves_canonical_citations(
         "unsafe_or_incomplete_url": 1,
         "duplicate_url": 1,
     }
+
+
+@pytest.mark.parametrize("cited", [False, True])
+async def test_web_search_preserves_retrieval_sources_without_requiring_inline_citations(cited):
+    payload = web_payload()
+    payload.pop("provider")  # Real Responses API omits this field.
+    block = payload["output"][1]["content"][0]
+    block["text"] = "A sourced answer without links in the prose."
+    if not cited:
+        block["annotations"] = []
+    payload["output"][0]["action"]["sources"] = [
+        {"type": "url", "url": "https://www.python.org/", "title": "Python"},
+        {"type": "url", "url": "https://docs.python.org/", "title": "Docs"},
+        {"type": "url", "url": "javascript:alert(1)", "title": "Unsafe"},
+    ]
+    transport, requests = web_transport(payload)
+    result = await WebSearchHandler(
+        WebSearchConfig(api_key=SecretStr("fake")), transport=transport
+    )(ToolContext(user_id=uuid4(), conversation_id=uuid4(), user_role="user"), {"query": "Python"})
+    assert not result.is_error and result.usage.total_tokens == 120
+    assert result.data["source_status"] == ("cited" if cited else "retrieved")
+    assert result.data["sources"] == [
+        {"url": "https://www.python.org/", "title": "Python"},
+        {"url": "https://docs.python.org/", "title": "Docs"},
+    ]
+    assert len(result.data["citations"]) == int(cited) and len(requests) == 2
+
+
+@pytest.mark.parametrize("case", ["missing_call", "wrong_model", "failed_call", "prose_url"])
+async def test_responses_requires_completed_search_and_structured_sources(case):
+    payload = web_payload()
+    if case == "missing_call":
+        payload["output"].pop(0)
+    elif case == "wrong_model":
+        payload["model"] = "other/model"
+    elif case == "failed_call":
+        payload["output"][0]["status"] = "failed"
+    elif case == "prose_url":
+        payload["output"][1]["content"][0]["annotations"] = []
+    transport, _ = web_transport(payload)
+    result = await WebSearchHandler(
+        WebSearchConfig(api_key=SecretStr("fake")), transport=transport
+    )(ToolContext(user_id=uuid4(), conversation_id=uuid4(), user_role="user"), {"query": "Python"})
+    expected = "web_search_missing_sources" if case == "prose_url" else "web_search_not_performed"
+    assert result.error_code == expected
+    assert result.usage.total_tokens == 120
+
+
+def test_web_source_normalization_never_accepts_unattributed_feed_or_unsafe_links():
+    assert normalize_web_sources(
+        [
+            {"type": "oai-weather"},
+            {"url": "javascript:alert(1)"},
+            {"url": "https://user:secret@example.com"},
+            {"url": "https://example.com", "title": "Source"},
+            {"url": "https://example.com", "title": "Duplicate"},
+        ]
+    ) == [{"url": "https://example.com", "title": "Source"}]
+    # Duplicate records from several calls must not consume the unique-source limit.
+    assert (
+        len(
+            normalize_web_sources(
+                [{"url": "https://example.com"}] * 100 + [{"url": "https://example.com/other"}]
+            )
+        )
+        == 2
+    )
 
 
 @pytest.mark.parametrize("status", [401, 402, 403, 429, 500])
