@@ -1,6 +1,6 @@
 # Workspace 01 — Giao diện A và Excel Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Người dùng tải/tạo/sửa Excel qua chat, giữ phiên bản và mở preview theo yêu cầu, tải `.xlsx` thật.
 
@@ -89,10 +89,10 @@ Mới: `backend/models/artifact.py`, `backend/schemas/artifact.py`, `backend/ser
 
 **Interfaces:** `POST /api/artifacts` multipart upload; `POST /api/artifacts/import-document` `{document_version_id}`; `GET /api/artifacts`, `GET /api/artifacts/{id}/versions`, `GET /api/artifact-versions/{id}/download`; `GET/PUT /api/conversations/{id}/artifacts` `{version_ids: list[UUID]}`. `set_conversation_artifacts(session, owner, conversation_id, version_ids) -> tuple[PublishedArtifact,...]`; selectors check owner, không RAG status.
 
-- [ ] Red `test_upload_xlsx_without_rag_index`: uploaded version được chọn ngay, không tạo ingestion job; `test_guess_version_and_import_foreign_document`: 404; `test_unknown_length_upload_stops_at_limit`: stream bị chặn; `test_selected_version_is_pinned`: phiên bản mới không tự đổi input user đã chọn.
-- [ ] Chạy `python -m pytest tests/test_artifact_api.py -q` để thấy fail.
-- [ ] Implement tab “File làm việc” tại thư viện, upload xlsx vào Artifact storage; RAG file cũ dùng action import đã kiểm quyền và copy immutable. Nút thêm file trong chat mở picker có link tới thư viện. Đăng ký middleware streaming cho endpoint mới, auth/cache/download filename headers an toàn.
-- [ ] Green API và kiểm thư viện RAG cũ vẫn upload/QA được. Commit `feat: select uploaded artifacts independently of rag indexing`.
+- [x] Red `test_upload_xlsx_without_rag_index`: uploaded version được chọn ngay, không tạo ingestion job; `test_guess_version_and_import_foreign_document`: 404; `test_unknown_length_upload_stops_at_limit`: stream bị chặn; `test_selected_version_is_pinned`: phiên bản mới không tự đổi input user đã chọn.
+- [x] Chạy `python -m pytest tests/test_artifact_api.py -q` để thấy fail.
+- [x] Implement tab “File làm việc” tại thư viện, upload xlsx vào Artifact storage; RAG file cũ dùng action import đã kiểm quyền và copy immutable. Nút thêm file trong chat mở picker có link tới thư viện. Đăng ký middleware streaming cho endpoint mới, auth/cache/download filename headers an toàn.
+- [x] Green API và kiểm thư viện RAG cũ vẫn upload/QA được. Commit `feat: select uploaded artifacts independently of rag indexing`.
 
 ### Task 6: X6 — Tool Registry, pipeline xử lý và Python fallback
 

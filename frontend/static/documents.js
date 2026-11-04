@@ -280,6 +280,17 @@
             const download = node("a", "ghost-button", "Tải xuống");
             download.href = `/api/documents/${item.id}/download`;
             actions.append(download);
+            if (window.ArtifactWorkspace && document.querySelector("[data-artifact-library]") && ["docx", "pdf", "txt"].includes(item.file_type)) {
+              actions.append(button("Lưu bản sao làm việc", async () => {
+                if (busy) return;
+                busy = true; controls();
+                try {
+                  await window.ArtifactWorkspace.importDocument(item.version_id);
+                  message(find("upload-status"), "Đã lưu bản sao riêng; bản nguồn được giữ nguyên.");
+                } catch (error) { message(find("upload-status"), error.message, true); }
+                finally { busy = false; controls(); }
+              }));
+            }
             if (["uploaded", "failed", "cancelled"].includes(item.status) || item.awaiting_embedding) {
               actions.append(button(item.awaiting_embedding ? "Tiếp tục xử lý" : item.status === "uploaded" ? "Xử lý" : "Thử lại", () => changeProcessing(item, "retry")));
             } else if (needsRefresh(item)) {

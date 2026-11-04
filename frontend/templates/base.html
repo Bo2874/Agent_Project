@@ -10,6 +10,9 @@
     {% if user is defined and user %}
     <link rel="stylesheet" href="{{ url_for('static', path='/workspace.css') }}">
     <script src="{{ url_for('static', path='/workspace.js') }}" defer></script>
+    {% if workspace_features().artifacts %}
+    <script src="{{ url_for('static', path='/artifact-library.js') }}" defer></script>
+    {% endif %}
     {% endif %}
 </head>
 <body{% if user is defined and user %} data-authenticated="true"{% endif %}>

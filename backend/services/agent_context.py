@@ -84,3 +84,29 @@ async def load_execution_context(*, owner: UUID, conversation_id: UUID, current_
             )
         ).all()
     return execution_rows(records)
+
+
+async def load_artifact_context(*, owner: UUID, conversation_id: UUID):
+    from backend.core.config import get_settings
+    from backend.services.artifacts.selection import selected_versions
+
+    if not get_settings().workspace_artifacts_enabled:
+        return ()
+    async with SessionFactory() as session:
+        versions = await selected_versions(session, owner, conversation_id)
+    if not versions:
+        return ()
+    metadata = [
+        {
+            "artifact_id": str(row.artifact_id),
+            "version_id": str(row.id),
+            "name": row.name,
+            "mime_type": row.mime_type,
+            "version_number": row.version_number,
+            "calculation_status": row.calculation_status,
+        }
+        for row in versions
+    ]
+    return (
+        ContextBlock(source="selected_artifacts", content=json.dumps(metadata, ensure_ascii=False)),
+    )

@@ -301,3 +301,44 @@ async def test_reaper_removes_expired_orphan_volume_and_preserves_foreign_label(
     finally:
         await real_broker.cleanup(job)
         await real_broker.command("volume", "rm", foreign)
+
+
+async def test_runner_errors_show_reason_without_internal_traceback(tmp_path):
+    import httpx
+
+    from backend.services.artifacts.runner_client import ArtifactRunnerClient
+    from backend.services.artifacts.storage import ArtifactStorage
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            422,
+            json={
+                "detail": (
+                    "Traceback (most recent call last):\nFile /private/internal.py\n"
+                    "ValueError: Unsupported drawing"
+                ),
+            },
+        )
+    )
+    client = ArtifactRunnerClient(
+        "http://runner",
+        key="k" * 32,
+        owner=uuid4(),
+        storage=ArtifactStorage(tmp_path),
+        transport=transport,
+    )
+
+    async def cancel():
+        pass
+
+    with pytest.raises(ValueError) as error:
+        await client.execute(
+            ArtifactRunRequest(
+                job_id=uuid4(), operation=ArtifactOperation(kind="python", code="pass")
+            ),
+            (),
+            cancel=cancel,
+        )
+    assert "Unsupported drawing" in str(error.value)
+    assert "Traceback" not in str(error.value)
+    assert "/private" not in str(error.value)

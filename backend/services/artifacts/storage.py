@@ -8,8 +8,14 @@ from pathlib import Path
 from typing import BinaryIO
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+MIME_TYPES = {
+    "xlsx": XLSX_MIME,
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+    "txt": "text/plain",
+}
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-_KEY = re.compile(rf"{_UUID}/{_UUID}/{_UUID}/content\.xlsx")
+_KEY = re.compile(rf"{_UUID}/{_UUID}/{_UUID}/content\.(xlsx|docx|pdf|txt)")
 
 
 class ArtifactStorageError(ValueError):
@@ -78,7 +84,7 @@ class ArtifactStorage:
             if isinstance(error, ArtifactStorageError):
                 raise
             raise ArtifactStorageError("Cannot store artifact safely.") from error
-        return StoredArtifact(key, size, digest.hexdigest())
+        return StoredArtifact(key, size, digest.hexdigest(), MIME_TYPES[target.suffix[1:]])
 
     def delete(self, key: str) -> None:
         self.path(key).unlink(missing_ok=True)

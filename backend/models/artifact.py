@@ -70,6 +70,7 @@ class ArtifactVersion(Base):
                 "document_versions.owner_user_id",
             ],
             name="fk_artifact_source_document",
+            ondelete="SET NULL (source_document_version_id, source_document_id)",
         ),
         CheckConstraint("version_number >= 1 AND size_bytes > 0", name="ck_artifact_version_size"),
         CheckConstraint("sha256 ~ '^[0-9a-f]{64}$'", name="ck_artifact_sha256"),

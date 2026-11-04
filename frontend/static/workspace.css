@@ -46,6 +46,7 @@ body:has(.workspace-shell) .ambient { display: none; }
 .workspace-content h1 { font-size: clamp(28px, 3vw, 42px); line-height: 1.2; }
 .workspace-content input, .workspace-content textarea, .workspace-content select, .workspace-content button { font-family: Inter, system-ui, sans-serif; }
 .workspace-content input, .workspace-content select, .workspace-content textarea { color: var(--text); background: var(--surface); }
+.workspace-content label { color: var(--text); }
 .workspace-content > .chat-shell { width: 100%; height: 100%; margin: 0; border: 0; border-radius: 0; grid-template-columns: minmax(0, 1fr); background: var(--bg); box-shadow: none; }
 .workspace-content .chat-main { min-width: 0; min-height: 0; }
 .workspace-content .chat-header { min-height: 70px; padding: 18px 26px 12px; border: 0; align-items: flex-start; }
@@ -78,6 +79,19 @@ body:has(.workspace-shell) .ambient { display: none; }
 .workspace-content .rag-search-control select { font-size: 9px; padding: 4px 6px; }
 .workspace-content .rag-search-control > span:last-child { font-size: 9px; }
 .workspace-content .document-picker { color: var(--text); background: var(--bg); }
+.workspace-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--line); margin-bottom: 24px; }
+.workspace-tabs button { background: transparent; color: var(--muted); padding: 12px 16px; border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; font-size: 12px; }
+.workspace-tabs button[aria-selected=true] { color: var(--accent); border-bottom-color: var(--accent); background: #f0eee7; }
+.artifact-library-card .document-description { min-width: 0; }
+.artifact-library-card strong, .artifact-name-button { overflow-wrap: anywhere; }
+.artifact-name-button { text-align: left; background: transparent; color: var(--text); font-size: 14px; padding: 0; }
+.working-file-selection { margin-bottom: 8px; }
+.working-file-selection > .document-status:empty { display: none; }
+.working-file-selection .chat-document-actions { display: flex; align-items: center; gap: 12px; font-size: 10px; color: var(--muted); }
+.working-file-selection .ghost-button { padding: 6px 9px; font-size: 10px; }
+.working-file-picker .document-picker-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; cursor: pointer; border-bottom: 1px solid var(--line); }
+.working-file-picker .document-picker-item input { width: auto; flex-shrink: 0; margin-top: 3px; }
+.working-file-picker .document-picker-item strong, .working-file-picker .document-picker-item small { display: block; overflow-wrap: anywhere; }
 .workspace-content .agent-timeline { background: #f2f0e9; border-color: var(--line); }
 .workspace-content .agent-timeline summary,
 .workspace-content .timeline-item-name,

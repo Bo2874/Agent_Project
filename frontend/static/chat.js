@@ -13,10 +13,12 @@ if (chatApp) {
   let conversationMutationPending = false;
   let streamInProgress = false;
   let documentMutationPending = false;
+  let artifactMutationPending = false;
   let documentPanel = null;
+  let artifactPanel = null;
 
   function updateConversationControls() {
-    const disabled = streamInProgress || conversationMutationPending || documentMutationPending;
+    const disabled = streamInProgress || conversationMutationPending || documentMutationPending || artifactMutationPending;
     textarea.disabled = disabled;
     sendButton.disabled = disabled;
     if (ragSearchMode) ragSearchMode.disabled = disabled;
@@ -24,7 +26,8 @@ if (chatApp) {
     conversationList.querySelectorAll("button").forEach((button) => {
       button.disabled = disabled;
     });
-    documentPanel?.setDisabled(streamInProgress || conversationMutationPending);
+    documentPanel?.setDisabled(streamInProgress || conversationMutationPending || artifactMutationPending);
+    artifactPanel?.setDisabled(streamInProgress || conversationMutationPending || documentMutationPending);
   }
 
   function setBusy(isBusy) {
@@ -784,7 +787,7 @@ if (chatApp) {
   }
 
   async function selectConversation(conversation, refreshList = true) {
-    if (streamInProgress || documentMutationPending) return;
+    if (streamInProgress || documentMutationPending || artifactMutationPending) return;
     activeConversationId = conversation.id;
     title.textContent = conversation.title;
     document.querySelectorAll(".conversation-item").forEach((item) => {
@@ -796,6 +799,7 @@ if (chatApp) {
       requestJson(`/api/conversations/${conversation.id}/messages`),
       requestJson(`/api/conversations/${conversation.id}/runs`),
       documentPanel?.setConversation(conversation.id),
+      artifactPanel?.setConversation(conversation.id),
     ]);
     if (activeConversationId !== conversation.id) return;
     const runsByAssistantMessage = new Map(
@@ -1099,6 +1103,13 @@ if (chatApp) {
   documentPanel = window.DocumentLibrary.createChatPanel(chatApp, {
     onBusyChange(isBusy) {
       documentMutationPending = isBusy;
+      updateConversationControls();
+    },
+  });
+  artifactPanel = window.ArtifactWorkspace?.createChatPanel(chatApp, {
+    requestJson,
+    onBusyChange(isBusy) {
+      artifactMutationPending = isBusy;
       updateConversationControls();
     },
   });

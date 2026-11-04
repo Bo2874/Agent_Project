@@ -73,19 +73,29 @@ async def search_document_chunks(
 class DocumentUploadLimitMiddleware:
     """Bound multipart bytes before Starlette spools them, including chunked uploads."""
 
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int):
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_body_bytes: int,
+        path="/api/documents",
+        error_code="document_too_large",
+        methods=("POST",),
+    ):
         self.app, self.max_body_bytes = app, max_body_bytes
+        self.path, self.error_code = path, error_code
+        self.methods = methods
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
             scope["type"] != "http"
-            or scope["method"] != "POST"
-            or scope["path"].rstrip("/") != "/api/documents"
+            or scope["method"] not in self.methods
+            or scope["path"].rstrip("/") != self.path
         ):
             await self.app(scope, receive, send)
             return
         response = JSONResponse(
-            {"detail": "File vượt giới hạn dung lượng.", "code": "document_too_large"},
+            {"detail": "File vượt giới hạn dung lượng.", "code": self.error_code},
             status_code=413,
         )
         headers = dict(scope["headers"])

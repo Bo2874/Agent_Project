@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -69,7 +70,15 @@ class ArtifactRunnerClient:
                     ) as response:
                         if response.status_code != 200:
                             body = (await response.aread())[:8192]
-                            detail = body.decode("utf-8", "replace")
+                            try:
+                                detail = json.loads(body).get(
+                                    "detail", "Runner rejected the request"
+                                )
+                            except (ValueError, AttributeError):
+                                detail = "Runner returned an invalid error response"
+                            if not isinstance(detail, str):
+                                detail = "Runner rejected the request"
+                            detail = detail.splitlines()[-1][:1000] if detail else "Runner failed"
                             raise ValueError(f"Runner failed ({response.status_code}): {detail}")
                         with tempfile.TemporaryFile(dir=self.storage.root) as bundle:
                             size = 0

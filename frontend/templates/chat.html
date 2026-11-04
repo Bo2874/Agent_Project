@@ -25,6 +25,13 @@
         </div>
 
         <div class="composer-wrap">
+            {% if workspace_features().artifacts %}
+            <section class="working-file-selection" data-artifact-selection aria-label="File làm việc trong chat">
+                <div class="chat-document-actions"><button class="ghost-button" type="button" data-working-choose disabled>＋ File làm việc</button><span data-working-count>Đang tải file…</span></div>
+                <div class="chat-document-chips" data-working-chips></div>
+                <p class="document-status" data-working-status role="status" aria-live="polite"></p>
+            </section>
+            {% endif %}
             <section class="chat-documents" data-chat-documents aria-label="Tài liệu trong hội thoại">
                 <div class="chat-document-actions">
                     <button class="ghost-button" type="button" data-chat-document-choose disabled>Chọn từ thư viện</button>

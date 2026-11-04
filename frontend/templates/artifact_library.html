@@ -1,0 +1,21 @@
+<section class="artifact-library" data-artifact-library>
+    <form class="document-upload-box" data-artifact-upload>
+        <label for="working-files">Thêm file làm việc</label>
+        <p class="document-hint">Tải Excel .xlsx để chọn và sửa trong chat. File được lưu riêng, không cần xử lý RAG.</p>
+        <div class="document-upload-controls">
+            <input id="working-files" type="file" accept=".xlsx" multiple required>
+            <button class="ghost-button" type="submit">Tải lên thư viện</button>
+        </div>
+    </form>
+    <form class="document-filters" data-artifact-filters role="search" aria-label="Lọc file làm việc">
+        <input name="q" type="search" maxlength="255" placeholder="Tìm tên file…" aria-label="Tên file">
+        <select name="origin" aria-label="Nguồn file"><option value="">Mọi nguồn</option><option value="upload">Bạn tải lên</option><option value="agent">Agent tạo</option><option value="document">Bản sao từ RAG</option></select>
+        <select name="file_type" aria-label="Loại file"><option value="">Mọi định dạng</option><option value="xlsx">Excel</option><option value="docx">Word</option><option value="pdf">PDF</option><option value="txt">Text</option></select>
+        <button class="ghost-button" type="submit">Tìm</button>
+        <button class="ghost-button" type="button" data-artifact-refresh>Làm mới</button>
+    </form>
+    <p class="document-status" data-artifact-status role="status" aria-live="polite"></p>
+    <p class="document-hint" data-artifact-usage></p>
+    <div class="document-list" data-artifact-list aria-busy="true"></div>
+    <div class="document-pagination"><button class="ghost-button" type="button" data-artifact-prev>Trước</button><span data-artifact-page></span><button class="ghost-button" type="button" data-artifact-next>Sau</button></div>
+</section>

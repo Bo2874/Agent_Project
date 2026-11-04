@@ -8,19 +8,19 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID
 
-from backend.services.artifacts.storage import ArtifactStorageError, StoredArtifact
+from backend.services.artifacts.storage import MIME_TYPES, ArtifactStorageError, StoredArtifact
 
 
 def validate_name(name: str) -> str:
     name = unicodedata.normalize("NFC", name)
     if (
-        not name.lower().endswith(".xlsx")
-        or not 5 < len(name) <= 255
+        Path(name).suffix.lower().lstrip(".") not in MIME_TYPES
+        or not 1 < len(name) <= 255
         or any(c in name for c in "/\\:")
         or any(unicodedata.category(c).startswith("C") for c in name)
         or not Path(name).stem.strip(". ")
     ):
-        raise ArtifactStorageError("Choose a valid .xlsx filename.", 415)
+        raise ArtifactStorageError("Choose a valid XLSX, DOCX, PDF or TXT filename.", 415)
     return name
 
 

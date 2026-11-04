@@ -9,11 +9,19 @@
             <h1>Tài liệu của bạn</h1>
             <p class="lead">Lưu file một lần, chọn lại trong các hội thoại của bạn. Xóa hội thoại không xóa tài liệu.</p>
         </div>
-        <div class="document-quota">
+        <div class="document-quota" data-rag-quota>
             <span data-document-usage>Đang tải dung lượng…</span>
             <progress data-document-quota max="1" value="0" aria-label="Dung lượng thư viện đã sử dụng"></progress>
         </div>
     </header>
+    {% if workspace_features().artifacts %}
+    <div class="workspace-tabs" role="tablist" aria-label="Thư viện">
+        <button type="button" role="tab" aria-selected="true" aria-controls="rag-library" data-library-tab="rag">Nguồn hỏi đáp</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="working-library" data-library-tab="working">File làm việc</button>
+    </div>
+    <div id="working-library" role="tabpanel" hidden>{% include "artifact_library.html" %}</div>
+    {% endif %}
+    <div id="rag-library" role="tabpanel">
     <section class="document-upload-box">
         <form data-document-upload-form>
             <label for="library-files">Thêm tài liệu</label>
@@ -49,6 +57,7 @@
         <button class="ghost-button" data-document-prev disabled>Trước</button>
         <span data-document-page-info></span>
         <button class="ghost-button" data-document-next disabled>Sau</button>
+    </div>
     </div>
 </main>
 <script src="{{ url_for('static', path='/documents.js') }}" defer></script>

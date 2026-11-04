@@ -10,7 +10,7 @@ from backend.core.config import get_settings
 from backend.models import AgentRun, Conversation, DocumentVersion, User
 from backend.models.artifact import Artifact, ArtifactVersion
 from backend.schemas.artifact import PublishedArtifact
-from backend.services.artifacts.storage import ArtifactStorage, ArtifactStorageError
+from backend.services.artifacts.storage import MIME_TYPES, ArtifactStorage, ArtifactStorageError
 from backend.services.artifacts.validation import ValidatedArtifact, validate_name
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,10 @@ class ArtifactService:
             raise HTTPException(404, "Artifact not found.")
         try:
             name = validate_name(staged.name)
+            from pathlib import Path
+
+            if MIME_TYPES[Path(name).suffix.lower()[1:]] != staged.stored.mime_type:
+                raise ArtifactStorageError("Artifact filename and MIME type do not match.")
             if not 1 <= len(operation_key) <= 160:
                 raise HTTPException(422, "Invalid artifact operation key.")
             await asyncio.to_thread(
@@ -195,8 +199,13 @@ class ArtifactService:
 
 def get_artifact_service() -> ArtifactService:
     settings = get_settings()
+    from backend.core.config import PROJECT_ROOT
+
+    root = settings.artifact_storage_path
+    if not root.is_absolute():
+        root = PROJECT_ROOT / root
     return ArtifactService(
-        ArtifactStorage(settings.artifact_storage_path),
+        ArtifactStorage(root),
         max_file_bytes=settings.artifact_max_file_bytes,
         max_user_bytes=settings.artifact_max_user_bytes,
     )
