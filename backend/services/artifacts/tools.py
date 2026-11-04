@@ -20,7 +20,7 @@ from artifact_runtime.protocol import (
 )
 from backend.database import SessionFactory
 from backend.models import AgentRun, Conversation
-from backend.models.artifact import ArtifactVersion
+from backend.models.artifact import ArtifactVersion, MessageArtifact
 from backend.services.artifacts.service import get_artifact_service, published
 from backend.services.artifacts.storage import XLSX_MIME, ArtifactStorageError
 from backend.services.artifacts.validation import ValidatedArtifact, validate_archive, validate_name
@@ -75,7 +75,17 @@ class ArtifactToolService:
                 )
             )
             if conversation is None:
-                raise HTTPException(404, "Artifact is not in this run's scope.")
+                binding = await session.scalar(
+                    select(MessageArtifact.message_id)
+                    .where(
+                        MessageArtifact.version_id == row.id,
+                        MessageArtifact.owner_user_id == context.user_id,
+                        MessageArtifact.conversation_id == context.conversation_id,
+                    )
+                    .limit(1)
+                )
+                if binding is None:
+                    raise HTTPException(404, "Artifact is not in this run's scope.")
         if row.mime_type != XLSX_MIME:
             raise HTTPException(415, "Hiện chỉ xử lý Excel .xlsx.")
         return row

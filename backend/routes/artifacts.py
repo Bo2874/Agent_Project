@@ -378,6 +378,14 @@ async def preview_artifact(
         if row.source_run_id
         else None
     )
+    if conversation is None:
+        from backend.models.artifact import MessageArtifact
+
+        conversation = await session.scalar(
+            select(MessageArtifact.conversation_id)
+            .where(MessageArtifact.version_id == row.id, MessageArtifact.owner_user_id == user.id)
+            .limit(1)
+        )
     return {
         **view(row),
         "preview": manifest,

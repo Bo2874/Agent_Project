@@ -120,6 +120,32 @@ def test_immutable_output_approval_exception_is_host_only():
         )
 
 
+async def test_conversation_output_scope_survives_run_retention(bridge):
+    from backend.models import Message
+    from backend.services.artifacts.publication import bind_message_artifacts
+
+    service, context, sessions = bridge
+    first = await service.execute(context, ArtifactOperation(kind="create_xlsx", payload=plan()))
+    ref = first.data["artifact_refs"][0]
+    async with sessions() as session:
+        message = Message(
+            id=uuid4(), conversation_id=context.conversation_id, role="assistant", content="Saved"
+        )
+        session.add(message)
+        await session.flush()
+        await bind_message_artifacts(
+            session, context.user_id, context.conversation_id, message.id, [ref]
+        )
+        await session.delete(await session.get(AgentRun, context.run_id))
+        run = AgentRun(id=uuid4(), conversation_id=context.conversation_id, status="running")
+        session.add(run)
+        await session.commit()
+    result = await service.inspect(
+        replace(context, run_id=run.id), version_id=UUID(ref["version_id"])
+    )
+    assert not result.is_error, result
+
+
 async def test_python_fallback_requires_approval(bridge):
     service, context, _ = bridge
     registry = ToolRegistry()

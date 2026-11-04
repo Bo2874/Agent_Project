@@ -122,10 +122,10 @@ Mới: `backend/models/artifact.py`, `backend/schemas/artifact.py`, `backend/ser
 
 **Interfaces:** `python -m scripts.check_artifact_workflow --offline` dùng model fixture, runner/DB thật; `--live-model` chỉ dùng khi được user yêu cầu riêng. Fixture 2 owners, file 10.000 hàng × 12 cột, 2 sheet, công thức và chart; script chỉ cleanup IDs/schema/resource của chính nó.
 
-- [ ] Kiểm pipeline create/edit/import/select/replay/download thật; hai sửa cùng parent; cancel giữa runner và publish; kill runner/worker rồi resume không nhân version. Chạy vượt quota file, zip bomb và output symlink probes.
-- [ ] Đo CPU/RAM/time và kích thước; profile mặc định X3 phải hoàn thành fixture hoặc được điều chỉnh công khai có regression. Không nới legacy Python profile. Xác nhận không credential/network/socket trong execution container.
-- [ ] Chạy toàn pytest, Ruff check/format, Node syntax, Compose config và diff check. Chạy browser với worker thật và model fixture; ghi riêng live model chưa chạy. Feature chỉ bật khi gate đạt.
-- [ ] Ghi hướng dẫn startup/health/cleanup/rollback flag; cập nhật tài liệu theo bằng chứng, commit `docs: record spreadsheet artifact acceptance and operations`.
+- [x] Kiểm pipeline create/edit/import/select/replay/download thật; hai sửa cùng parent; cancel giữa runner và publish; kill runner/worker rồi resume không nhân version. Chạy vượt quota file, zip bomb và output symlink probes.
+- [x] Đo CPU/RAM/time và kích thước; profile mặc định X3 phải hoàn thành fixture hoặc được điều chỉnh công khai có regression. Không nới legacy Python profile. Xác nhận không credential/network/socket trong execution container.
+- [x] Chạy toàn pytest, Ruff check/format, Node syntax, Compose config và diff check. Chạy browser với worker thật và model fixture; ghi riêng live model chưa chạy. Feature chỉ bật khi gate đạt.
+- [x] Ghi hướng dẫn startup/health/cleanup/rollback flag; cập nhật tài liệu theo bằng chứng, commit `docs: record spreadsheet artifact acceptance and operations`.
 
 ## Điều kiện chuyển plan 02
 

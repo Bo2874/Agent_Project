@@ -1974,3 +1974,29 @@
   không sửa .env, không gọi LLM trả phí/Google write, không restart/stage/commit/push trong bước lập kế hoạch.
   Runtime hiện vẫn có cap token toàn run; kế hoạch Automations mới sẽ bổ sung nullable có chủ đích,
   giữ policy chat/checkpoint cũ và context/output/RPC/sandbox limits.
+
+### 2026-11-04 — Workspace 01: giao diện A và Excel
+
+- Làm trong `.worktrees/workspace-excel`, nhánh `feat/workspace-excel`; giữ các chỉnh sửa
+  của user ở main và không đổi `.env`. Mặc định flag tính năng vẫn tắt.
+- Shell Inter/Lora, thư viện file làm việc độc lập RAG, upload/chọn version, tool tạo/sửa
+  Excel, Python có approval, tính công thức bằng Calc UNO, private storage/version bất biến.
+- Thẻ chat lấy ID đã đối soát từ DB; preview chỉ mở khi bấm, đóng thì chat rộng lại.
+  Có sheet/phiên bản/phân trang/biểu đồ cơ bản và download đúng version; mobile/Escape/focus.
+- Migration 0031/0032 đã kiểm trên PostgreSQL scratch, không áp dụng vào DB đang dùng của user.
+  Bản sao DOCX/PDF/TXT từ RAG giữ bytes riêng; phần chỉnh sửa các định dạng này chưa có.
+- Gate offline đạt 55 tests, 1 skip quyền symlink Windows (probe symlink Linux thật đạt).
+  Đã hard-kill/restart broker và worker sau publish/trước receipt, phục hồi không nhân version.
+  Scope output vẫn dùng được sau retention run nhờ MessageArtifact; unknown external writes không replay.
+- Fixture 10.000×12, hai sheet, chart và SUM=50.005.000: 701.675 bytes; tạo + hai sửa cùng
+  parent mất 90,69s, 52 mẫu Docker stats, RAM lấy mẫu tối đa 258,3 MiB/CPU 101,1% một core.
+  Không coi mẫu là peak chính xác; giữ nguyên giới hạn sandbox.
+- Browser desktop 1440/mobile 390 qua worker/queue/checkpoint thật và model fixture đạt:
+  create/edit/reload, đóng không tự mở, mở tự cập nhật cùng file, version cũ, race close/đổi chat,
+  escape/focus. Không gọi live model/Google và không publish/push.
+- [Hướng dẫn vận hành](docs/manual-artifacts.md), [số đo](docs/acceptance/2026-11-04-artifact-excel.json),
+  [desktop](docs/acceptance/2026-11-04-artifact-desktop.png), [mobile](docs/acceptance/2026-11-04-artifact-mobile.png).
+  Ruff check đạt; format các file Python thay đổi đạt. Whole-repo format còn 10 file cũ
+  không đổi từ baseline (8 migration đã áp dụng, test models, contracts README); không sửa lan.
+  Toàn pytest: 1127 passed/2 skipped trong 319,29s; skip benchmark lớn đã chạy ở gate riêng
+  và quyền symlink Windows. Review độc lập cuối nhánh được ghi sau khi hoàn tất.

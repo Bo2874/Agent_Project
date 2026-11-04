@@ -90,7 +90,7 @@ async def load_artifact_context(*, owner: UUID, conversation_id: UUID, version_i
     from sqlalchemy import or_
 
     from backend.core.config import get_settings
-    from backend.models.artifact import Artifact, ArtifactVersion
+    from backend.models.artifact import Artifact, ArtifactVersion, MessageArtifact
 
     if not get_settings().workspace_artifacts_enabled:
         return ()
@@ -104,7 +104,16 @@ async def load_artifact_context(*, owner: UUID, conversation_id: UUID, version_i
                     ArtifactVersion.owner_user_id == owner,
                     or_(
                         ArtifactVersion.id.in_(version_ids),
-                        (AgentRun.conversation_id == conversation_id)
+                        (
+                            (AgentRun.conversation_id == conversation_id)
+                            | select(MessageArtifact.version_id)
+                            .where(
+                                MessageArtifact.version_id == ArtifactVersion.id,
+                                MessageArtifact.owner_user_id == owner,
+                                MessageArtifact.conversation_id == conversation_id,
+                            )
+                            .exists()
+                        )
                         & (ArtifactVersion.version_number == Artifact.next_version_number - 1),
                     ),
                 )

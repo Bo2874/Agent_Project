@@ -31,7 +31,7 @@ def main() -> int:
             **os.environ,
             "ARTIFACT_RUNNER_DOCKER": "1",
             "ARTIFACT_DOCKER": docker,
-            "PYTHONPATH": str(root),
+            "PYTHONPATH": os.pathsep.join(filter(None, (str(root), os.environ.get("PYTHONPATH")))),
         }
         result = subprocess.run(
             [

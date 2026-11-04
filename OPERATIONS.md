@@ -330,3 +330,21 @@ Regression SDK/mock HTTP, timeout/cancellation/circuit, privacy, budget/resume, 
 chạy bằng unit. Compose CI gọi thêm `scripts.check_routing_runtime` trên scratch database;
 probe kiểm tra migration/drift/ownership/quota/cascade và không gọi model. Không chạy downgrade
 trên database đang dùng. Kết quả ở `reports/checks/2026-10-19-m2-runtime/`.
+
+## Workspace Excel — 2026-11-04
+
+Xem [manual Artifacts](docs/manual-artifacts.md) cho startup profile `artifacts`, migration
+0031/0032, allowlist, private storage, health, runner cleanup và rollback bằng flag.
+Giữ `WORKSPACE_ARTIFACTS_ENABLED`/`DEV_WORKSPACE_ARTIFACTS_ENABLED=false` cho đến khi môi
+trường đích có image code/render, broker key và migration. Restart cả web và worker khi bật.
+
+Gate `python -m scripts.check_artifact_workflow --offline` chỉ dùng PostgreSQL scratch có tên
+kết thúc `_test`; nó khởi động broker loopback riêng và model fixture, không dùng provider thật.
+Đã kiểm hard broker restart và hard worker exit sau publish trước receipt; reconcile chỉ cho
+Artifact call có fingerprint/deterministic job ID khớp, không replay external write chưa rõ.
+Số đo workbook và hai sửa đồng thời: [report](docs/acceptance/2026-11-04-artifact-excel.json).
+
+Dọn staging cũ bằng `python -m scripts.reconcile_artifacts` để xem trước, rồi `--apply` khi
+người vận hành chọn thực thi. Mặc định grace 24 giờ, chỉ xóa file không còn DB reference,
+giữ owner lock; DB không sẵn sàng thì không dọn. Giữ volume journal/tombstone khi restart.
+Rollback tính năng bằng flag; không xóa binary volume hoặc downgrade DB để ẩn UI.

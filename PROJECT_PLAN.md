@@ -9,9 +9,11 @@ Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Au
 Thiết kế đã duyệt và kế hoạch mới không có nghĩa các tính năng này đã triển khai.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
-Bước triển khai đầu tiên dự kiến là
-[giao diện A và Excel xuyên suốt](docs/superpowers/plans/2026-11-04-workspace-01-excel.md),
-sau khi user review kế hoạch và chọn cách thực hiện. Các kết quả/điểm chưa nghiệm thu
+Đang nghiệm thu trên nhánh `feat/workspace-excel` tại `.worktrees/workspace-excel`:
+[giao diện A và Excel xuyên suốt](docs/superpowers/plans/2026-11-04-workspace-01-excel.md).
+Gate offline DB/Docker/worker thật đạt 55 tests; browser fixture worker đạt desktop/mobile.
+[Hướng dẫn](docs/manual-artifacts.md), [số đo](docs/acceptance/2026-11-04-artifact-excel.json).
+Live model chưa chạy; Word/PDF/Connectors/Automations chưa triển khai. Các kết quả/điểm chưa nghiệm thu
 trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
