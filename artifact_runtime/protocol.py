@@ -44,6 +44,10 @@ class ArtifactOperation(StrictModel):
                 raise ValueError("Python operations require code and no structured payload")
         elif self.code is not None:
             raise ValueError("Structured operations cannot contain code")
+        else:
+            from artifact_runtime.spreadsheet_types import SpreadsheetPlan
+
+            SpreadsheetPlan.model_validate(self.payload)
         if self.kind == "edit_xlsx" and self.parent_version_id is None:
             raise ValueError("Editing requires a parent version")
         if self.kind == "create_xlsx" and self.parent_version_id is not None:

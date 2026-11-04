@@ -2,7 +2,6 @@ import asyncio
 import io
 import os
 import time
-import zipfile
 from uuid import uuid4
 
 import pytest
@@ -75,10 +74,10 @@ assert not Path('/var/run/docker.sock').exists()
 assert not any('SECRET' in k or 'TOKEN' in k or 'KEY' in k for k in __import__('os').environ)
 Path('/output/check.xlsx').write_bytes(b'isolation verified')
 """
+    from openpyxl import Workbook
+
     content = io.BytesIO()
-    with zipfile.ZipFile(content, "w") as archive:
-        archive.writestr("[Content_Types].xml", "<Types/>")
-        archive.writestr("xl/workbook.xml", "<workbook/>")
+    Workbook().save(content)
     content = content.getvalue()
     result = await real_broker.run(
         ArtifactRunRequest(

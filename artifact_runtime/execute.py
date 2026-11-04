@@ -28,10 +28,11 @@ def main():
     elif request.operation.kind == "python":
         # X4 preflight is deliberately shared with structured editing.
         if request.inputs:
-            from artifact_runtime.spreadsheet import preflight_workbook
+            from artifact_runtime.spreadsheet import load_safe
 
             for item in request.inputs:
-                preflight_workbook(Path("/input") / item.name)
+                workbook = load_safe(Path("/input") / item.name)
+                workbook.close()
         with Path("/tmp/python.log").open("wb") as logs:
             result = subprocess.run(
                 [sys.executable, "-I", "-B", "-c", request.operation.code],

@@ -301,6 +301,7 @@ Build image cố định trước khi bật module:
 
 ```powershell
 docker build -f infra/docker/artifact-sandbox/Dockerfile --target code -t personal-agent-artifact-code:1 .
+docker build -f infra/docker/artifact-sandbox/Dockerfile --target render -t personal-agent-artifact-render:1 .
 docker build -f infra/docker/artifact-runner/Dockerfile -t personal-agent-artifact-runner:dev .
 python -m scripts.check_artifact_runner
 docker compose --env-file .env.docker.example config --quiet
@@ -334,3 +335,25 @@ Journal giữ tombstone sau khi dọn cache để retry muộn không thực thi
 trước khi POST hoàn tất cũng ghi tombstone. Reaper mỗi 30s thu hồi resource quá hạn
 150s; startup thu hồi các job bị gián đoạn. Chỉ xóa container/volume có label runner
 và job khớp chính xác. Không dùng `docker system prune` để dọn artifact.
+
+Excel: structured tools hỗ trợ ghi ô, thêm sheet, SUM/SUMIF/AVERAGE/COUNT/IF,
+định dạng vùng và biểu đồ cột/ngang/đường. Chuỗi nhập qua `write_cells` luôn là text;
+công thức đi qua `set_formula`. Mở và phân tích workbook chỉ ở sandbox. Macro,
+external references, ảnh, embedded objects và drawing không hỗ trợ bị từ chối
+trước khi sửa, kể cả Python fallback. Bản gốc được giữ nguyên.
+
+Calc dùng UNO pipe và user profile riêng, `MacroExecutionMode=NEVER_EXECUTE`,
+`UpdateDocMode=NO_UPDATE`, gọi `calculateAll()` rồi export sang file mới. So lại
+sheet, nội dung ô, công thức và chart/data range; khác inventory hoặc cache lỗi thì
+không công bố output. Công thức cũ ngoài danh sách hỗ trợ được giữ và đánh dấu
+`unsupported`, không tự báo cache fresh. Chuỗi rỗng từ IF là kết quả hợp lệ.
+Preview giới hạn 512 ô/lần và 512 KiB metadata, tối đa 100 cột; text dài được rút
+gọn 256 ký tự khi xem, file tải về vẫn chứa đầy đủ nội dung.
+
+Chạy `uv sync --extra dev` trước test Excel (openpyxl chỉ thêm vào dev dependency
+của ứng dụng; image sandbox có lock riêng). Gate Calc cần image render vừa build:
+
+```powershell
+$env:ARTIFACT_RUNNER_DOCKER='1'
+python -m pytest tests/test_spreadsheet_artifacts.py tests/test_spreadsheet_recalculation.py -q
+```
