@@ -56,10 +56,6 @@ class ConversationSummary(Base):
             "source_message_count >= 1",
             name="ck_conversation_summaries_source_message_count",
         ),
-        CheckConstraint(
-            "source_char_count >= summary_char_count",
-            name="ck_conversation_summaries_compressed_chars",
-        ),
         UniqueConstraint(
             "conversation_id",
             "revision",

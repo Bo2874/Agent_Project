@@ -267,6 +267,74 @@ async def test_summary_allowance_follows_remaining_history_space(summary_model_b
     assert 0 < small < large
 
 
+async def test_short_history_batch_can_save_summary_longer_than_source(monkeypatch):
+    from agent_core.llm.types import LLMChunk
+
+    class Audit:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            pass
+
+        def add(self, item):
+            pass
+
+        async def commit(self):
+            pass
+
+    class Model:
+        provider, model = "controlled", "summary-model"
+
+        async def stream(self, messages, **kwargs):
+            yield LLMChunk(content="Faithful notes. " * 200, finish_reason="stop")
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(history_compression, "_summarize", REAL_SUMMARIZE)
+    monkeypatch.setattr(history_compression, "SessionFactory", Audit)
+    monkeypatch.setattr(history_compression, "create_chat_model", lambda **_: Model())
+    messages = _messages(30, old_chars=0)
+    session = FakeSession(messages, [])
+    result = await _prepare(session, messages)
+    assert result.summaries[0].content == ("Faithful notes. " * 200).strip()
+    assert session.added[0].summary_char_count > session.added[0].source_char_count
+    assert session.commits == 1
+
+
+@pytest.mark.parametrize("source_chars,summary_chars", [(10, 10), (10, 100)])
+def test_summary_database_accepts_equal_or_longer_summary(source_chars, summary_chars):
+    from sqlalchemy import Column, MetaData, Table, Uuid, create_engine
+
+    metadata = MetaData()
+    for name in ("conversations", "messages"):
+        Table(name, metadata, Column("id", Uuid, primary_key=True))
+    table = ConversationSummary.__table__.to_metadata(metadata)
+    engine = create_engine("sqlite://")
+    try:
+        metadata.create_all(engine)
+        with engine.begin() as connection:
+            connection.execute(
+                table.insert().values(
+                    id=uuid4(),
+                    conversation_id=uuid4(),
+                    tier=1,
+                    revision=1,
+                    summary_version=LLM_HISTORY_SUMMARY_VERSION,
+                    content="x" * summary_chars,
+                    source_message_count=10,
+                    source_char_count=source_chars,
+                    summary_char_count=summary_chars,
+                )
+            )
+            assert connection.scalar(table.select().with_only_columns(table.c.content)) == (
+                "x" * summary_chars
+            )
+    finally:
+        engine.dispose()
+
+
 async def test_history_failure_rolls_back_new_summaries_without_extractive_fallback(
     summary_model_boundary,
 ):
@@ -333,8 +401,13 @@ async def test_chat_does_not_start_agent_when_llm_history_preparation_fails(monk
 
 @pytest.mark.parametrize(
     "finish,content,valid",
-    [("stop", "notes " * 1200, True), ("length", "partial", False), ("stop", " ", False)],
-    ids=["long-summary", "truncated", "empty"],
+    [
+        ("stop", "notes " * 1200, True),
+        ("length", "partial", False),
+        ("stop", " ", False),
+        ("stop", "notes " * 9000, False),
+    ],
+    ids=["long-summary", "truncated", "empty", "history-budget-exceeded"],
 )
 async def test_llm_summary_stream_audit_usage_and_output_reservation(
     monkeypatch, finish, content, valid
@@ -381,7 +454,6 @@ async def test_llm_summary_stream_audit_usage_and_output_reservation(
     arguments = dict(
         entries=[{"role": "user", "content": "original " * 5000}],
         output_tokens=9000,
-        source_chars=45000,
         budget=ContextTokenBudget(),
         user_id=uuid4(),
         conversation_id=uuid4(),

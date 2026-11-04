@@ -460,3 +460,18 @@ ngoài đã hoàn thành trước khi hủy không bị hoàn tác. Tắt subscr
 Các case lịch sử kiểm step/time/repeat cap chỉ còn áp dụng khi chủ động đặt lại biến hữu hạn
 và tạo run mới. Muốn khôi phục giới hạn, điền số dương rồi restart app/worker.
 Đợt thay đổi này không gọi API LLM trả phí; fixture tự động không thay thế browser/LLM E2E.
+
+## 2026-11-04 — Summary có thể dài hơn nguồn
+
+Không còn yêu cầu history summary ngắn hơn nguồn theo ký tự/token; độ dài chỉ bị giới hạn
+bởi ngân sách Memory + History còn lại và output reservation/model. Summary rỗng, bị cắt
+giữa chừng, lỗi provider hoặc vượt budget vẫn không được lưu làm summary hợp lệ.
+
+Migration0030 gỡ constraint độ dài trong PostgreSQL; database local đã áp dụng. Với môi trường
+khác, chạy `.venv\Scripts\python.exe -m alembic upgrade head` trước khi restart web.
+Không cần xóa history, đổi .env hay reindex. Trong chính hội thoại từng gặp lỗi, gửi lại:
+
+> Database và địa điểm triển khai đã chốt của dự án là gì?
+
+Kỳ vọng: chuẩn bị history xong rồi Agent xử lý câu hỏi, không dừng vì summary dài hơn nguồn.
+Câu trả lời vẫn phải theo quyết định có trong history, không tự bịa thông tin đã chốt.

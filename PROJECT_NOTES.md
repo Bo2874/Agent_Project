@@ -1933,3 +1933,27 @@
   Cần restart cả web và worker, rồi gửi request mới. Resume checkpoint cũ vẫn dùng cap đã pin;
   không sửa lịch sử run để ép thành unbounded. Đây là thay đổi policy, không bảo đảm mọi yêu
   cầu luôn hoàn tất khi provider/quyền/dữ liệu/token không đủ.
+
+### 2026-11-04 — History summary không bắt buộc ngắn hơn nguồn
+
+- Lỗi "Summary chưa ngắn hơn nội dung nguồn" phát sinh khi chuẩn bị history trước khi
+  Agent chạy. Đã bỏ kiểm tra độ dài ký tự và cap token theo độ dài nguồn; prompt vẫn yêu cầu
+  ghi chú ngắn gọn/trung thực nhưng không bắt buộc ngắn hơn nguồn. Summary được dùng trong
+  ngân sách Memory + History còn lại, output reservation và giới hạn output của model.
+- Bỏ tham số source_chars khỏi hàm gọi LLM; source_char_count/summary_char_count vẫn lưu
+  số ký tự thật để thống kê. Giữ summary version để tái sử dụng summary đã lưu, không buộc
+  gọi lại LLM cho toàn bộ history; fingerprint prompt vẫn ghi nhận nội dung prompt mới.
+- Gỡ check constraint tương ứng trong ORM và thêm đúng một file mới:
+  migrations/versions/20261104_0030_relax_history_summary_length.py. Đã áp dụng migration0030
+  vào PostgreSQL local; không sửa/xóa nội dung hội thoại. Downgrade khôi phục check cũ và
+  sẽ bị PostgreSQL từ chối nếu còn summary dài hơn nguồn; không tự cắt/xóa dữ liệu để hạ cấp.
+- Regression chạy đỏ trước rồi xanh: batch nguồn ngắn vẫn lưu được summary dài hơn;
+  database nhận summary bằng/dài hơn nguồn. Vẫn chặn output rỗng, finish_reason=length,
+  output vượt ngân sách history. Giữ timeout RPC, usage/audit và rollback khi lỗi provider.
+- Toàn pytest1055 passed/48,42s; Ruff check/format và diff check đạt. Warning cache_dir do tắt
+  cacheprovider. Probe PostgreSQL thật sau migration lưu được summary dài hơn nguồn trong
+  bảng tạm sao chép schema; transaction đã rollback, không thay đổi dữ liệu hội thoại.
+  Không gọi LLM trả phí, chưa test browser/live LLM; không thay .env/model web search.
+- Cần restart web để nhận code, rồi gửi lại câu hỏi trong cùng hội thoại; không cần xóa
+  history hoặc reindex. Database local đã lên0030; môi trường khác chạy alembic upgrade head.
+  Chưa stage/commit/push.

@@ -49,7 +49,6 @@ async def _summarize(
     entries,
     *,
     output_tokens,
-    source_chars,
     budget,
     user_id,
     conversation_id,
@@ -101,8 +100,6 @@ async def _summarize(
                 content = "".join(parts).strip()
                 if finish != "stop" or not content:
                     raise HistoryCompressionError("Model chưa tạo được summary hoàn chỉnh.")
-                if len(content) > source_chars:
-                    raise HistoryCompressionError("Summary chưa ngắn hơn nội dung nguồn.")
                 if estimate_tokens(content) > output_tokens:
                     raise HistoryCompressionError("Summary vượt phần ngân sách history còn lại.")
                 call.status = "completed"
@@ -240,7 +237,7 @@ async def _prepare_locked(
         for m in messages[final_raw_start:]
     )
 
-    async def summarize(entries, source_chars, replaced=()):
+    async def summarize(entries, replaced=()):
         blocks = [
             _summary_block(s)
             for s in current_summaries
@@ -264,8 +261,7 @@ async def _prepare_locked(
             raise HistoryCompressionError("Không đủ ngân sách chung để giữ history và summary.")
         return await _summarize(
             entries,
-            output_tokens=min(available, max(1, estimate_tokens(entries) - 1)),
-            source_chars=source_chars,
+            output_tokens=available,
             budget=budget,
             user_id=user_id,
             conversation_id=conversation_id,
@@ -278,7 +274,6 @@ async def _prepare_locked(
         source_char_count = sum(len(message.content) for message in batch)
         content = await summarize(
             [{"role": m.role, "content": m.content} for m in batch],
-            source_char_count,
         )
         revision += 1
         summary = ConversationSummary(
@@ -312,7 +307,6 @@ async def _prepare_locked(
             children = candidates[: policy.merge_factor]
             content = await summarize(
                 [{"tier": s.tier, "summary": s.content} for s in children],
-                sum(len(s.content) for s in children),
                 replaced=children,
             )
             revision += 1

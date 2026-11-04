@@ -1431,6 +1431,17 @@ Không mặc định các số liệu hiệu năng trong sách áp dụng cho pr
 
 ## Task tiếp theo
 
+### Điều chỉnh 2026-11-04 — Bỏ ràng buộc summary ngắn hơn nguồn
+
+- [x] Bỏ kiểm tra ký tự và cap token theo độ dài nguồn của history summary; giữ ngân sách
+  Memory + History/output, đầu ra hoàn chỉnh, usage/audit và rollback khi có lỗi.
+- [x] Gỡ constraint ORM, thêm migration0030 và áp dụng PostgreSQL local; số đo độ dài vẫn
+  phản ánh dữ liệu thật, không chỉnh nội dung summary/hội thoại đã lưu.
+- [x] Regression đỏ/xanh và toàn pytest1055 test đạt; PostgreSQL bảng tạm xác nhận insert
+  summary dài hơn nguồn; Ruff/diff check đạt. Không gọi LLM trả phí, chưa browser E2E.
+- [x] Cập nhật cuối PROJECT_NOTES và hướng dẫn test. Restart web rồi gửi lại câu hỏi trong
+  cùng hội thoại; môi trường triển khai khác cần alembic upgrade head trước khi chạy code mới.
+
 ### Điều chỉnh 2026-11-04 — Agent do user chủ động dừng
 
 Yêu cầu đã chốt: bỏ trần số bước, tổng thời gian và chống lặp của root/task; dùng None
