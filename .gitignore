@@ -42,6 +42,8 @@ dist/
 build/
 *.egg-info/
 node_modules/
+.superpowers/
+.worktrees/
 
 # Runtime data, uploaded documents, backups and local database files.
 /data/

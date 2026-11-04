@@ -1,8 +1,18 @@
 # Kế hoạch phát triển Personal AI Agent
 
-Cập nhật: 2026-11-03
+Cập nhật: 2026-11-04
 
 Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memory, Skills, sandbox và trang quản trị đủ tốt để học và trình bày khi phỏng vấn.
+
+**Hướng mở rộng mới đã duyệt ngày 2026-11-04:** giao diện A theo phong cách Claude,
+Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Automations theo lịch.
+Thiết kế đã duyệt và kế hoạch mới không có nghĩa các tính năng này đã triển khai.
+Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
+[roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
+Bước triển khai đầu tiên dự kiến là
+[giao diện A và Excel xuyên suốt](docs/superpowers/plans/2026-11-04-workspace-01-excel.md),
+sau khi user review kế hoạch và chọn cách thực hiện. Các kết quả/điểm chưa nghiệm thu
+trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần

@@ -1957,3 +1957,20 @@
 - Cần restart web để nhận code, rồi gửi lại câu hỏi trong cùng hội thoại; không cần xóa
   history hoặc reindex. Database local đã lên0030; môi trường khác chạy alembic upgrade head.
   Chưa stage/commit/push.
+
+### 2026-11-04 — Duyệt thiết kế Workspace và lập kế hoạch mở rộng
+
+- User chọn thứ tự Artifacts → Connectors → Automations; trong Artifacts là Excel → Word → PDF.
+- Tạo/sửa cả file đưa vào và Agent tạo, qua chat; xử lý văn bản/dữ liệu trước, chưa OCR/ảnh.
+  PDF được dàn lại trang theo yêu cầu nội dung/format. Chọn công cụ chuyên biệt kết hợp Python sandbox.
+- Chốt giao diện A: chat rộng mặc định, bấm thẻ file mới mở preview cạnh chat; tạo/sửa file không
+  tự bật panel đang đóng. Chấp thuận Inter cho menu/nút và Lora cho tiêu đề/nội dung đã xem.
+- Google dùng API trực tiếp, chọn từng file; Sheets đọc/phân tích, thêm hàng, cập nhật bảng trước.
+  Automations có stop lượt riêng với tắt lịch; bật lại chờ mốc kế tiếp, chưa đặt trần token/thời gian tổng.
+- User duyệt bản thiết kế chung, gồm giữ upload tại thư viện, mỗi automation một lượt active và
+  thông báo trong ứng dụng. Thiết kế tại docs/superpowers/specs/2026-11-04-agent-workspace-design.md.
+- Kế hoạch chia bốn phần tại docs/superpowers/plans, entry là 2026-11-04-agent-workspace-roadmap.md.
+  Đây là tài liệu kế hoạch; chưa tick task, chưa cài dependency hoặc sửa code sản phẩm, chưa áp dụng migration,
+  không sửa .env, không gọi LLM trả phí/Google write, không restart/stage/commit/push trong bước lập kế hoạch.
+  Runtime hiện vẫn có cap token toàn run; kế hoạch Automations mới sẽ bổ sung nullable có chủ đích,
+  giữ policy chat/checkpoint cũ và context/output/RPC/sandbox limits.
