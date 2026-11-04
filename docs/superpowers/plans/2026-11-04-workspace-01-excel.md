@@ -100,10 +100,10 @@ Mới: `backend/models/artifact.py`, `backend/schemas/artifact.py`, `backend/ser
 
 **Interfaces:** `register_artifact_tools(registry: ToolRegistry, service: ArtifactToolService) -> None`; `ArtifactToolService.execute(context: ToolContext, request: ArtifactOperation) -> ToolResult`. Tools `artifact_inspect`, `artifact_create`, `artifact_edit`, `run_artifact_python`; kết quả chỉ có `artifact_refs: list[PublishedArtifact]`, text summary/warnings. `ToolContext` thêm `artifact_version_ids: tuple[UUID,...]=()` backwards compatible.
 
-- [ ] Red `test_create_edit_tools_publish_once_after_validation`, `test_file_task_routes_to_tools_not_rag_only`, `test_python_fallback_requires_approval`, `test_tool_cannot_open_unselected_version`; assert tool side effect, selection và scope đúng, không bytes/token/path trong output.
-- [ ] Chạy `python -m pytest tests/test_artifact_tools.py -q`; fail trước triển khai.
-- [ ] Backend kiểm quyền, input pin, operation key/run journal, gọi runner và validator, publish version. Structured operations không xin duyệt mỗi sửa có thể phục hồi; raw Python bắt buộc approval hiện có. Không chờ artifact job thứ hai trên cùng queue worker pool. Failure/cancel không publish bản hỏng; output chưa rõ đối soát job ID.
-- [ ] Green các test tool và regression document tools/approval/budget: `python -m pytest tests/test_artifact_tools.py tests/test_document_tools.py tests/test_tool_approvals.py tests/test_agent_budgeting.py -q`. Commit `feat: expose scoped artifact tools to the agent`.
+- [x] Red `test_create_edit_tools_publish_once_after_validation`, `test_file_task_routes_to_tools_not_rag_only`, `test_python_fallback_requires_approval`, `test_tool_cannot_open_unselected_version`; assert tool side effect, selection và scope đúng, không bytes/token/path trong output.
+- [x] Chạy `python -m pytest tests/test_artifact_tools.py -q`; fail trước triển khai.
+- [x] Backend kiểm quyền, input pin, operation key/run journal, gọi runner và validator, publish version. Structured operations không xin duyệt mỗi sửa có thể phục hồi; raw Python bắt buộc approval hiện có. Không chờ artifact job thứ hai trên cùng queue worker pool. Failure/cancel không publish bản hỏng; output chưa rõ đối soát job ID.
+- [x] Green các test tool và regression document tools/approval/budget: `python -m pytest tests/test_artifact_tools.py tests/test_document_tools.py tests/test_tool_approvals.py tests/test_agent_budgeting.py -q`. Commit `feat: expose scoped artifact tools to the agent`.
 
 ### Task 7: X7 — Thẻ file, preview và phiên bản theo bố cục A
 

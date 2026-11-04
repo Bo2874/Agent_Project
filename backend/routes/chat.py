@@ -67,7 +67,7 @@ from backend.schemas.document import (
     DocumentCitationSourceResponse,
     RagSearchMode,
 )
-from backend.services.agent_context import load_execution_context
+from backend.services.agent_context import load_artifact_context, load_execution_context
 from backend.services.agent_runs import (
     AgentRunRecorder,
     AgentRunResumeError,
@@ -374,6 +374,26 @@ async def stream_assistant_response(
             yield item
 
     try:
+        artifact_context = ()
+        if settings.workspace_artifacts_enabled:
+            if operation_journal is None:
+                from backend.services.artifacts.selection import selected_versions
+
+                async with SessionFactory() as artifact_session:
+                    pinned = await selected_versions(artifact_session, user_id, conversation_id)
+                    tool_context = replace(
+                        tool_context, artifact_version_ids=tuple(row.id for row in pinned)
+                    )
+            artifact_context = await load_artifact_context(
+                owner=user_id,
+                conversation_id=conversation_id,
+                version_ids=tool_context.artifact_version_ids,
+            )
+            history_summary_context = fit_context_blocks(
+                "history_summary",
+                (*artifact_context, *history_summary_context),
+                context_budget.history_tokens,
+            )
         if resume:
             checkpoint = await graph_checkpointer.aget_tuple(agent_checkpoint_config(agent_run_id))
             values = checkpoint.checkpoint.get("channel_values", {}) if checkpoint else {}
@@ -437,6 +457,9 @@ async def stream_assistant_response(
                 query_messages if query_messages is not None else model_messages,
                 decision_provider,
                 selected_documents=selected_documents,
+                selected_artifacts=json.loads(artifact_context[0].content)
+                if artifact_context
+                else (),
             )
         runtime = await plugin_stack.enter_async_context(
             plugin_runtime(registry, skill_registry, tool_context)

@@ -15,6 +15,11 @@ settings = get_settings()
 tool_registry = ToolRegistry(allowlist=settings.tool_allowlist_names)
 if settings.python_sandbox_enabled:
     register_python_execution_tool(tool_registry)
+if settings.workspace_artifacts_enabled:
+    from agent_core.tools.artifacts import register_artifact_tools
+    from backend.services.artifacts.tools import ArtifactToolService
+
+    register_artifact_tools(tool_registry, ArtifactToolService())
 if (email_config := settings.email_config) is not None:
     register_email_tool(tool_registry, email_config)
 if (web_search_config := settings.web_search_config) is not None:

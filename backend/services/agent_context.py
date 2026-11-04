@@ -86,14 +86,32 @@ async def load_execution_context(*, owner: UUID, conversation_id: UUID, current_
     return execution_rows(records)
 
 
-async def load_artifact_context(*, owner: UUID, conversation_id: UUID):
+async def load_artifact_context(*, owner: UUID, conversation_id: UUID, version_ids=()):
+    from sqlalchemy import or_
+
     from backend.core.config import get_settings
-    from backend.services.artifacts.selection import selected_versions
+    from backend.models.artifact import Artifact, ArtifactVersion
 
     if not get_settings().workspace_artifacts_enabled:
         return ()
     async with SessionFactory() as session:
-        versions = await selected_versions(session, owner, conversation_id)
+        versions = (
+            await session.scalars(
+                select(ArtifactVersion)
+                .join(Artifact, Artifact.id == ArtifactVersion.artifact_id)
+                .outerjoin(AgentRun, AgentRun.id == ArtifactVersion.source_run_id)
+                .where(
+                    ArtifactVersion.owner_user_id == owner,
+                    or_(
+                        ArtifactVersion.id.in_(version_ids),
+                        (AgentRun.conversation_id == conversation_id)
+                        & (ArtifactVersion.version_number == Artifact.next_version_number - 1),
+                    ),
+                )
+                .order_by(ArtifactVersion.created_at.desc())
+                .limit(40)
+            )
+        ).all()
     if not versions:
         return ()
     metadata = [
@@ -104,6 +122,7 @@ async def load_artifact_context(*, owner: UUID, conversation_id: UUID):
             "mime_type": row.mime_type,
             "version_number": row.version_number,
             "calculation_status": row.calculation_status,
+            "scope": "selected_input" if row.id in version_ids else "conversation_output",
         }
         for row in versions
     ]

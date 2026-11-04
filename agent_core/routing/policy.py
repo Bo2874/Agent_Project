@@ -96,6 +96,20 @@ class PrivacyPolicy:
                     else len(selected_documents),
                     "trust": "untrusted_data",
                 }
+                artifacts = state.get("selected_artifacts")
+                if isinstance(artifacts, list):
+                    filtered["selected_artifacts"] = [
+                        {
+                            "name": clean(item["name"].strip())[:255],
+                            "type": "xlsx"
+                            if item["name"].lower().endswith(".xlsx")
+                            else "source_copy",
+                        }
+                        for item in artifacts[:40]
+                        if isinstance(item, dict)
+                        and isinstance(item.get("name"), str)
+                        and item["name"].strip()
+                    ]
             else:
                 filtered = {
                     "goal": state.get("goal") if isinstance(state.get("goal"), str) else "",

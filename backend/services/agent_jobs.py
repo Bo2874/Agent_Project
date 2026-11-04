@@ -46,6 +46,14 @@ async def enqueue_run(arguments):
         query_messages=arguments.get("query_messages"),
         rag_search_mode=arguments["rag_search_mode"],
     )
+    if get_settings().workspace_artifacts_enabled:
+        from backend.services.artifacts.selection import selected_versions
+
+        async with SessionFactory() as selection_session:
+            selected = await selected_versions(
+                selection_session, arguments["user_id"], arguments["conversation_id"]
+            )
+            payload["artifact_version_ids"] = [str(row.id) for row in selected]
     async with SessionFactory() as session:
         conversation = await session.scalar(
             select(Conversation)
@@ -219,6 +227,9 @@ async def agent_run_handler(context, payload):
                 conversation_id=UUID(data["conversation_id"]),
                 run_id=run_id,
                 user_role=role,
+                artifact_version_ids=tuple(
+                    UUID(value) for value in data.get("artifact_version_ids", [])
+                ),
             ),
             limits=AgentLimits(**data["limits"]),
             context_budget=context_budget,

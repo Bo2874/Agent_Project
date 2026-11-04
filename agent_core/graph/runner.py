@@ -1956,12 +1956,14 @@ async def run_agent_graph_stream(
                 child_calls=internal_model_calls,
                 task_limits=task_limits,
                 plan=plan,
+                op_key=op_key,
             ):
                 return await _execute_tool(
                     tool_executor,
                     registry,
                     replace(
                         context,
+                        operation_key=op_key,
                         remaining_tokens=max(
                             0,
                             min(

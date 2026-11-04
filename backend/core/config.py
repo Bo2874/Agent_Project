@@ -188,7 +188,8 @@ class Settings(BaseSettings):
         "demo__get_server_time,demo__calculate,demo__count_text,"
         "demo__convert_temperature,demo__simulate_sensitive_action,"
         "demo__get_admin_runtime_info,run_python_code,send_email,search_web,"
-        "search_documents,summarize_documents"
+        "search_documents,summarize_documents,"
+        "artifact_inspect,artifact_create,artifact_edit,run_artifact_python"
     )
     tool_approval_timeout_seconds: float = Field(default=300, gt=0, le=3600)
     tool_lazy_load_threshold: int = Field(default=4, ge=1, le=1000)
