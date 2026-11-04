@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
+    workspace_artifacts_enabled: bool = False
+    google_connector_enabled: bool = False
+    automations_enabled: bool = False
     v2_enabled: bool = False
     v2_plugins_enabled: bool = False
     v2_routing_enabled: bool = False

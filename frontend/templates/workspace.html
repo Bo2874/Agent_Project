@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block body %}
+{% set features = workspace_features() %}
+{% set is_chat = request.url.path == '/chat' %}
+<div class="workspace-shell" data-workspace-shell {% if is_chat %}data-chat-app{% endif %}>
+    <button class="workspace-shade" data-sidebar-dismiss aria-label="Đóng thanh bên" hidden></button>
+    <aside class="workspace-sidebar" id="workspace-sidebar" aria-label="Không gian làm việc">
+        <div class="workspace-brand-row">
+            <a class="workspace-brand" href="/dashboard">Personal Agent<span>Không gian của bạn</span></a>
+            <button class="workspace-icon" data-sidebar-toggle aria-controls="workspace-sidebar" aria-expanded="true" aria-label="Thu gọn thanh bên">◧</button>
+        </div>
+        {% if is_chat %}
+        <button type="button" class="workspace-new-chat" data-new-chat><span aria-hidden="true">＋</span> Cuộc trò chuyện mới</button>
+        {% else %}
+        <a class="workspace-new-chat" href="/chat"><span aria-hidden="true">＋</span> Cuộc trò chuyện mới</a>
+        {% endif %}
+        <nav class="workspace-navigation" aria-label="Điều hướng chính">
+            <a href="/chat" {% if is_chat %}aria-current="page"{% endif %}><span aria-hidden="true">◌</span> Trò chuyện</a>
+            {% if features.artifacts %}<a href="/artifacts"><span aria-hidden="true">▧</span> Tệp làm việc</a>{% endif %}
+            <a href="/documents" {% if request.url.path == '/documents' %}aria-current="page"{% endif %}><span aria-hidden="true">▤</span> Thư viện</a>
+            <a href="/plugins" {% if request.url.path.startswith('/plugins') %}aria-current="page"{% endif %}><span aria-hidden="true">⌘</span> Plugins & kết nối</a>
+            <a href="/memories" {% if request.url.path == '/memories' %}aria-current="page"{% endif %}><span aria-hidden="true">◇</span> Bộ nhớ</a>
+            {% if user.role == 'admin' %}<a href="/admin" {% if request.url.path == '/admin' %}aria-current="page"{% endif %}><span aria-hidden="true">⚙</span> Quản trị</a>{% endif %}
+        </nav>
+        {% if is_chat %}
+        <p class="workspace-section-label">Gần đây</p>
+        <div class="conversation-list" data-conversation-list></div>
+        {% endif %}
+        <div class="workspace-account">
+            <a class="workspace-profile" href="/dashboard"><span class="avatar">{{ (user.full_name or user.email)[0] | upper }}</span><span><strong>{{ user.full_name or 'Tài khoản' }}</strong><small>{{ user.email }}</small></span></a>
+            <button class="workspace-icon" data-logout aria-label="Đăng xuất" title="Đăng xuất">↗</button>
+        </div>
+    </aside>
+    <div class="workspace-content">
+        <button class="workspace-reopen workspace-icon" data-sidebar-toggle aria-controls="workspace-sidebar" aria-expanded="true" aria-label="Mở thanh bên">◧</button>
+        {% block workspace_body %}{% endblock %}
+    </div>
+</div>
+{% endblock %}

@@ -1,23 +1,8 @@
-{% extends "base.html" %}
+{% extends "workspace.html" %}
 {% block title %}Chat · Personal Agent{% endblock %}
-{% block body %}
-<main class="chat-shell" data-chat-app>
-    <aside class="chat-sidebar">
-        <div class="sidebar-head">
-            <a class="brand" href="/dashboard">Personal<span>Agent</span></a>
-            <button class="new-chat-button" data-new-chat aria-label="Tạo cuộc trò chuyện mới">＋</button>
-        </div>
-        <p class="sidebar-label">Hội thoại</p>
-        <div class="conversation-list" data-conversation-list></div>
-        <div class="sidebar-user">
-            <div class="avatar">{{ (user.full_name or user.email)[0] | upper }}</div>
-            <div>
-                <strong>{{ user.full_name or "Tài khoản" }}</strong>
-                <small>{{ user.email }}</small>
-            </div>
-            <button class="icon-button" data-logout title="Đăng xuất">↗</button>
-        </div>
-    </aside>
+{% block workspace_body %}
+<main class="chat-shell">
+
 
     <section class="chat-main">
         <header class="chat-header">
@@ -27,9 +12,6 @@
                 <p class="chat-status" data-chat-status role="status" aria-live="polite"></p>
             </div>
             <div class="chat-header-actions">
-                <a class="model-pill memory-link document-nav-link" href="/documents">Tài liệu</a>
-                <a class="model-pill memory-link plugin-nav-link" href="/plugins">Plugins</a>
-                <a class="model-pill memory-link" href="/memories">Bộ nhớ</a>
                 <span class="model-pill">{{ model_name }}</span>
             </div>
         </header>

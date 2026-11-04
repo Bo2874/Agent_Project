@@ -11,6 +11,16 @@ from backend.models import User
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 templates = Jinja2Templates(directory=FRONTEND_DIR / "templates")
+def workspace_features() -> dict[str, bool]:
+    settings = get_settings()
+    return {
+        "artifacts": getattr(settings, "workspace_artifacts_enabled", False),
+        "google": getattr(settings, "google_connector_enabled", False),
+        "automations": getattr(settings, "automations_enabled", False),
+    }
+
+
+templates.env.globals["workspace_features"] = workspace_features
 router = APIRouter(include_in_schema=False)
 OptionalUser = Annotated[User | None, Depends(get_optional_user)]
 
