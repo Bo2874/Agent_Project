@@ -147,7 +147,13 @@ def sample_overview() -> AdminOverviewResponse:
 
 
 async def admin_user() -> SimpleNamespace:
-    return SimpleNamespace(id=uuid4(), role="admin", is_active=True)
+    return SimpleNamespace(
+        id=uuid4(),
+        role="admin",
+        is_active=True,
+        email="admin@example.com",
+        full_name="Workspace Admin",
+    )
 
 
 async def normal_user() -> SimpleNamespace:

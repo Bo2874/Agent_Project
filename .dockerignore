@@ -8,6 +8,8 @@
 !agent_core/**
 !backend/
 !backend/**
+!artifact_runtime/
+!artifact_runtime/**
 !frontend/
 !frontend/**
 !skills/
@@ -32,6 +34,10 @@
 !infra/docker/app/**
 !infra/docker/python-sandbox/
 !infra/docker/python-sandbox/**
+!infra/docker/artifact-sandbox/
+!infra/docker/artifact-sandbox/**
+!infra/docker/artifact-runner/
+!infra/docker/artifact-runner/**
 !infra/ci/
 !infra/ci/**
 !tests/

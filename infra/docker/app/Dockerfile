@@ -36,11 +36,12 @@ WORKDIR /app
 COPY --from=dependencies /opt/venv /opt/venv
 RUN groupadd --gid 10001 agent \
     && useradd --uid 10001 --gid agent --no-create-home agent \
-    && mkdir -p /app/data/documents /app/data/models \
+    && mkdir -p /app/data/documents /app/data/models /app/data/artifacts \
     && chown -R agent:agent /app
 COPY --chown=10001:10001 pyproject.toml uv.lock .python-version alembic.ini ./
 COPY --chown=10001:10001 agent_core/ ./agent_core/
 COPY --chown=10001:10001 backend/ ./backend/
+COPY --chown=10001:10001 artifact_runtime/ ./artifact_runtime/
 COPY --chown=10001:10001 frontend/ ./frontend/
 COPY --chown=10001:10001 skills/ ./skills/
 COPY --chown=10001:10001 plugins/manifests/ ./plugins/manifests/

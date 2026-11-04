@@ -80,7 +80,7 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.setuptools.packages.find]
-include = ["agent_core*", "backend*"]
+include = ["agent_core*", "backend*", "artifact_runtime*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

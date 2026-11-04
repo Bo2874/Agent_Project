@@ -42,10 +42,10 @@ Mới: `backend/models/artifact.py`, `backend/schemas/artifact.py`, `backend/ser
 
 **Interfaces:** `initWorkspaceShell(root: HTMLElement): void` trong `workspace.js`; `data-workspace-shell`, `data-sidebar-toggle`. Giữ các hook `data-chat-app`, `data-message-form`, `data-new-chat`, document picker, logout, SSE và approval đang có. Flags `WORKSPACE_ARTIFACTS_ENABLED`, `GOOGLE_CONNECTOR_ENABLED`, `AUTOMATIONS_ENABLED` mặc định false; nav chỉ hiện module đã bật, không có link giả.
 
-- [ ] Giữ snapshot trước sửa; đưa shell/sidebar A và Inter/Lora đã chốt vào các trang đăng nhập sau auth, giữ admin link theo role và trạng thái empty/loading/error.
-- [ ] Chạy `node --check frontend/static/workspace.js`, render Jinja các trang với user/admin fixture; kiểm không thiếu hook JavaScript hiện có. Không viết unit test màu/font.
-- [ ] Browser QA chat mới, chat đang stream, approval, stop/resume, RAG picker, logout và sidebar ở 1440px/390px. Xác nhận network font không cần Google Fonts.
-- [ ] Review diff và commit `feat: add approved workspace shell and typography`.
+- [x] Giữ snapshot trước sửa; đưa shell/sidebar A và Inter/Lora đã chốt vào các trang đăng nhập sau auth, giữ admin link theo role và trạng thái empty/loading/error.
+- [x] Chạy `node --check frontend/static/workspace.js`, render Jinja các trang với user/admin fixture; kiểm không thiếu hook JavaScript hiện có. Không viết unit test màu/font.
+- [x] Browser QA chat mới, chat đang stream, approval, stop/resume, RAG picker, logout và sidebar ở 1440px/390px. Xác nhận network font không cần Google Fonts.
+- [x] Review diff và commit `feat: add approved workspace shell and typography`.
 
 ### Task 2: X2 — Metadata, private storage và phiên bản
 
@@ -53,11 +53,11 @@ Mới: `backend/models/artifact.py`, `backend/schemas/artifact.py`, `backend/ser
 
 **Interfaces:** `ArtifactStorage.put(source: BinaryIO, key: str, *, max_bytes: int) -> StoredArtifact`; `open_owned_version(session, owner: UUID, version_id: UUID) -> ArtifactVersion`; `publish_version(session, owner: UUID, *, artifact_id: UUID|None, parent_version_id: UUID|None, staged: ValidatedArtifact, operation_key: str) -> PublishedArtifact`. `ValidatedArtifact`/`StoredArtifact` dataclasses được định nghĩa trong validation/storage, có key/hash/size/MIME. Lần upload đầu `origin='upload'`; output `origin='agent'`.
 
-- [ ] Red tests: `test_other_owner_cannot_open`: `assert response.status_code == 404`; `test_concurrent_children_preserve_parent`: `assert child_a.id != child_b.id`, `assert child_a.parent_version_id == child_b.parent_version_id == original.id`, `assert sha256(original_bytes_after) == original.sha256`; `test_publish_replay_same_operation`: `assert version_count == 1`; `test_traversal_and_zip_bomb_rejected`: `assert outside_files == []`.
-- [ ] Chạy `python -m pytest tests/test_artifact_storage.py tests/test_artifact_versions.py -q`; kỳ vọng fail vì module/interface chưa có.
-- [ ] Tạo schema với composite ownership FK/unique constraints; parent phải thuộc cùng Artifact, run/source owner được kiểm lại. Cấp version number bằng row lock ngắn. Stage file rồi commit metadata; publication failure giữ bản gốc và cleanup file chưa tham chiếu.
-- [ ] Khởi tạo `ARTIFACT_MAX_FILE_BYTES=20971520`, `ARTIFACT_MAX_USER_BYTES=209715200`, archive unpacked tối đa `104857600` bytes/2000 entries; giới hạn upload streaming trước đọc toàn file. Lưu tại `ARTIFACT_STORAGE_PATH`, deny symlink/HTML/executable; checksum tính theo stream. Đây là mặc định ban đầu có cấu hình, X8 phải đo trước nghiệm thu.
-- [ ] Green các test trên và chạy migration trong schema thử riêng; ghi nhận conflict concurrent và rollback. Commit `feat: add private artifact storage and immutable versions`.
+- [x] Red tests: `test_other_owner_cannot_open`: `assert response.status_code == 404`; `test_concurrent_children_preserve_parent`: `assert child_a.id != child_b.id`, `assert child_a.parent_version_id == child_b.parent_version_id == original.id`, `assert sha256(original_bytes_after) == original.sha256`; `test_publish_replay_same_operation`: `assert version_count == 1`; `test_traversal_and_zip_bomb_rejected`: `assert outside_files == []`.
+- [x] Chạy `python -m pytest tests/test_artifact_storage.py tests/test_artifact_versions.py -q`; kỳ vọng fail vì module/interface chưa có.
+- [x] Tạo schema với composite ownership FK/unique constraints; parent phải thuộc cùng Artifact, run/source owner được kiểm lại. Cấp version number bằng row lock ngắn. Stage file rồi commit metadata; publication failure giữ bản gốc và cleanup file chưa tham chiếu.
+- [x] Khởi tạo `ARTIFACT_MAX_FILE_BYTES=20971520`, `ARTIFACT_MAX_USER_BYTES=209715200`, archive unpacked tối đa `104857600` bytes/2000 entries; giới hạn upload streaming trước đọc toàn file. Lưu tại `ARTIFACT_STORAGE_PATH`, deny symlink/HTML/executable; checksum tính theo stream. Đây là mặc định ban đầu có cấu hình, X8 phải đo trước nghiệm thu.
+- [x] Green các test trên và chạy migration trong schema thử riêng; ghi nhận conflict concurrent và rollback. Commit `feat: add private artifact storage and immutable versions`.
 
 ### Task 3: X3 — Runner và kênh file nhị phân cách ly
 
@@ -65,11 +65,11 @@ Mới: `backend/models/artifact.py`, `backend/schemas/artifact.py`, `backend/ser
 
 **Interfaces:** `ArtifactRunnerClient.execute(request: ArtifactRunRequest, inputs: tuple[ArtifactInput,...], *, cancel: Callable[[], Awaitable[None]]) -> StagedArtifactResult`; DTO trong `artifact_runtime/protocol.py`. `ArtifactInput` chỉ có generated name, MIME, size, checksum và nguồn stream do backend cấp; không nhận host path từ model. Runner `POST /v1/jobs`/`DELETE /v1/jobs/{job_id}`; request manifest được HMAC theo job ID/nonce/expiry/hash các blob; chỉ backend giữ auth key. Output archive + bounded manifest stream tới staging, không vào checkpoint.
 
-- [ ] Red `test_runner_refuses_arbitrary_image_mount_and_environment` asserts schema reject; `test_output_symlink_or_oversize_rejected` asserts không publish; `test_cancel_reaps_child_and_volume` asserts không còn resource có label đúng job; `test_input_is_readonly_and_network_blocked` asserts thay input/mạng đều fail.
-- [ ] Chạy `python -m pytest tests/test_artifact_runner.py -q`; fail trước implementation.
-- [ ] Implement broker nội bộ với fixed image/profile, deadline request và idempotent job IDs; duplicate started job không chạy lại. Dùng volume input riêng được trusted intake container nạp, mount read-only vào execution container; output tmpfs truyền archive theo stream. Validate từng member, không `extractall` không kiểm soát. Cleanup/reaper chỉ xóa resource mang đúng label runner/job đã xác minh.
-- [ ] Profile code: 1 CPU, 512 MiB RAM, 15s CPU/30s wall, tối đa 3 output/20 MiB mỗi file/40 MiB tổng. Profile LibreOffice: 1 CPU, 1024 MiB RAM, 60s CPU/90s wall, pids 64. Root read-only, nonroot, drop caps, no-new-privileges, network none; không có secret/socket trong execution container. Tool Python nhỏ cũ giữ nguyên limits và approval.
-- [ ] Compose chỉ broker có Docker access; không public port, app/worker không mount socket. Cấu hình host Windows bind loopback khi chạy local. Chạy green unit, `python -m scripts.check_artifact_runner` với Docker thật và `docker compose config --quiet`; commit `feat: add isolated artifact runner and bounded file transport`.
+- [x] Red `test_runner_refuses_arbitrary_image_mount_and_environment` asserts schema reject; `test_output_symlink_or_oversize_rejected` asserts không publish; `test_cancel_reaps_child_and_volume` asserts không còn resource có label đúng job; `test_input_is_readonly_and_network_blocked` asserts thay input/mạng đều fail.
+- [x] Chạy `python -m pytest tests/test_artifact_runner.py -q`; fail trước implementation.
+- [x] Implement broker nội bộ với fixed image/profile, deadline request và idempotent job IDs; duplicate started job không chạy lại. Dùng volume input riêng được trusted intake container nạp, mount read-only vào execution container; output tmpfs truyền archive theo stream. Validate từng member, không `extractall` không kiểm soát. Cleanup/reaper chỉ xóa resource mang đúng label runner/job đã xác minh.
+- [x] Profile code: 1 CPU, 512 MiB RAM, 15s CPU/30s wall, tối đa 3 output/20 MiB mỗi file/40 MiB tổng. Profile LibreOffice: 1 CPU, 1024 MiB RAM, 60s CPU/90s wall, pids 64. Root read-only, nonroot, drop caps, no-new-privileges, network none; không có secret/socket trong execution container. Tool Python nhỏ cũ giữ nguyên limits và approval.
+- [x] Compose chỉ broker có Docker access; không public port, app/worker không mount socket. Cấu hình host Windows bind loopback khi chạy local. Chạy green unit, `python -m scripts.check_artifact_runner` với Docker thật và `docker compose config --quiet`; commit `feat: add isolated artifact runner and bounded file transport`.
 
 ### Task 4: X4 — Excel structured operations, recalc và kiểm tra kết quả
 

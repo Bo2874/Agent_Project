@@ -79,6 +79,12 @@ x-runtime-environment: &runtime-environment
   V2_REDIS_CACHE_ENABLED: "false"
   V2_EVENTS_ENABLED: "${DEV_V2_EVENTS_ENABLED:-false}"
   DOCUMENT_STORAGE_PATH: /app/data/documents
+  WORKSPACE_ARTIFACTS_ENABLED: "${DEV_WORKSPACE_ARTIFACTS_ENABLED:-false}"
+  GOOGLE_CONNECTOR_ENABLED: "false"
+  AUTOMATIONS_ENABLED: "false"
+  ARTIFACT_STORAGE_PATH: /app/data/artifacts
+  ARTIFACT_RUNNER_URL: http://artifact-runner:8080
+  ARTIFACT_RUNNER_KEY: "${DEV_ARTIFACT_RUNNER_KEY:-}"
   DOCUMENT_MAX_FILE_BYTES: "${DEV_DOCUMENT_MAX_FILE_BYTES:-20971520}"
   DOCUMENT_MAX_USER_BYTES: "${DEV_DOCUMENT_MAX_USER_BYTES:-209715200}"
   DOCUMENT_MAX_DOCUMENTS: "${DEV_DOCUMENT_MAX_DOCUMENTS:-1000}"
@@ -120,6 +126,27 @@ x-runtime: &runtime
   stop_grace_period: 45s
 
 services:
+  artifact-runner:
+    profiles: [artifacts]
+    image: "${DEV_IMAGE_PREFIX:-personal-agent}-artifact-runner:${DEV_IMAGE_TAG:-dev}"
+    build:
+      context: .
+      dockerfile: infra/docker/artifact-runner/Dockerfile
+    init: true
+    read_only: true
+    environment:
+      ARTIFACT_RUNNER_KEY: "${DEV_ARTIFACT_RUNNER_KEY:-}"
+      ARTIFACT_RUNNER_STATE_PATH: /var/lib/artifact-runner
+    volumes:
+      - artifact_runner_state:/var/lib/artifact-runner
+      - /var/run/docker.sock:/var/run/docker.sock
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [artifact_private]
+    restart: unless-stopped
   postgres:
     image: pgvector/pgvector:0.8.7-pg17-bookworm@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
     environment:
@@ -164,6 +191,8 @@ services:
     volumes:
       - document_data:/app/data/documents
       - document_model_cache:/app/data/models
+      - artifact_data:/app/data/artifacts
+    networks: [default, artifact_private]
     depends_on:
       postgres:
         condition: service_healthy
@@ -181,6 +210,8 @@ services:
     volumes:
       - document_data:/app/data/documents
       - document_model_cache:/app/data/models
+      - artifact_data:/app/data/artifacts
+    networks: [default, artifact_private]
     depends_on:
       postgres:
         condition: service_healthy
@@ -189,6 +220,12 @@ services:
     restart: unless-stopped
 
 volumes:
+  artifact_runner_state:
+  artifact_data:
   postgres_data:
   document_data:
   document_model_cache:
+
+networks:
+  artifact_private:
+    internal: true

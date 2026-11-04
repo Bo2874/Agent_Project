@@ -290,3 +290,47 @@ Ngân sách token run mặc định7.969.672 nay độc lập với số bước
 trần thời gian tổng khi root unbounded. Context/token/approval/journal vẫn được kiểm.
 Rebuild/recreate app và worker để nhận code/config; tạo request mới vì checkpoint cũ giữ cap cũ.
 Không cần migration/reindex. Đã kiểm Compose config, chưa build image cho thay đổi này.
+
+### Artifact runner (workspace Excel)
+
+Runner là broker riêng, chỉ broker được gắn Docker socket. App/worker truyền file
+nhị phân qua HTTP nội bộ có HMAC; sandbox không nhận signing key, API key, Docker
+socket hay mạng. Font Inter/Lora được phục vụ từ `/static/fonts`, kèm OFL.
+
+Build image cố định trước khi bật module:
+
+```powershell
+docker build -f infra/docker/artifact-sandbox/Dockerfile --target code -t personal-agent-artifact-code:1 .
+docker build -f infra/docker/artifact-runner/Dockerfile -t personal-agent-artifact-runner:dev .
+python -m scripts.check_artifact_runner
+docker compose --env-file .env.docker.example config --quiet
+```
+
+`check_artifact_runner` dùng Docker thật và API fixture, không gọi LLM, không dùng
+database ứng dụng. Có thể đặt `ARTIFACT_DOCKER` thành đường dẫn Docker CLI. Kết quả
+`NOT RUN` và exit code khác 0 nghĩa là chưa qua gate. Đây là gate transport/cách ly;
+gate tạo, tính công thức và sửa Excel nằm trong kiểm tra workflow tiếp theo.
+
+Chạy local Windows: đặt signing key ngẫu nhiên riêng (ít nhất 32 ký tự) vào biến môi
+trường `ARTIFACT_RUNNER_KEY`, và thư mục state riêng vào `ARTIFACT_RUNNER_STATE_PATH`.
+Chạy `python -m uvicorn artifact_runtime.app:application_factory --factory --host
+127.0.0.1 --port 8081`. App/worker nhận cùng key và `ARTIFACT_RUNNER_URL=http://127.0.0.1:8081`.
+Không bind broker local lên mọi interface.
+
+Compose dùng profile `artifacts`, network nội bộ `artifact_private`, không publish
+port runner. Cấu hình `DEV_ARTIFACT_RUNNER_KEY` riêng và build hai image sandbox
+code/render theo hướng dẫn Excel trước khi bật `DEV_WORKSPACE_ARTIFACTS_ENABLED`.
+Các flag mặc định tắt. Key không nằm trong request schema hay prompt của model.
+
+Mỗi call code: 1 CPU, 512 MiB, CPU 15s/wall 30s; Calc: 1 CPU, 1024 MiB,
+CPU 60s/wall 90s, pids 64. Input volume chỉ đọc; output tmpfs tối đa 3 file,
+20 MiB/file, 40 MiB tổng. Intake là chương trình cố định, chạy riêng trước execution.
+Dependency Python được khóa bằng hash trong hai `requirements.lock`; tái tạo bằng
+`uv pip compile requirements.in --generate-hashes --output-file requirements.lock`.
+
+Broker giữ SQLite journal và result bundle trong volume `artifact_runner_state`.
+Job ID đã bắt đầu không được chạy lại; output hoàn tất có thể lấy lại trong 1 giờ.
+Journal giữ tombstone sau khi dọn cache để retry muộn không thực thi lần hai. Hủy
+trước khi POST hoàn tất cũng ghi tombstone. Reaper mỗi 30s thu hồi resource quá hạn
+150s; startup thu hồi các job bị gián đoạn. Chỉ xóa container/volume có label runner
+và job khớp chính xác. Không dùng `docker system prune` để dọn artifact.

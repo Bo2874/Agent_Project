@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     artifact_max_user_bytes: int = Field(default=209715200, ge=1024)
     artifact_max_unpacked_bytes: int = Field(default=104857600, ge=1024, le=536870912)
     artifact_max_archive_entries: int = Field(default=2000, ge=2, le=10000)
+    artifact_runner_url: str = "http://127.0.0.1:8081"
+    artifact_runner_key: SecretStr | None = None
     google_connector_enabled: bool = False
     automations_enabled: bool = False
     v2_enabled: bool = False
