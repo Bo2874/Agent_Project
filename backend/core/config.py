@@ -23,6 +23,11 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     workspace_artifacts_enabled: bool = False
+    artifact_storage_path: Path = PROJECT_ROOT / "data/artifacts"
+    artifact_max_file_bytes: int = Field(default=20971520, ge=1024, le=104857600)
+    artifact_max_user_bytes: int = Field(default=209715200, ge=1024)
+    artifact_max_unpacked_bytes: int = Field(default=104857600, ge=1024, le=536870912)
+    artifact_max_archive_entries: int = Field(default=2000, ge=2, le=10000)
     google_connector_enabled: bool = False
     automations_enabled: bool = False
     v2_enabled: bool = False
