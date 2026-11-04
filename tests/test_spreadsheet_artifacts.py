@@ -195,3 +195,25 @@ def test_unsupported_formula_is_preserved_and_never_fresh(tmp_path):
     assert (
         load_workbook(tmp_path / "output" / "output-0.xlsx").active["A1"].value == "=MEDIAN(1,2,9)"
     )
+
+
+def test_preview_chart_samples_are_bounded(tmp_path):
+    from openpyxl import Workbook
+    from openpyxl.chart import BarChart, Reference
+
+    from artifact_runtime.spreadsheet import inspect_spreadsheet
+
+    book = Workbook()
+    sheet = book.active
+    for row in range(1, 302):
+        sheet.append([f"Row {row}", row])
+    chart = BarChart()
+    chart.add_data(Reference(sheet, min_col=2, min_row=1, max_row=301))
+    chart.set_categories(Reference(sheet, min_col=1, min_row=1, max_row=301))
+    sheet.add_chart(chart, "E1")
+    source = tmp_path / "chart-preview.xlsx"
+    book.save(source)
+    preview = inspect_spreadsheet(source).preview_manifest
+    assert preview["charts"][0]["series"][0]["values"] == list(range(1, 101))
+    assert preview["charts"][0]["categories"][0] == "Row 1"
+    assert preview["charts"][0]["truncated"] is True

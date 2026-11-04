@@ -627,6 +627,33 @@ async def stream_assistant_response(
                 continue
             encoded_event = agent_stream_sse(item)
             if isinstance(item, AgentLoopEvent):
+                if (
+                    settings.workspace_artifacts_enabled
+                    and item.kind == "tool_completed"
+                    and item.tool_call
+                    and item.tool_result
+                    and not item.tool_result.is_error
+                ):
+                    from backend.services.artifacts.publication import OUTPUT_TOOLS, validated_refs
+
+                    if item.tool_call.name in OUTPUT_TOOLS:
+                        async with SessionFactory() as artifact_session:
+                            refs = await validated_refs(
+                                artifact_session,
+                                user_id,
+                                conversation_id,
+                                item.tool_result.data.get("artifact_refs", []),
+                                run_id=agent_run_id,
+                            )
+                        for ref in refs:
+                            yield sse_event(
+                                "artifact_ready",
+                                {
+                                    "ref": ref.model_dump(mode="json"),
+                                    "conversation_id": str(conversation_id),
+                                    "run_id": str(agent_run_id),
+                                },
+                            )
                 if item.planning_sync and item.planning_snapshot:
                     yield sse_event("plan", item.planning_snapshot)
                 if encoded_event is not None:
@@ -893,6 +920,13 @@ async def get_conversation_messages(
     messages = await list_messages(session, conversation.id)
     response.headers["Cache-Control"] = "private, no-store"
     citations = await message_citations(session, user.id, conversation.id, [m.id for m in messages])
+    from backend.services.artifacts.publication import message_artifacts
+
+    artifacts = (
+        await message_artifacts(session, user.id, conversation.id, [m.id for m in messages])
+        if get_settings().workspace_artifacts_enabled
+        else {}
+    )
     by_message = {}
     for citation in citations:
         by_message.setdefault(citation["message_id"], []).append(
@@ -900,7 +934,10 @@ async def get_conversation_messages(
         )
     return [
         MessageResponse.model_validate(item).model_copy(
-            update={"citations": by_message.get(item.id, [])}
+            update={
+                "citations": by_message.get(item.id, []),
+                "artifact_refs": artifacts.get(item.id, []),
+            }
         )
         for item in messages
     ]

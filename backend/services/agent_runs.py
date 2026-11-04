@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent_core.graph.checkpointing import agent_checkpoint_config
 from agent_core.graph.runtime import AgentLoopEvent
 from agent_core.tools.web_search import normalize_web_sources
+from backend.core.config import get_settings
 from backend.core.redaction import redact_text
 from backend.database import SessionFactory
 from backend.models import (
@@ -137,6 +138,7 @@ class AgentRunTimeline:
     rag_search_mode: RagSearchMode | None = None
     planning: dict | None = None
     durable: bool = False
+    artifact_refs: list[dict] = field(default_factory=list)
 
 
 async def create_agent_run(
@@ -522,6 +524,20 @@ async def complete_agent_run(
             raise RuntimeError("Không tìm thấy agent run")
         agent_run.status = "completed"
         agent_run.assistant_message_id = assistant_message.id
+        from backend.services.artifacts.publication import bind_message_artifacts, run_artifacts
+
+        if get_settings().workspace_artifacts_enabled:
+            owner_id = await session.scalar(
+                select(Conversation.user_id).where(Conversation.id == conversation_id)
+            )
+            refs = await run_artifacts(session, owner_id, conversation_id, agent_run_id)
+            await bind_message_artifacts(
+                session,
+                owner_id,
+                conversation_id,
+                assistant_message.id,
+                [ref.model_dump(mode="json") for ref in refs],
+            )
         if document_result is not None:
             agent_run.rag_trace = document_result.trace
         agent_run.stop_reason = "final_answer"
@@ -714,6 +730,27 @@ async def list_agent_run_timelines(
         return []
 
     run_ids = [run.id for run in runs]
+    artifact_refs = {}
+    if get_settings().workspace_artifacts_enabled:
+        from backend.models.artifact import ArtifactVersion
+        from backend.services.artifacts.service import published
+
+        owner = await session.scalar(
+            select(Conversation.user_id).where(Conversation.id == conversation_id)
+        )
+        for row in (
+            await session.scalars(
+                select(ArtifactVersion)
+                .where(
+                    ArtifactVersion.source_run_id.in_(run_ids),
+                    ArtifactVersion.owner_user_id == owner,
+                )
+                .order_by(ArtifactVersion.created_at, ArtifactVersion.version_number)
+            )
+        ).all():
+            artifact_refs.setdefault(row.source_run_id, []).append(
+                published(row).model_dump(mode="json")
+            )
     steps = list(
         (
             await session.scalars(
@@ -887,6 +924,7 @@ async def list_agent_run_timelines(
                 started_at=run.last_resumed_at or run.created_at,
                 planning=(run.rag_trace or {}).get("planning"),
                 durable=bool((run.rag_trace or {}).get("durable")),
+                artifact_refs=artifact_refs.get(run.id, []),
                 rag_search_mode=(run.rag_trace or {}).get("search_mode")
                 if (run.rag_trace or {}).get("execution_mode") != "react"
                 or (run.rag_trace or {}).get("document_search_used")

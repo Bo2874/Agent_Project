@@ -16,7 +16,7 @@
         {% endif %}
         <nav class="workspace-navigation" aria-label="Điều hướng chính">
             <a href="/chat" {% if is_chat %}aria-current="page"{% endif %}><span aria-hidden="true">◌</span> Trò chuyện</a>
-            {% if features.artifacts %}<a href="/artifacts"><span aria-hidden="true">▧</span> Tệp làm việc</a>{% endif %}
+            {% if features.artifacts %}<a href="/artifacts" {% if request.url.path == '/artifacts' %}aria-current="page"{% endif %}><span aria-hidden="true">▧</span> Tệp làm việc</a>{% endif %}
             <a href="/documents" {% if request.url.path == '/documents' %}aria-current="page"{% endif %}><span aria-hidden="true">▤</span> Thư viện</a>
             <a href="/plugins" {% if request.url.path.startswith('/plugins') %}aria-current="page"{% endif %}><span aria-hidden="true">⌘</span> Plugins & kết nối</a>
             <a href="/memories" {% if request.url.path == '/memories' %}aria-current="page"{% endif %}><span aria-hidden="true">◇</span> Bộ nhớ</a>

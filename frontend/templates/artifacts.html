@@ -1,0 +1,11 @@
+{% extends "workspace.html" %}
+{% block title %}File làm việc · Personal Agent{% endblock %}
+{% block workspace_body %}
+<main class="artifacts-page" data-artifacts-layout>
+    <section class="artifact-primary shell">
+        <header class="documents-hero"><div><p class="eyebrow">Không gian riêng</p><h1>File làm việc</h1><p class="lead">Tạo và chỉnh sửa bằng yêu cầu trong chat. Bấm tên file để xem phiên bản bên cạnh.</p></div></header>
+        {% include "artifact_library.html" %}
+    </section>
+</main>
+<script src="{{ url_for('static', path='/artifacts.js') }}" defer></script>
+{% endblock %}

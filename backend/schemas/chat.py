@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from backend.schemas.artifact import PublishedArtifact
 from backend.schemas.document import DocumentCitationResponse, RagSearchMode
 
 
@@ -57,6 +58,7 @@ class MessageResponse(BaseModel):
     content: str
     created_at: datetime
     citations: list[DocumentCitationResponse] = Field(default_factory=list)
+    artifact_refs: list[PublishedArtifact] = Field(default_factory=list)
 
 
 class ToolCallTimelineResponse(BaseModel):
@@ -126,3 +128,4 @@ class AgentRunTimelineResponse(BaseModel):
     rag_search_mode: RagSearchMode | None = None
     planning: dict[str, object] | None = None
     durable: bool = False
+    artifact_refs: list[PublishedArtifact] = Field(default_factory=list)

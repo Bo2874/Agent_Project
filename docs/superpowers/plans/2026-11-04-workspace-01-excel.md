@@ -111,10 +111,10 @@ Mới: `backend/models/artifact.py`, `backend/schemas/artifact.py`, `backend/ser
 
 **Interfaces:** `GET /api/artifact-versions/{id}/preview` trả DTO paginated có cells/sheet/calculation state hoặc preview asset refs; `createArtifactPanel(root, {requestJson}): {open(versionId, contextId), close(), onVersionReady(ref, contextId)}`. `artifact_ready` run event chứa validated IDs; `MessageArtifact` cho reload, unique `(message_id,version_id)`. Không tự parse ID/URL từ prose của model làm quyền file.
 
-- [ ] Red publication test: replay cùng event không nhân card; reload tìm đúng version; owner khác không lấy được metadata. Dùng version fixture đã publish trong X2, không file nhị phân trong SSE.
-- [ ] Implement thẻ qua DOM text nodes, panel chỉ mở bằng explicit click, close trả full chat width. Event bản mới chỉ update panel đang mở của cùng Artifact; đóng/đổi chat phải invalid request generation và bỏ response cũ. Version selector/parent lineage và download đều dùng immutable version ID.
-- [ ] Green publication test; `node --check` các JS thay đổi. Browser QA: tạo/sửa lúc panel đóng vẫn đóng; mở → sửa cập nhật; đóng khi fetch chậm; chuyển chat A→B không hiện file A; chọn phiên bản cũ; narrow viewport/back/Escape/focus. Kiểm reload thật từ DB.
-- [ ] Commit `feat: show artifact versions on demand beside chat`.
+- [x] Red publication test: replay cùng event không nhân card; reload tìm đúng version; owner khác không lấy được metadata. Dùng version fixture đã publish trong X2, không file nhị phân trong SSE.
+- [x] Implement thẻ qua DOM text nodes, panel chỉ mở bằng explicit click, close trả full chat width. Event bản mới chỉ update panel đang mở của cùng Artifact; đóng/đổi chat phải invalid request generation và bỏ response cũ. Version selector/parent lineage và download đều dùng immutable version ID.
+- [x] Green publication test; `node --check` các JS thay đổi. Browser QA: tạo/sửa lúc panel đóng vẫn đóng; mở → sửa cập nhật; đóng khi fetch chậm; chuyển chat A→B không hiện file A; chọn phiên bản cũ; narrow viewport/back/Escape/focus. Kiểm reload thật từ DB.
+- [x] Commit `feat: show artifact versions on demand beside chat`.
 
 ### Task 8: X8 — Nghiệm thu Excel xuyên suốt và vận hành
 

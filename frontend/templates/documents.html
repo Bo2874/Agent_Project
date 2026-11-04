@@ -1,7 +1,8 @@
 {% extends "workspace.html" %}
 {% block title %}Tài liệu của bạn · Personal Agent{% endblock %}
 {% block workspace_body %}
-<main class="shell documents-page" data-documents-page>
+<main class="shell documents-page" data-documents-page {% if workspace_features().artifacts %}data-artifacts-layout{% endif %}>
+    <div class="artifact-primary">
 
     <header class="documents-hero">
         <div>
@@ -59,6 +60,8 @@
         <button class="ghost-button" data-document-next disabled>Sau</button>
     </div>
     </div>
+    </div>
 </main>
 <script src="{{ url_for('static', path='/documents.js') }}" defer></script>
+{% if workspace_features().artifacts %}<script src="{{ url_for('static', path='/artifacts.js') }}" defer></script>{% endif %}
 {% endblock %}

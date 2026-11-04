@@ -300,6 +300,77 @@ def apply_spreadsheet(
     )
 
 
+def chart_preview(sheet, cached):
+    """Bounded chart samples, derived inside the isolated parser from immutable bytes."""
+    import math
+    from itertools import islice
+
+    from openpyxl.utils.cell import range_to_tuple
+
+    truncated = False
+
+    def samples(reference):
+        nonlocal truncated
+        if not reference:
+            return []
+        try:
+            title, (left, top, right, bottom) = range_to_tuple(reference)
+            if title not in cached.sheetnames:
+                return []
+            if not (1 <= left <= right <= 16384 and 1 <= top <= bottom <= 1048576):
+                return []
+            truncated |= (right - left + 1) * (bottom - top + 1) > 100
+            cells = (
+                cached[title].cell(row, col).value
+                for row in range(top, bottom + 1)
+                for col in range(left, right + 1)
+            )
+            return list(islice(cells, 100))
+        except (TypeError, ValueError):
+            return []
+
+    result = []
+    for index, chart in enumerate(sheet._charts[:4]):
+        truncated = len(sheet._charts) > 4 or len(chart.series) > 6
+        title = ""
+        if chart.title and chart.title.tx and chart.title.tx.rich:
+            title = " ".join(
+                run.t for paragraph in chart.title.tx.rich.p for run in paragraph.r if run.t
+            )[:256]
+        series, categories = [], []
+        for number, item in enumerate(chart.series[:6]):
+            values = samples(item.val.numRef.f if item.val and item.val.numRef else None)
+            series.append(
+                {
+                    "name": f"Series {number + 1}",
+                    "values": [
+                        value if isinstance(value, (int, float)) and math.isfinite(value) else None
+                        for value in values
+                    ],
+                }
+            )
+            if not categories and item.cat:
+                category_ref = item.cat.strRef or item.cat.numRef
+                categories = [
+                    str(value)[:256] if value is not None else ""
+                    for value in samples(category_ref.f if category_ref else None)
+                ]
+        result.append(
+            {
+                "title": title or f"Chart {index + 1}",
+                "type": "line"
+                if type(chart).__name__ == "LineChart"
+                else "bar"
+                if chart.type == "bar"
+                else "column",
+                "series": series,
+                "categories": categories,
+                "truncated": truncated,
+            }
+        )
+    return result
+
+
 def inspect_spreadsheet(
     path: Path, *, request: ArtifactRunRequest | None = None
 ) -> GeneratedArtifact:
@@ -363,6 +434,7 @@ def inspect_spreadsheet(
         ],
         "cells": cells,
         "columns_truncated": sheet.max_column > 100,
+        "charts": chart_preview(sheet, cached),
     }
     # Keep the entire transport manifest bounded even for very long formulas,
     # number formats or multi-byte cell text. Trim complete rows, never file data.

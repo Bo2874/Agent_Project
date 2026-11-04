@@ -11,6 +11,8 @@ from backend.models import User
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 templates = Jinja2Templates(directory=FRONTEND_DIR / "templates")
+
+
 def workspace_features() -> dict[str, bool]:
     settings = get_settings()
     return {
@@ -84,6 +86,22 @@ async def documents_page(request: Request, user: OptionalUser) -> Response:
     return templates.TemplateResponse(
         request=request,
         name="documents.html",
+        context={"user": user},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/artifacts", response_class=HTMLResponse)
+async def artifacts_page(request: Request, user: OptionalUser) -> Response:
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if not get_settings().workspace_artifacts_enabled:
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "Artifact module is disabled.")
+    return templates.TemplateResponse(
+        request=request,
+        name="artifacts.html",
         context={"user": user},
         headers={"Cache-Control": "no-store"},
     )

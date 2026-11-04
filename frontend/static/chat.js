@@ -10,12 +10,13 @@ if (chatApp) {
   const title = chatApp.querySelector("[data-chat-title]");
   const status = chatApp.querySelector("[data-chat-status]");
   let activeConversationId = null;
-  let conversationMutationPending = false;
+  let conversationMutationPending = true;
   let streamInProgress = false;
   let documentMutationPending = false;
   let artifactMutationPending = false;
   let documentPanel = null;
   let artifactPanel = null;
+  let artifactPreview = null;
 
   function updateConversationControls() {
     const disabled = streamInProgress || conversationMutationPending || documentMutationPending || artifactMutationPending;
@@ -679,6 +680,7 @@ if (chatApp) {
   }
 
   function renderStoredTimeline(assistantBubble, run) {
+    window.renderArtifactCards?.(assistantBubble, run.artifact_refs, activeConversationId);
     const timeline = createAgentTimeline(assistantBubble, false);
     updateStoredTimeline(timeline, run);
     if (!timeline.terminal) pollStoredTimeline(timeline, activeConversationId, run.id);
@@ -788,6 +790,7 @@ if (chatApp) {
 
   async function selectConversation(conversation, refreshList = true) {
     if (streamInProgress || documentMutationPending || artifactMutationPending) return;
+    artifactPreview?.close();
     activeConversationId = conversation.id;
     title.textContent = conversation.title;
     document.querySelectorAll(".conversation-item").forEach((item) => {
@@ -825,12 +828,14 @@ if (chatApp) {
       messages.forEach((message) => {
         const bubble = addMessage(message.role, message.content);
         if (message.role === "assistant") renderCitations(bubble, message.citations, message.id, conversation.id);
+        if (message.role === "assistant") window.renderArtifactCards?.(bubble, message.artifact_refs, conversation.id);
         const run = runsByAssistantMessage.get(message.id);
         if (message.role === "assistant" && run) renderStoredTimeline(bubble, run);
         if (message.role === "user") {
           for (const failedRun of failedRunsByUserMessage.get(message.id) || []) {
             if (failedRun.durable && ["queued", "running", "waiting_approval"].includes(failedRun.status)) {
               const activeBubble = addMessage("assistant");
+              window.renderArtifactCards?.(activeBubble, failedRun.artifact_refs, conversation.id);
               const timeline = createAgentTimeline(activeBubble);
               timeline.root.dataset.runId = failedRun.id;
               setBusy(true);
@@ -923,6 +928,7 @@ if (chatApp) {
                 timeline.markdown = stored.content;
                 window.renderMarkdown(assistantBubble, stored.content);
                 renderCitations(assistantBubble, stored.citations, stored.id, activeConversationId);
+                window.renderArtifactCards?.(assistantBubble, stored.artifact_refs, activeConversationId);
               }
             }
           }
@@ -930,6 +936,11 @@ if (chatApp) {
             runId = parsed.data.run_id;
             timeline.root.dataset.runId = runId;
             updateTimelineSearchMode(timeline, parsed.data.rag_search_mode);
+          }
+          if (parsed.event === "artifact_ready" && parsed.data.conversation_id === activeConversationId) {
+            window.renderArtifactCards?.(assistantBubble, [parsed.data.ref], activeConversationId);
+            artifactPreview?.onVersionReady(parsed.data.ref, activeConversationId);
+            window.dispatchEvent(new CustomEvent("artifact-library-changed"));
           }
           if (parsed.event === "progress") {
             updatePipelineProgress(timeline, parsed.data);
@@ -1113,5 +1124,14 @@ if (chatApp) {
       updateConversationControls();
     },
   });
-  loadConversations().catch((error) => showError(error.message));
+  if (window.createArtifactPanel && window.ArtifactWorkspace) {
+    artifactPreview = window.createArtifactPanel(chatApp.querySelector(".chat-shell"), { requestJson });
+    window.ArtifactWorkspace.onOpen = (id, context) => {
+      if (context === activeConversationId) return artifactPreview.open(id, context);
+    };
+  }
+  updateConversationControls();
+  loadConversations(new URL(location.href).searchParams.get("conversation"))
+    .catch((error) => showError(error.message))
+    .finally(() => { conversationMutationPending = false; updateConversationControls(); });
 }

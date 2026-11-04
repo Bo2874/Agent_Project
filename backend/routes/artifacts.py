@@ -92,6 +92,7 @@ def view(row: ArtifactVersion) -> dict:
         "origin": row.origin,
         "created_at": row.created_at.isoformat(),
         "can_edit": row.mime_type == XLSX_MIME,
+        "source_run_id": str(row.source_run_id) if row.source_run_id else None,
     }
 
 
@@ -325,6 +326,63 @@ async def download(version_id: UUID, session: DbSession, user: CurrentUser, serv
             "Content-Security-Policy": "default-src 'none'; sandbox",
         },
     )
+
+
+@router.get("/api/artifact-versions/{version_id}/preview")
+async def preview_artifact(
+    version_id: UUID,
+    request: Request,
+    session: DbSession,
+    user: CurrentUser,
+    service: Service,
+    sheet: Annotated[str | None, Query(max_length=31)] = None,
+    offset: Annotated[int, Query(ge=0, le=1048575)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+):
+    row = await service.open_owned_version(session, user.id, version_id)
+    manifest = row.preview_manifest
+    if row.mime_type == XLSX_MIME and (sheet is not None or offset or limit != 100 or not manifest):
+
+        async def cancel():
+            if await request.is_disconnected():
+                raise asyncio.CancelledError()
+
+        try:
+            with service.storage.path(row.storage_key).open("rb") as source:
+                input = ArtifactInput(
+                    "input-0.xlsx", row.mime_type, row.size_bytes, row.sha256, source
+                )
+                result = await runner_client(service, user.id).execute(
+                    ArtifactRunRequest(
+                        job_id=uuid4(),
+                        action="inspect",
+                        inputs=(input.descriptor(),),
+                        preview_sheet=sheet,
+                        preview_offset=offset,
+                        preview_limit=limit,
+                    ),
+                    (input,),
+                    cancel=cancel,
+                )
+                manifest = result.manifest.preview_manifest
+        except httpx.HTTPError as error:
+            raise HTTPException(503, "Preview runner chưa sẵn sàng.") from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)[-1000:]) from error
+    from backend.models import AgentRun
+
+    conversation = (
+        await session.scalar(
+            select(AgentRun.conversation_id).where(AgentRun.id == row.source_run_id)
+        )
+        if row.source_run_id
+        else None
+    )
+    return {
+        **view(row),
+        "preview": manifest,
+        "source_conversation_id": str(conversation) if conversation else None,
+    }
 
 
 @router.get("/api/conversations/{conversation_id}/artifacts")
