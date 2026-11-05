@@ -340,7 +340,10 @@ class DockerBroker:
                     output=root / "intake.log",
                     deadline=15,
                 )
-                render = request.action == "recalculate"
+                render = request.action == "recalculate" or (
+                    request.operation
+                    and request.operation.kind in {"rebuild_pdf", "rebuild_pdf_text_only"}
+                )
                 await self.pipe_container(
                     [
                         "run",

@@ -25,6 +25,11 @@ def main():
                 input_path, offset=request.preview_offset, limit=request.preview_limit
             )
             report = GeneratedArtifact(preview_manifest=outline.model_dump(mode="json"))
+        elif input_path.suffix == ".pdf":
+            from artifact_runtime.pdf import pdf_preview, read_pdf_text
+
+            extracted = read_pdf_text(input_path)
+            report = GeneratedArtifact(preview_manifest=pdf_preview(extracted, request))
         else:
             from artifact_runtime.spreadsheet import inspect_spreadsheet
 
@@ -63,6 +68,43 @@ def main():
             # Do not return arbitrary megabytes of process output to the caller.
             raise RuntimeError(
                 Path("/tmp/python.log").read_bytes()[-4096:].decode("utf-8", "replace")
+            )
+    elif request.operation.kind in {"rebuild_pdf", "rebuild_pdf_text_only"}:
+        from artifact_runtime.document_types import DocumentEdits
+        from artifact_runtime.pdf import rebuild_pdf
+
+        content = request.operation.payload
+        if isinstance(content, DocumentEdits):
+            if len(request.inputs) != 2 or request.inputs[1].name != "input-1.docx":
+                raise ValueError("PDF node edits require that version's editable DOCX source")
+            import tempfile
+
+            from artifact_runtime.document import apply_document
+            from artifact_runtime.protocol import ArtifactOperation
+            from artifact_runtime.rendering import export_docx_pdf
+
+            with tempfile.TemporaryDirectory(dir="/tmp") as folder:
+                result = apply_document(
+                    ArtifactOperation(
+                        kind="edit_docx",
+                        parent_version_id=request.operation.parent_version_id,
+                        payload=content,
+                    ),
+                    input_path=Path("/input/input-1.docx"),
+                    output_dir=Path(folder),
+                )
+                (output / "output-1.docx").write_bytes(
+                    (Path(folder) / result.files[0].name).read_bytes()
+                )
+                export_docx_pdf(output / "output-1.docx", output / "output-0.pdf")
+            report = GeneratedArtifact(preview_manifest={"editable_source": "output-1.docx"})
+        else:
+            approved = None
+            if request.operation.kind == "rebuild_pdf_text_only":
+                approved = content.omitted_pages
+                content = content.content
+            report = rebuild_pdf(
+                content, source_pdf=input_path, output_dir=output, approved_omitted_pages=approved
             )
     elif request.operation.kind in {"create_docx", "edit_docx"}:
         from artifact_runtime.document import apply_document

@@ -13,9 +13,10 @@ MIME_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "pdf": "application/pdf",
     "txt": "text/plain",
+    "png": "image/png",  # Internal preview assets, not an upload format.
 }
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-_KEY = re.compile(rf"{_UUID}/{_UUID}/{_UUID}/content\.(xlsx|docx|pdf|txt)")
+_KEY = re.compile(rf"{_UUID}/{_UUID}/{_UUID}/content\.(xlsx|docx|pdf|txt|png)")
 
 
 class ArtifactStorageError(ValueError):

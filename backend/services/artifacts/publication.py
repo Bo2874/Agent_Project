@@ -12,7 +12,9 @@ from backend.models.artifact import ArtifactVersion, MessageArtifact
 from backend.services.artifacts.selection import owned_conversation
 from backend.services.artifacts.service import published
 
-OUTPUT_TOOLS = frozenset({"artifact_create", "artifact_edit", "run_artifact_python"})
+OUTPUT_TOOLS = frozenset(
+    {"artifact_create", "artifact_edit", "run_artifact_python", "artifact_rebuild_pdf_text_only"}
+)
 
 
 async def validated_refs(session, owner, conversation_id, refs, *, run_id=None):

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from agent_core.tools import ToolContext, ToolResult
 from artifact_runtime.protocol import (
     DOCX_MIME,
+    PDF_MIME,
     ArtifactInput,
     ArtifactOperation,
     ArtifactRunRequest,
@@ -22,9 +23,14 @@ from artifact_runtime.protocol import (
 from backend.database import SessionFactory
 from backend.models import AgentRun, Conversation
 from backend.models.artifact import ArtifactVersion, MessageArtifact
-from backend.services.artifacts.service import get_artifact_service, published
+from backend.services.artifacts.service import editable_source, get_artifact_service, published
 from backend.services.artifacts.storage import XLSX_MIME, ArtifactStorageError
-from backend.services.artifacts.validation import ValidatedArtifact, validate_archive, validate_name
+from backend.services.artifacts.validation import (
+    ValidatedArtifact,
+    ValidatedCompanion,
+    validate_archive,
+    validate_name,
+)
 
 
 class ArtifactToolService:
@@ -87,24 +93,34 @@ class ArtifactToolService:
                 )
                 if binding is None:
                     raise HTTPException(404, "Artifact is not in this run's scope.")
-        if row.mime_type not in {XLSX_MIME, DOCX_MIME}:
+        if row.mime_type not in {XLSX_MIME, DOCX_MIME, PDF_MIME}:
             raise HTTPException(415, "This document format is not supported yet.")
         return row
 
-    async def run(self, context, job, *, stored=None, operation=None, action="execute", **kwargs):
+    async def run(
+        self,
+        context,
+        job,
+        *,
+        stored=None,
+        additional=(),
+        operation=None,
+        action="execute",
+        **kwargs,
+    ):
         service = self.storage_service()
         with ExitStack() as stack:
-            inputs = ()
-            if stored:
-                source = stack.enter_context(service.storage.path(stored.key).open("rb"))
-                inputs = (
+            inputs = []
+            for index, item in enumerate(([stored] if stored else []) + list(additional)):
+                source = stack.enter_context(service.storage.path(item.key).open("rb"))
+                inputs.append(
                     ArtifactInput(
-                        "input-0" + service.storage.path(stored.key).suffix,
-                        stored.mime_type,
-                        stored.size_bytes,
-                        stored.sha256,
+                        f"input-{index}" + service.storage.path(item.key).suffix,
+                        item.mime_type,
+                        item.size_bytes,
+                        item.sha256,
                         source,
-                    ),
+                    )
                 )
             return await self.runner(context.user_id).execute(
                 ArtifactRunRequest(
@@ -114,13 +130,13 @@ class ArtifactToolService:
                     inputs=tuple(item.descriptor() for item in inputs),
                     **kwargs,
                 ),
-                inputs,
+                tuple(inputs),
                 cancel=lambda: self.check(
                     context, "artifact_inspect" if action == "inspect" else "artifact_edit"
                 ),
             )
 
-    async def inspect(self, context, *, version_id, sheet=None, offset=0):
+    async def inspect(self, context, *, version_id, sheet=None, offset=0, limit=20, text_offset=0):
         from uuid import uuid4
 
         from backend.services.artifacts.storage import StoredArtifact
@@ -130,6 +146,13 @@ class ArtifactToolService:
             async with self.sessions() as session:
                 row = await self.input_version(session, context, version_id)
                 stored = StoredArtifact(row.storage_key, row.size_bytes, row.sha256, row.mime_type)
+                if row.mime_type == PDF_MIME and (source := editable_source(row)):
+                    await asyncio.to_thread(
+                        self.storage_service().storage.verify,
+                        source,
+                        max_bytes=self.storage_service().max_file_bytes,
+                    )
+                    stored = source
                 ref = published(row)
             result = await self.run(
                 context,
@@ -138,7 +161,8 @@ class ArtifactToolService:
                 action="inspect",
                 preview_sheet=sheet,
                 preview_offset=offset,
-                preview_limit=20,
+                preview_limit=limit,
+                preview_text_offset=text_offset,
             )
             await self.check(context, "artifact_inspect")
             preview = json.dumps(result.manifest.preview_manifest, ensure_ascii=False)
@@ -178,6 +202,8 @@ class ArtifactToolService:
             "edit_xlsx": "artifact_edit",
             "create_docx": "artifact_create",
             "edit_docx": "artifact_edit",
+            "rebuild_pdf": "artifact_edit" if request.parent_version_id else "artifact_create",
+            "rebuild_pdf_text_only": "artifact_rebuild_pdf_text_only",
         }[request.kind]
         try:
             await self.check(context, tool)
@@ -210,9 +236,15 @@ class ArtifactToolService:
                         "Phiên bản đã được lưu.",
                         data={"artifact_refs": [published(previous).model_dump(mode="json")]},
                     )
-                extension = ".docx" if request.kind.endswith("docx") else ".xlsx"
+                extension = (
+                    ".pdf"
+                    if request.kind.startswith("rebuild_pdf")
+                    else ".docx"
+                    if request.kind.endswith("docx")
+                    else ".xlsx"
+                )
                 target = validate_name(name or (parent.name if parent else "report" + extension))
-                if Path(target).suffix.lower() not in {".xlsx", ".docx"} or (
+                if Path(target).suffix.lower() not in {".xlsx", ".docx", ".pdf"} or (
                     request.kind != "python" and Path(target).suffix.lower() != extension
                 ):
                     raise ValueError("Output filename must match the operation format.")
@@ -227,25 +259,53 @@ class ArtifactToolService:
                     if parent
                     else None
                 )
+                source = (
+                    editable_source(parent) if parent and parent.mime_type == PDF_MIME else None
+                )
+                if source:
+                    await asyncio.to_thread(
+                        service.storage.verify, source, max_bytes=service.max_file_bytes
+                    )
 
             def job(stage):
                 return uuid5(
                     NAMESPACE_URL, f"artifact:{context.user_id}:{op}:{fingerprint}:{stage}"
                 )
 
-            generated = await self.run(context, job("execute"), stored=input, operation=request)
+            generated = await self.run(
+                context,
+                job("execute"),
+                stored=input,
+                additional=(source,) if source else (),
+                operation=request,
+            )
             cleanup.update(item.key for item in generated.files)
-            if len(generated.files) != 1:
-                raise ValueError("Produce exactly one output file per action.")
+            pdf = Path(target).suffix.lower() == ".pdf"
+            companions = ()
+            if len(generated.files) != (2 if pdf else 1):
+                raise ValueError("Expected primary output and, for PDF, an editable DOCX source.")
             current = generated.files[0]
             if (
                 current.mime_type
-                != {".xlsx": XLSX_MIME, ".docx": DOCX_MIME}[Path(target).suffix.lower()]
+                != {".xlsx": XLSX_MIME, ".docx": DOCX_MIME, ".pdf": PDF_MIME}[
+                    Path(target).suffix.lower()
+                ]
             ):
                 raise ValueError("Generated file format does not match the requested output.")
-            await asyncio.to_thread(validate_archive, service.storage.path(current.key))
+            if not pdf:
+                await asyncio.to_thread(validate_archive, service.storage.path(current.key))
             inspection = await self.run(context, job("preflight"), stored=current, action="inspect")
             calculation = inspection.manifest.calculation
+            if pdf:
+                editable = generated.files[1]
+                if (
+                    editable.mime_type != DOCX_MIME
+                    or generated.manifest.preview_manifest.get("editable_source") != "output-1.docx"
+                ):
+                    raise ValueError("PDF editable source is missing or invalid")
+                await asyncio.to_thread(validate_archive, service.storage.path(editable.key))
+                await self.run(context, job("source-preflight"), stored=editable, action="inspect")
+                companions = (ValidatedCompanion("editable_source", editable),)
             if current.mime_type == XLSX_MIME and calculation.status != "unsupported":
                 recalculated = await self.run(
                     context, job("calculate"), stored=current, action="recalculate"
@@ -269,6 +329,7 @@ class ArtifactToolService:
                 preview_manifest=inspection.manifest.preview_manifest,
                 companion_sources=[{"role": "operation_fingerprint", "sha256": fingerprint}],
                 source_run_id=context.run_id,
+                companions=companions,
             )
             async with self.sessions() as session:
                 from backend.services.run_events import fence
@@ -277,6 +338,7 @@ class ArtifactToolService:
                 # Hand off cleanup only when publication actually starts. A failed lease
                 # fence still belongs to this scope, whereas an ambiguous COMMIT does not.
                 cleanup.discard(current.key)
+                cleanup.difference_update(item.stored.key for item in companions)
                 ref = await service.publish_version(
                     session,
                     context.user_id,

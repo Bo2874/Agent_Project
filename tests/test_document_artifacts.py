@@ -208,6 +208,12 @@ def test_docx_payload_rejects_code_and_unknown_operations():
         ArtifactOperation(kind="create_docx", code="pass", payload={"blocks": []})
 
 
+@pytest.mark.parametrize("kind", ["create_docx", "rebuild_pdf"])
+def test_structured_operation_requires_a_payload(kind):
+    with pytest.raises(ValidationError):
+        ArtifactOperation(kind=kind)
+
+
 def test_old_xlsx_request_payload_serialization_is_unchanged():
     # Saved broker fingerprints and operation receipts depend on this exact wire shape.
     payload = {"operations": [{"kind": "add_sheet", "name": "Other"}]}

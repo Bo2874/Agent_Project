@@ -17,6 +17,7 @@ from artifact_runtime.document_types import (  # noqa: F401 - shared schema expo
     DocumentOutline,
     PreviewManifest,
 )
+from artifact_runtime.pdf_types import PdfTextDocument, TextOnlyRebuild  # noqa: F401
 from artifact_runtime.spreadsheet_types import SpreadsheetPlan
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -41,14 +42,32 @@ class PublishedArtifact(StrictModel):
 
 
 class ArtifactOperation(StrictModel):
-    kind: Literal["create_xlsx", "edit_xlsx", "create_docx", "edit_docx", "python"]
+    kind: Literal[
+        "create_xlsx",
+        "edit_xlsx",
+        "create_docx",
+        "edit_docx",
+        "rebuild_pdf",
+        "rebuild_pdf_text_only",
+        "python",
+    ]
     parent_version_id: UUID | None = None
-    payload: SpreadsheetPlan | DocumentBlocks | DocumentEdits | dict = Field(default_factory=dict)
+    payload: SpreadsheetPlan | DocumentBlocks | DocumentEdits | TextOnlyRebuild | dict = Field(
+        default_factory=dict, validate_default=True
+    )
     code: str | None = Field(default=None, min_length=1, max_length=32000)
 
     @field_validator("payload", mode="before")
     @classmethod
     def typed_payload(cls, value, info):
+        if info.data.get("kind") == "rebuild_pdf_text_only":
+            return TextOnlyRebuild.model_validate(value)
+        if info.data.get("kind") == "rebuild_pdf":
+            if isinstance(value, DocumentEdits | DocumentBlocks):
+                return value
+            return (DocumentEdits if "operations" in value else DocumentBlocks).model_validate(
+                value
+            )
         schema = {
             "create_xlsx": SpreadsheetPlan,
             "edit_xlsx": SpreadsheetPlan,
@@ -75,6 +94,8 @@ class ArtifactOperation(StrictModel):
             raise ValueError("Structured operations cannot contain code")
         if self.kind.startswith("edit_") and self.parent_version_id is None:
             raise ValueError("Editing requires a parent version")
+        if self.kind == "rebuild_pdf_text_only" and self.parent_version_id is None:
+            raise ValueError("Text-only approval requires a pinned source PDF")
         if self.kind.startswith("create_") and self.parent_version_id is not None:
             raise ValueError("Creating cannot specify a parent version")
         return self
@@ -110,6 +131,9 @@ class ArtifactRunRequest(StrictModel):
     preview_sheet: str | None = Field(default=None, max_length=31)
     preview_offset: int = Field(default=0, ge=0, le=1048575)
     preview_limit: int = Field(default=100, ge=1, le=100)
+    preview_text_offset: int = Field(
+        default=0, ge=0, le=200000, exclude_if=lambda value: value == 0
+    )
 
     @model_validator(mode="after")
     def valid_request(self):

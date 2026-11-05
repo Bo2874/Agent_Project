@@ -51,10 +51,10 @@ Mở rộng operation kind bằng `create_docx`, `edit_docx`, `rebuild_pdf`; `pa
 
 **Interfaces:** `read_pdf_text(source: Path) -> PdfTextDocument`; `rebuild_pdf(content: DocumentBlocks, *, source_pdf: Path|None, output_dir: Path) -> GeneratedArtifact`. `PdfTextDocument` có pages text và coverage/warnings; PDF output manifest có `editable_source` là companion key do runner tạo.
 
-- [ ] Red `test_pdf_text_edit_reflows_and_preserves_requested_content`: nội dung mới có trong PDF extract, không assert số trang cũ; `test_scan_and_mixed_pages_not_reported_complete`: coverage cảnh báo trang không text; `test_pdf_revision_uses_own_source`: parent/source/hash đúng, không lấy source bản cuối khác nhánh.
-- [ ] Chạy `python -m pytest tests/test_pdf_artifacts.py -q` và thấy đỏ.
-- [ ] Implement pypdf extraction trong runner có page/size/time bounds; PDF pure scan trả `unsupported_scanned_pdf`. File hỗn hợp nêu trang không đọc và cần user đồng ý phạm vi text trước chỉnh, không tự bỏ ảnh/trang. Tạo DOCX blocks làm nguồn rồi dùng Writer xuất PDF; source và PDF publish nguyên tử như một version bundle.
-- [ ] Green test với PDF có tiếng Việt, nhiều trang và bảng văn bản fixture. Gửi result refs qua Tool Registry chung, không tạo PDF-only Agent. Commit `feat: rebuild text pdf artifacts with editable sources`.
+- [x] Red `test_pdf_text_edit_reflows_and_preserves_requested_content`: nội dung mới có trong PDF extract, không assert số trang cũ; `test_scan_and_mixed_pages_not_reported_complete`: coverage cảnh báo trang không text; `test_pdf_revision_uses_own_source`: parent/source/hash đúng, không lấy source bản cuối khác nhánh.
+- [x] Chạy `python -m pytest tests/test_pdf_artifacts.py -q` và thấy đỏ.
+- [x] Implement pypdf extraction trong runner có page/size/time bounds; PDF pure scan trả `unsupported_scanned_pdf`. File hỗn hợp nêu trang không đọc và cần user đồng ý phạm vi text trước chỉnh, không tự bỏ ảnh/trang. Tạo DOCX blocks làm nguồn rồi dùng Writer xuất PDF; source và PDF publish nguyên tử như một version bundle.
+- [x] Green test với PDF có tiếng Việt, nhiều trang và bảng văn bản fixture. Gửi result refs qua Tool Registry chung, không tạo PDF-only Agent. Commit `feat: rebuild text pdf artifacts with editable sources`.
 
 ### Task 3: D3 — Render preview, kiểm layout và nghiệm thu tài liệu
 

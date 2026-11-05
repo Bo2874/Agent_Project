@@ -91,7 +91,8 @@ def view(row: ArtifactVersion) -> dict:
         "version_number": row.version_number,
         "origin": row.origin,
         "created_at": row.created_at.isoformat(),
-        "can_edit": row.mime_type == XLSX_MIME,
+        "can_edit": row.mime_type
+        in {MIME_TYPES[extension] for extension in ("xlsx", "docx", "pdf")},
         "source_run_id": str(row.source_run_id) if row.source_run_id else None,
     }
 
@@ -106,8 +107,8 @@ async def upload_artifact(
 ):
     name = validate_name(file.filename or "")
     extension = Path(name).suffix.lower()
-    if extension not in {".xlsx", ".docx"}:
-        raise HTTPException(415, "Supported uploads: XLSX and DOCX.")
+    if extension not in {".xlsx", ".docx", ".pdf"}:
+        raise HTTPException(415, "Supported uploads: XLSX, DOCX and text PDF.")
     if (file.content_type or "").split(";", 1)[0] not in {
         MIME_TYPES[extension[1:]],
         "application/octet-stream",
@@ -123,12 +124,13 @@ async def upload_artifact(
     publication_started = False
     try:
         settings = get_settings()
-        await asyncio.to_thread(
-            validate_archive,
-            service.storage.path(stored.key),
-            max_unpacked_bytes=settings.artifact_max_unpacked_bytes,
-            max_entries=settings.artifact_max_archive_entries,
-        )
+        if extension != ".pdf":
+            await asyncio.to_thread(
+                validate_archive,
+                service.storage.path(stored.key),
+                max_unpacked_bytes=settings.artifact_max_unpacked_bytes,
+                max_entries=settings.artifact_max_archive_entries,
+            )
 
         async def cancel():
             if await request.is_disconnected():
@@ -211,7 +213,10 @@ async def import_document(
             origin="document",
             source_document_id=source.document_id,
             source_document_version_id=source.id,
-            preview_manifest={"kind": "source_copy", "can_edit": extension == "xlsx"},
+            preview_manifest={
+                "kind": "source_copy",
+                "can_edit": extension in {"xlsx", "docx", "pdf"},
+            },
             companion_sources=[
                 {
                     "role": "rag_provenance",
@@ -271,11 +276,9 @@ async def list_artifacts(
             .offset(offset)
         )
     ).all()
-    used = await session.scalar(
-        select(func.coalesce(func.sum(ArtifactVersion.size_bytes), 0)).where(
-            ArtifactVersion.owner_user_id == user.id
-        )
-    )
+    from backend.services.artifacts.service import storage_usage
+
+    used = await storage_usage(session, user.id)
     return {
         "items": [view(row) for row in rows],
         "total": total,

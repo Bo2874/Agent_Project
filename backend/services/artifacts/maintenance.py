@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from agent_core.tools import ToolResult
 from backend.models import AgentOperation, RunStep, ToolCall, User
@@ -49,7 +49,10 @@ async def recover_artifact_operations(session, owner, run_id):
             or call.tool_name not in OUTPUT_TOOLS
             or fingerprint({"name": call.tool_name, "arguments": call.arguments})
             != operation.fingerprint
-            or (call.tool_name == "run_artifact_python" and call.approval_decision != "approved")
+            or (
+                call.tool_name in {"run_artifact_python", "artifact_rebuild_pdf_text_only"}
+                and call.approval_decision != "approved"
+            )
         ):
             continue
         key = "artifact:" + hashlib.sha256(f"{run_id}:{operation.key}".encode()).hexdigest()
@@ -105,7 +108,12 @@ async def reconcile_orphans(sessions, storage, *, grace_seconds=86400, limit=100
             async with sessions() as session:
                 await session.scalar(select(User).where(User.id == owner).with_for_update())
                 referenced = await session.scalar(
-                    select(ArtifactVersion.id).where(ArtifactVersion.storage_key == key)
+                    select(ArtifactVersion.id).where(
+                        or_(
+                            ArtifactVersion.storage_key == key,
+                            ArtifactVersion.companion_sources.contains([{"storage_key": key}]),
+                        )
+                    )
                 )
                 after = target.stat()
                 if referenced is None and (before.st_ino, before.st_mtime_ns, before.st_size) == (

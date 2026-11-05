@@ -5,16 +5,16 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
-from uuid import UUID
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
-from backend.services.artifacts.storage import MIME_TYPES, ArtifactStorageError, StoredArtifact
+from backend.services.artifacts.storage import ArtifactStorageError, StoredArtifact
 
 
 def validate_name(name: str) -> str:
     name = unicodedata.normalize("NFC", name)
     if (
-        Path(name).suffix.lower().lstrip(".") not in MIME_TYPES
+        Path(name).suffix.lower().lstrip(".") not in {"xlsx", "docx", "pdf", "txt"}
         or not 1 < len(name) <= 255
         or any(c in name for c in "/\\:")
         or any(unicodedata.category(c).startswith("C") for c in name)
@@ -57,6 +57,26 @@ def validate_archive(path: Path, *, max_unpacked_bytes=104857600, max_entries=20
 
 
 @dataclass(frozen=True)
+class ValidatedCompanion:
+    role: Literal["editable_source", "preview_pdf", "preview_page"]
+    stored: StoredArtifact
+    asset_id: UUID = field(default_factory=uuid4)
+    page: int | None = None
+
+    def record(self, version_id):
+        return {
+            "role": self.role,
+            "storage_key": self.stored.key,
+            "size_bytes": self.stored.size_bytes,
+            "sha256": self.stored.sha256,
+            "mime_type": self.stored.mime_type,
+            "asset_id": str(self.asset_id),
+            "page": self.page,
+            "version_id": str(version_id),
+        }
+
+
+@dataclass(frozen=True)
 class ValidatedArtifact:
     stored: StoredArtifact
     name: str
@@ -67,3 +87,4 @@ class ValidatedArtifact:
     source_document_id: UUID | None = None
     source_document_version_id: UUID | None = None
     source_run_id: UUID | None = None
+    companions: tuple[ValidatedCompanion, ...] = ()
