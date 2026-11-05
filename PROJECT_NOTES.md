@@ -2019,3 +2019,13 @@
   [test evidence](docs/acceptance/2026-11-05-artifact-verification.txt),
   [số đo cuối](docs/acceptance/2026-11-05-artifact-excel.json).
 - Chưa merge/push hoặc bật tính năng trên môi trường người dùng; main và .env được giữ nguyên.
+
+### 2026-11-05 — Gộp Plan01 vào main tại máy
+
+- Theo lựa chọn user, main fast-forward đến `4b92d31`; không đồng bộ/push remote.
+- Giữ bản sao lưu 9 tài liệu planning qua stash `7ae30a1fe7b75abd503b09b07bec8440b59b575b`; toàn bộ đã có trong Git history.
+- Kiểm thử lại cùng merged commit trong checkout cách ly không có .env: **1141 passed/2 skipped**
+  (356.61s), DB/broker QA riêng. Preview Chrome trên main, Ruff check và diff check đạt.
+- [Hồ sơ gộp](docs/acceptance/2026-11-05-workspace-main-merge.md).
+  Không bật runtime hoặc migrate DB đang dùng. Phần phát triển tiếp theo là Plan02: Word → PDF văn bản → preview/render QA;
+  sau đó Google Connectors rồi Automations. OCR/ảnh vẫn ngoài phạm vi đã chốt.

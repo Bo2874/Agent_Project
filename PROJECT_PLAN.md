@@ -9,15 +9,16 @@ Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Au
 Plan01 đã triển khai; Word/PDF, Google Connectors và Automations vẫn là các mốc tiếp theo.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
-Đã hoàn thành code và kiểm thử offline trên nhánh `feat/workspace-excel` tại `.worktrees/workspace-excel`:
+Plan01 đã gộp vào `main` tại máy (commit `4b92d31`):
 [giao diện A và Excel xuyên suốt](docs/superpowers/plans/2026-11-04-workspace-01-excel.md).
 Gate offline DB/Docker/worker thật đạt 55 tests; browser fixture worker đạt desktop/mobile.
 Lượt sửa review cuối: 1.141 tests đạt, 2 skips được ghi rõ; tương thích checkpoint/kiểm quyền cũ,
 race preview, rich-text refusal và thu hồi scratch sau hard-kill đã có regression.
-Chưa gộp vào main hoặc bật runtime. [Review và kết quả cuối](docs/acceptance/2026-11-05-workspace-review.md).
+Chưa bật runtime hoặc áp dụng migration vào DB đang dùng. [Review và kết quả cuối](docs/acceptance/2026-11-05-workspace-review.md).
 [Hướng dẫn](docs/manual-artifacts.md), [số đo](docs/acceptance/2026-11-04-artifact-excel.json).
 Live model chưa chạy; Word/PDF/Connectors/Automations chưa triển khai. Các kết quả/điểm chưa nghiệm thu
 trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.
+Phần phát triển tiếp theo: [Plan02 — Word rồi PDF văn bản](docs/superpowers/plans/2026-11-04-workspace-02-documents.md).
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần
