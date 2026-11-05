@@ -78,8 +78,9 @@
 - Coverage: spec §5 → 01/X1,X7; §6 → 01/X2–X8 và 02; §7 → 03; §8 → 04; §9–10 → gate từng plan.
 - Không thay runtime token của chat ngầm; plan 04/A1 bổ sung policy nullable cho Automation và giữ checkpoint cũ.
 - Plan01 đã triển khai, nghiệm thu offline và gộp vào `main` tại máy ngày 2026-11-05.
-  Plan02 hoàn tất Word/PDF/preview trên `feat/workspace-documents`, chưa gộp main;
-  gate offline 34 passed, hồi quy sau sửa review 1.194 passed/2 skipped. Plan03–04 chưa triển khai.
+  Plan02 hoàn tất Word/PDF/preview và đã gộp local vào `main` tại `22def91`;
+  gate offline 34 passed, hồi quy sau gộp 1.194 passed/2 skipped (1.106,74 giây).
+  Chưa push hoặc bật runtime. Plan03–04 chưa triển khai.
   Bật runner/flag và áp dụng migration trên môi trường người dùng là bước vận hành riêng.
 
 ## Tài liệu kỹ thuật dùng để chốt kế hoạch

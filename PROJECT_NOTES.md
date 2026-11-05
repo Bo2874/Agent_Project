@@ -2048,3 +2048,14 @@
   Phần tiếp theo là Plan03: OAuth/chọn từng file, Google Sheets → Docs → upload Drive.
 - [Hồ sơ nghiệm thu](docs/acceptance/2026-11-05-workspace-documents.md),
   [giới hạn và vận hành](docs/manual-artifacts.md). Live provider chưa chạy; Google/Automations chưa triển khai.
+
+### 2026-11-05 — Gộp Plan02 vào main tại máy
+
+- Theo lựa chọn 1 của người dùng, main fast-forward `34fd73c` → `22def91`; không pull/push remote.
+- Kiểm thử lại đúng merged commit trong worktree có cùng Git tree và không có `.env`, DB/broker QA mới:
+  **1.194 passed, 2 skipped**, 1.106,74 giây. Một skip thiếu quyền symlink Windows; một benchmark Excel
+  lớn chỉ chạy trong gate offline riêng. Đã đính chính mô tả hai skips trong hồ sơ Plan02.
+- Ruff và diff check đạt. Không migrate DB hoặc restart dịch vụ đang dùng; chưa bật runtime.
+- [Hồ sơ sau gộp](docs/acceptance/2026-11-05-workspace-documents-main-merge.md).
+  Tiếp theo Plan03: OAuth/chọn từng file, Sheets → Docs → upload Artifact lên Drive.
+  Khi triển khai cần cấp số migration mới sau `0032` hiện có, không dùng lại số trong bản kế hoạch cũ.

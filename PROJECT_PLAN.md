@@ -19,8 +19,9 @@ Chưa bật runtime hoặc áp dụng migration vào DB đang dùng. [Review và
 Live model chưa chạy; Connectors/Automations chưa triển khai. Các kết quả/điểm chưa nghiệm thu
 trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.
 Đã hoàn tất [Plan02 — Word rồi PDF văn bản](docs/superpowers/plans/2026-11-04-workspace-02-documents.md)
-trên nhánh `feat/workspace-documents`; runtime, preview/render và browser đã qua; full suite sau sửa review
-1.194 passed/2 skipped, gate offline Word/PDF 34 passed. Chưa gộp main/push hoặc bật runtime.
+và gộp local vào `main` tại `22def91`; runtime, preview/render và browser đã qua; full suite sau sửa review
+1.194 passed/2 skipped, gate offline Word/PDF 34 passed. Kiểm thử lại sau gộp đạt 1.194 passed/2 skipped
+(1.106,74 giây); chưa push hoặc bật runtime.
 [Nghiệm thu Plan02](docs/acceptance/2026-11-05-workspace-documents.md).
 Tiếp theo: Plan03 — Google OAuth, chọn từng file, Sheets → Docs → upload Artifact lên Drive.
 

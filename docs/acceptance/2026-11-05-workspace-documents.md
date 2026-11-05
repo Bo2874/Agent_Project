@@ -1,7 +1,8 @@
 # Nghiệm thu Plan02: Word và PDF văn bản
 
 Trạng thái: Plan02 hoàn tất; gate offline, review độc lập và hồi quy sau sửa đã qua.
-Nhánh `feat/workspace-documents` sẵn sàng tích hợp; chưa merge/push hoặc bật runtime.
+Đã gộp local vào `main` tại commit `22def91` theo lựa chọn của người dùng; chưa push hoặc bật runtime.
+[Hồ sơ sau gộp](2026-11-05-workspace-documents-main-merge.md).
 
 Phạm vi triển khai: tạo/sửa DOCX; đọc và dựng lại PDF text; giữ nguồn DOCX của từng phiên bản PDF;
 render preview PNG theo đúng owner/version. Không có OCR, xử lý ảnh, Google Connectors hay Automations.
@@ -24,7 +25,8 @@ render preview PNG theo đúng owner/version. Không có OCR, xử lý ảnh, Go
 - `python -m scripts.check_artifact_workflow --offline --formats docx,pdf`: **34 passed**,
   752,09 giây; có một warning cấu hình `cache_dir` vì gate chủ động tắt cache provider của pytest.
   [Báo cáo browser của gate](2026-11-05-documents/browser-gate.json).
-- Full suite: **1.184 passed, 2 skipped**, 1.196,32 giây; hai ca symlink bỏ qua trên Windows.
+- Full suite: **1.184 passed, 2 skipped**, 1.196,32 giây; một ca thiếu quyền symlink trên Windows,
+  một benchmark Excel lớn chỉ chạy trong gate offline riêng.
 - Review độc lập phát hiện hai lỗi Important về ảnh trong Form PDF và ký hiệu trong Word;
   đã sửa trong một lượt với 10 ca RED→GREEN. Hồi quy sau sửa: **1.194 passed, 2 skipped**,
   1.042,54 giây. [Hồ sơ review](2026-11-05-documents-review.md),
@@ -56,7 +58,8 @@ PNG cạnh dài tối đa 1.600 pixel và tối đa 20 trang. File vượt giớ
 ## Phần chưa kiểm tra hoặc chưa triển khai
 
 - Không gọi provider/model trả phí thật; fixture xác nhận wiring, không xác nhận chất lượng tool calling của model.
-- Không sửa `.env`, chạy migration vào DB đang dùng, restart dịch vụ người dùng, merge hay push.
+- Không sửa `.env`, chạy migration vào DB đang dùng, restart dịch vụ người dùng hoặc push.
+  Đã gộp local theo lựa chọn của người dùng; xem hồ sơ sau gộp ở đầu tài liệu.
 - Không OCR/ảnh, full Office fidelity, PDF mã hóa/form/annotation/script/attachment.
 - Các bản sao RAG giữ nguyên bytes; bản cũ không có page preview vẫn tải được và có thể dùng làm
   input cho phiên bản chỉnh sửa mới nếu cấu trúc hỗ trợ. Không sửa ngầm metadata phiên bản cũ.

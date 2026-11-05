@@ -18,7 +18,8 @@ Hai lỗi Important được giữ nguyên mức độ và sửa trong một lư
 
 Lượt test tập trung: **10 passed, 23 deselected**, 12,03 giây. Đã build lại code/render images;
 Ruff đạt. Hồi quy toàn suite sau sửa: **1.194 passed, 2 skipped**, 1.042,54 giây.
-Hai skips là kiểm tra symlink trên Windows. Không còn lỗi Critical/Important chưa xử lý;
+Hai skips: một ca thiếu quyền symlink trên Windows, một benchmark Excel lớn chỉ chạy trong gate offline.
+Không còn lỗi Critical/Important chưa xử lý;
 nhánh sẵn sàng tích hợp. Kết luận sau sửa dựa trên test hồi quy, không có vòng review thứ hai.
 
 Những hành vi reviewer để executor quyết định đều được ghi thành Ruling trong ledger và hồ sơ
