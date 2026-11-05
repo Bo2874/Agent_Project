@@ -168,3 +168,6 @@ body:has(.workspace-shell) .citation-dialog { background: var(--bg); color: var(
   .workspace-content .rag-search-control > span:last-child { display: none; }
   .workspace-content .empty-chat p { max-width: 290px; }
 }
+.google-account-card { margin-block: 1.5rem; padding: 1.5rem; border: 1px solid var(--line, #dedbd4); border-radius: 1rem; }
+.google-file-list { display: grid; gap: .75rem; padding-block: 1rem; }
+.google-file-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; overflow-wrap: anywhere; }

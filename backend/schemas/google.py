@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,7 +27,18 @@ class ConnectionView(GoogleModel):
     offline_ready: bool
 
 
+GoogleFileId = Annotated[str, Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")]
+
+
 class GoogleFileRef(GoogleModel):
     connection_id: UUID
-    file_id: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")
+    file_id: GoogleFileId
     context_id: UUID
+
+
+class GoogleFileSelection(GoogleModel):
+    file_ids: list[GoogleFileId] = Field(max_length=100)
+
+
+class GoogleWorkSelection(GoogleModel):
+    file_refs: list[GoogleFileRef] = Field(max_length=20)

@@ -11,7 +11,8 @@ from starlette.responses import JSONResponse, RedirectResponse
 from backend.core.config import get_settings
 from backend.dependencies import CurrentUser, DbSession
 from backend.models import GoogleConnection
-from backend.schemas.google import ConnectionView
+from backend.schemas.google import ConnectionView, GoogleFileSelection, GoogleWorkSelection
+from backend.services.google.access import GoogleAccess
 from backend.services.google.errors import GoogleServiceError
 from backend.services.google.oauth import GoogleOAuth
 
@@ -65,6 +66,68 @@ async def begin_google(session: DbSession, user: CurrentUser):
 async def disconnect_google(connection_id: UUID, session: DbSession, user: CurrentUser):
     await oauth_service().disconnect(session, user.id, connection_id)
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/connections/google/{connection_id}/files")
+async def google_files(connection_id: UUID, session: DbSession, user: CurrentUser):
+    return {
+        "items": await GoogleAccess(oauth_service()).list_files(session, user.id, connection_id)
+    }
+
+
+@router.put("/api/connections/google/{connection_id}/files")
+async def choose_google_files(
+    connection_id: UUID, body: GoogleFileSelection, session: DbSession, user: CurrentUser
+):
+    return {
+        "items": await GoogleAccess(oauth_service()).set_files(
+            session, user.id, connection_id, body.file_ids
+        )
+    }
+
+
+@router.delete("/api/connections/google/{connection_id}/files/{file_id}", status_code=204)
+async def revoke_google_file(
+    connection_id: UUID, file_id: str, session: DbSession, user: CurrentUser
+):
+    await GoogleAccess(oauth_service()).revoke_file(session, user.id, connection_id, file_id)
+    return Response(status_code=204, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/conversations/{conversation_id}/google-files")
+async def work_google_files(conversation_id: UUID, session: DbSession, user: CurrentUser):
+    return {
+        "items": await GoogleAccess(oauth_service()).selected(session, user.id, conversation_id)
+    }
+
+
+@router.put("/api/conversations/{conversation_id}/google-files")
+async def choose_work_google_files(
+    conversation_id: UUID, body: GoogleWorkSelection, session: DbSession, user: CurrentUser
+):
+    return {
+        "items": await GoogleAccess(oauth_service()).set_work_files(
+            session, user.id, conversation_id, body.file_refs
+        )
+    }
+
+
+@router.post("/api/connections/google/{connection_id}/picker-config")
+async def picker_config(connection_id: UUID, session: DbSession, user: CurrentUser):
+    service = oauth_service()
+    if (
+        not service.settings.google_picker_api_key
+        or not service.settings.google_cloud_project_number
+    ):
+        raise GoogleServiceError(503, "Configure Google Picker API key and Cloud project number")
+    token = await service.access_token(session, user.id, connection_id)
+    connection = await service.owned(session, user.id, connection_id)
+    return {
+        "access_token": token,
+        "api_key": service.settings.google_picker_api_key,
+        "app_id": service.settings.google_cloud_project_number,
+        "expires_at": connection.expires_at.isoformat(),
+    }
 
 
 @router.get("/connectors/google/callback")

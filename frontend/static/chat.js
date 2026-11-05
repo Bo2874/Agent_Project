@@ -17,9 +17,11 @@ if (chatApp) {
   let documentPanel = null;
   let artifactPanel = null;
   let artifactPreview = null;
+  let googlePanel = null;
+  let googleMutationPending = false;
 
   function updateConversationControls() {
-    const disabled = streamInProgress || conversationMutationPending || documentMutationPending || artifactMutationPending;
+    const disabled = streamInProgress || conversationMutationPending || documentMutationPending || artifactMutationPending || googleMutationPending;
     textarea.disabled = disabled;
     sendButton.disabled = disabled;
     if (ragSearchMode) ragSearchMode.disabled = disabled;
@@ -27,8 +29,9 @@ if (chatApp) {
     conversationList.querySelectorAll("button").forEach((button) => {
       button.disabled = disabled;
     });
-    documentPanel?.setDisabled(streamInProgress || conversationMutationPending || artifactMutationPending);
-    artifactPanel?.setDisabled(streamInProgress || conversationMutationPending || documentMutationPending);
+    documentPanel?.setDisabled(streamInProgress || conversationMutationPending || artifactMutationPending || googleMutationPending);
+    artifactPanel?.setDisabled(streamInProgress || conversationMutationPending || documentMutationPending || googleMutationPending);
+    googlePanel?.setDisabled(streamInProgress || conversationMutationPending || documentMutationPending || artifactMutationPending);
   }
 
   function setBusy(isBusy) {
@@ -803,6 +806,7 @@ if (chatApp) {
       requestJson(`/api/conversations/${conversation.id}/runs`),
       documentPanel?.setConversation(conversation.id),
       artifactPanel?.setConversation(conversation.id),
+      googlePanel?.setConversation(conversation.id),
     ]);
     if (activeConversationId !== conversation.id) return;
     const runsByAssistantMessage = new Map(
@@ -1121,6 +1125,13 @@ if (chatApp) {
     requestJson,
     onBusyChange(isBusy) {
       artifactMutationPending = isBusy;
+      updateConversationControls();
+    },
+  });
+  googlePanel = window.GoogleConnectors?.createChatPanel(chatApp.querySelector("[data-google-selection]"), {
+    requestJson,
+    onBusyChange(isBusy) {
+      googleMutationPending = isBusy;
       updateConversationControls();
     },
   });

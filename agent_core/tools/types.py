@@ -39,6 +39,7 @@ class ToolContext:
     )
     artifact_version_ids: tuple[UUID, ...] = ()
     operation_key: str | None = None
+    google_file_refs: tuple[Mapping[str, str], ...] = ()
 
 
 class ToolAuthorizationError(RuntimeError):

@@ -25,6 +25,13 @@
         </div>
 
         <div class="composer-wrap">
+            {% if workspace_features().google %}
+            <section class="working-file-selection" data-google-selection aria-label="File Google trong chat">
+                <div class="chat-document-actions"><button class="ghost-button" type="button" data-google-choose disabled>＋ File Google</button><span data-google-count></span><a href="/connectors">Connectors</a></div>
+                <div class="chat-document-chips" data-google-chips></div>
+                <p class="document-status" data-google-status role="status" aria-live="polite"></p>
+            </section>
+            {% endif %}
             {% if workspace_features().artifacts %}
             <section class="working-file-selection" data-artifact-selection aria-label="File làm việc trong chat">
                 <div class="chat-document-actions"><button class="ghost-button" type="button" data-working-choose disabled>＋ File làm việc</button><span data-working-count>Đang tải file…</span></div>
@@ -86,5 +93,6 @@
 </main>
 <script src="{{ url_for('static', path='/markdown.js') }}" defer></script>
 <script src="{{ url_for('static', path='/documents.js') }}" defer></script>
+{% if workspace_features().google %}<script src="{{ url_for('static', path='/connectors.js') }}" defer></script>{% endif %}
 <script src="{{ url_for('static', path='/chat.js') }}" defer></script>
 {% endblock %}

@@ -86,6 +86,20 @@ async def load_execution_context(*, owner: UUID, conversation_id: UUID, current_
     return execution_rows(records)
 
 
+async def selected_google_files(session, owner, conversation_id):
+    from backend.core.config import get_settings
+    from backend.services.google.access import GoogleAccess
+    from backend.services.google.credentials import GoogleCredentials
+
+    if not get_settings().google_connector_enabled:
+        return ()
+    return tuple(
+        await GoogleAccess(GoogleCredentials(get_settings())).selected(
+            session, owner, conversation_id
+        )
+    )
+
+
 async def load_artifact_context(*, owner: UUID, conversation_id: UUID, version_ids=()):
     from sqlalchemy import or_
 

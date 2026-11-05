@@ -79,6 +79,22 @@ async def memories_page(request: Request, user: OptionalUser) -> Response:
     )
 
 
+@router.get("/connectors", response_class=HTMLResponse)
+async def connectors_page(request: Request, user: OptionalUser) -> Response:
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if not get_settings().google_connector_enabled:
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "Google connector is disabled")
+    return templates.TemplateResponse(
+        request=request,
+        name="connectors.html",
+        context={"user": user},
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+    )
+
+
 @router.get("/documents", response_class=HTMLResponse)
 async def documents_page(request: Request, user: OptionalUser) -> Response:
     if user is None:

@@ -26,6 +26,32 @@ class FakeGoogle:
         self.invalid_grant = False
         self.no_refresh = False
         self.scope = SCOPE
+        self.files = {
+            "sheet-a": {
+                "id": "sheet-a",
+                "name": "Selected sheet",
+                "mimeType": "application/vnd.google-apps.spreadsheet",
+                "capabilities": {"canEdit": True},
+            },
+            "doc-a": {
+                "id": "doc-a",
+                "name": "Selected doc",
+                "mimeType": "application/vnd.google-apps.document",
+                "capabilities": {"canEdit": True},
+            },
+            "office-a": {
+                "id": "office-a",
+                "name": "Office.xlsx",
+                "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "capabilities": {"canEdit": True},
+            },
+            "folder-a": {
+                "id": "folder-a",
+                "name": "Folder",
+                "mimeType": "application/vnd.google-apps.folder",
+                "capabilities": {"canEdit": True},
+            },
+        }
 
     async def handle(self, request):
         self.calls.append((request.method, request.url.path))
@@ -61,6 +87,13 @@ class FakeGoogle:
                         "displayName": "Fixture account",
                     }
                 },
+            )
+        if request.method == "GET" and request.url.path.startswith("/drive/v3/files/"):
+            item = self.files.get(request.url.path.rsplit("/", 1)[1])
+            return (
+                httpx.Response(200, json=item)
+                if item
+                else httpx.Response(404, json={"error": {"code": 404}})
             )
         raise AssertionError(f"Unexpected fixture endpoint {request.method} {request.url.path}")
 

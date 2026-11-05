@@ -54,10 +54,10 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 
 **Interfaces:** `authorize_google_file(session, context: ToolContext, ref: GoogleFileRef, action: str) -> AuthorizedGoogleFile`; `PUT /api/connections/google/{id}/files` `{file_ids}`; `PUT /api/conversations/{id}/google-files` `{file_refs}`. `/picker-config` cấp token ngắn hạn cho đúng browser session, no-store, không log/persist JS; refresh token không ra browser. `ToolContext.google_file_refs` mặc định empty để checkpoint cũ đọc được.
 
-- [ ] Red `test_unselected_file_rejected_even_if_google_allows`, `test_revoked_grant_or_other_connection_rejected`, `test_xlsx_is_not_native_sheet`, `test_selected_file_not_implicitly_shared_with_other_conversation`.
-- [ ] Implement Picker theo file, backend kiểm lại provider metadata/type/permission trước lưu grant; không nhận nguyên thư mục thành quyền đọc mọi con. Native Sheet/Doc phân biệt Office upload. Chọn file theo từng cuộc trò chuyện; grant global không tự cấp mọi chat quyền dùng file.
-- [ ] UI state configured/disconnected/reconnect/no files/loading/error và nút thu hồi từng file. Browser token Picker chỉ ở memory, xóa sau picker; kiểm Origin/CSRF của mutation routes theo cơ chế app. Không xin scope Drive rộng hơn.
-- [ ] Green access tests; browser fixture chọn/bỏ file, chuyển account không hồi sinh grant cũ; commit `feat: select scoped google files for agent work`.
+- [x] Red `test_unselected_file_rejected_even_if_google_allows`, `test_revoked_grant_or_other_connection_rejected`, `test_xlsx_is_not_native_sheet`, `test_selected_file_not_implicitly_shared_with_other_conversation`.
+- [x] Implement Picker theo file, backend kiểm lại provider metadata/type/permission trước lưu grant; không nhận nguyên thư mục thành quyền đọc mọi con. Native Sheet/Doc phân biệt Office upload. Chọn file theo từng cuộc trò chuyện; grant global không tự cấp mọi chat quyền dùng file.
+- [x] UI state configured/disconnected/reconnect/no files/loading/error và nút thu hồi từng file. Browser token Picker chỉ ở memory, xóa sau picker; kiểm Origin/CSRF của mutation routes theo cơ chế app. Không xin scope Drive rộng hơn.
+- [x] Green access tests; browser fixture chọn/bỏ file, chuyển account không hồi sinh grant cũ; commit `feat: select scoped google files for agent work`.
 
 ### Task 3: G3 — Sheets đọc, đề xuất ghi và journal chống phát lại
 

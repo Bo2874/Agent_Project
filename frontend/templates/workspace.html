@@ -19,6 +19,7 @@
             {% if features.artifacts %}<a href="/artifacts" {% if request.url.path == '/artifacts' %}aria-current="page"{% endif %}><span aria-hidden="true">▧</span> Tệp làm việc</a>{% endif %}
             <a href="/documents" {% if request.url.path == '/documents' %}aria-current="page"{% endif %}><span aria-hidden="true">▤</span> Thư viện</a>
             <a href="/plugins" {% if request.url.path.startswith('/plugins') %}aria-current="page"{% endif %}><span aria-hidden="true">⌘</span> Plugins & kết nối</a>
+            {% if features.google %}<a href="/connectors" {% if request.url.path == '/connectors' %}aria-current="page"{% endif %}><span aria-hidden="true">↗</span> Google Connectors</a>{% endif %}
             <a href="/memories" {% if request.url.path == '/memories' %}aria-current="page"{% endif %}><span aria-hidden="true">◇</span> Bộ nhớ</a>
             {% if user.role == 'admin' %}<a href="/admin" {% if request.url.path == '/admin' %}aria-current="page"{% endif %}><span aria-hidden="true">⚙</span> Quản trị</a>{% endif %}
         </nav>
