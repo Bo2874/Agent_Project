@@ -34,7 +34,7 @@ Tạo `artifact_runtime/document.py`, `artifact_runtime/pdf.py`, `artifact_runti
 
 Mở rộng operation kind bằng `create_docx`, `edit_docx`, `rebuild_pdf`; `payload` được thay bằng union Pydantic theo kind. `DocumentBlocks`, `DocumentOutline`, `PdfTextDocument`, `PreviewManifest` định nghĩa trong `artifact_runtime/protocol.py`. Blocks là heading/paragraph/list/table, text escaped, không HTML tùy ý. Output nguồn PDF là companion DOCX nội bộ gắn cùng version, không lộ host path; dùng trường `companion_sources` X2 đã tạo, không sửa migration 0031 đã áp dụng.
 
-### D1 — Word tạo mới, sửa bản đưa vào và giữ cấu trúc
+### Task 1: D1 — Word tạo mới, sửa bản đưa vào và giữ cấu trúc
 
 **Files:** file document/protocol/image trên; `backend/schemas/artifact.py`, tools registration; mới `tests/test_document_artifacts.py`.
 
@@ -45,7 +45,7 @@ Mở rộng operation kind bằng `create_docx`, `edit_docx`, `rebuild_pdf`; `pa
 - [ ] Implement python-docx với paragraph/run/table helpers; giữ phần không sửa khi thư viện hỗ trợ. Inspect ảnh, embedded objects, revision markup trước edit; chặn hoặc tạo loss proposal để duyệt nếu không giữ được. Không có OCR/image manipulation. Thêm dependencies trong sandbox lock, không cài runtime nặng vào FastAPI process.
 - [ ] Green tests; kiểm DOCX mở lại được, không chỉ ZIP hợp lệ. Chạy Artifact tools regression và commit `feat: add versioned word artifact editing`.
 
-### D2 — PDF văn bản, nguồn có thể chỉnh sửa và xuất lại
+### Task 2: D2 — PDF văn bản, nguồn có thể chỉnh sửa và xuất lại
 
 **Files:** `artifact_runtime/pdf.py`, `rendering.py`, mở rộng schema/service/storage để giữ companion source key; mới `tests/test_pdf_artifacts.py`.
 
@@ -56,7 +56,7 @@ Mở rộng operation kind bằng `create_docx`, `edit_docx`, `rebuild_pdf`; `pa
 - [ ] Implement pypdf extraction trong runner có page/size/time bounds; PDF pure scan trả `unsupported_scanned_pdf`. File hỗn hợp nêu trang không đọc và cần user đồng ý phạm vi text trước chỉnh, không tự bỏ ảnh/trang. Tạo DOCX blocks làm nguồn rồi dùng Writer xuất PDF; source và PDF publish nguyên tử như một version bundle.
 - [ ] Green test với PDF có tiếng Việt, nhiều trang và bảng văn bản fixture. Gửi result refs qua Tool Registry chung, không tạo PDF-only Agent. Commit `feat: rebuild text pdf artifacts with editable sources`.
 
-### D3 — Render preview, kiểm layout và nghiệm thu tài liệu
+### Task 3: D3 — Render preview, kiểm layout và nghiệm thu tài liệu
 
 **Files:** rendering, `backend/routes/artifacts.py`, `frontend/static/artifact-panel.js`, `scripts/check_artifact_workflow.py`; mới `tests/test_artifact_preview_assets.py`; cập nhật manual/operations/notes/plan.
 
