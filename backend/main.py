@@ -13,7 +13,17 @@ from backend.core.logging import install_log_redaction
 from backend.core.validation import translate_validation_error
 from backend.database import SessionFactory, engine
 from backend.dependencies_tools import close_tool_connections, start_tool_connections
-from backend.routes import admin, artifacts, auth, chat, documents, memory, pages, plugins
+from backend.routes import (
+    admin,
+    artifacts,
+    auth,
+    chat,
+    connections,
+    documents,
+    memory,
+    pages,
+    plugins,
+)
 from backend.services.artifacts.storage import ArtifactStorageError
 from backend.services.document_indexing import close_embedding_client
 from backend.services.document_query import close_reranker_client
@@ -62,6 +72,7 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "frontend" / "static"), name="static")
 app.include_router(auth.router)
+connections.install(app)
 app.include_router(chat.router)
 app.include_router(documents.router)
 app.include_router(artifacts.router)

@@ -14,6 +14,13 @@ from backend.models.document import (
     DocumentVersion,
 )
 from backend.models.evaluation import EvalCaseResult, EvalRun
+from backend.models.google_connection import (
+    GoogleConnection,
+    GoogleFileGrant,
+    GoogleMutation,
+    GoogleOAuthState,
+    GoogleWorkFile,
+)
 from backend.models.memory import UserMemory
 from backend.models.plugin import (
     Plugin,
@@ -31,6 +38,11 @@ from backend.models.usage_counter import UsageCounter
 from backend.models.user import User
 
 __all__ = [
+    "GoogleConnection",
+    "GoogleFileGrant",
+    "GoogleMutation",
+    "GoogleOAuthState",
+    "GoogleWorkFile",
     "Artifact",
     "ArtifactVersion",
     "ConversationArtifact",

@@ -1,6 +1,6 @@
 # Workspace 03 — Google Connectors Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Agent làm việc với từng Google file user chọn: Sheets trước, sau đó Docs và upload Artifact lên Drive.
 
@@ -42,11 +42,11 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 
 **Interfaces:** `begin_google_oauth(session, owner: UUID) -> OAuthStart`; `complete_google_oauth(session, owner: UUID, *, state: str, code: str) -> ConnectionView`; `get_google_access_token(session, owner, connection_id) -> str` chỉ cho trusted adapter. Routes `/api/connections/google`, `/connectors/google/callback`, `DELETE /api/connections/google/{id}`.
 
-- [ ] Red tests state single-use/TTL 10 phút/owner mismatch; refresh hai caller chỉ một request; invalid_grant → reconnect; connection khác owner 404; ciphertext không mở được với binding owner khác. Assert token/code không có trong view/log fixture.
-- [ ] Run `python -m pytest tests/test_google_oauth.py tests/test_google_credentials.py -q`, kỳ vọng fail.
-- [ ] Implement flow authorization code với state, PKCE S256, exact redirect URI, `access_type=offline`; client secret cấu hình backend, scope `drive.file`. SDK calls blocking chạy ngoài event loop; HTTPX REST calls async. Fixed Google endpoints/no redirect không kiểm soát. Token refresh row lock, rotate và giữ refresh cũ nếu provider không trả mới.
-- [ ] Tách cipher error trung lập nếu cần, map về PluginServiceError ở adapter cũ; thêm keyring Google riêng, không đổi token/binding plugin cũ. Kiểm scope được cấp; thiếu offline token báo cần reconnect, không coi ready cho Automation. Không suy luận account email từ token response; lấy identity metadata bằng API có quyền phù hợp.
-- [ ] Green tests và credential/plugin regressions hiện có; migration scratch schema; commit `feat: add owner-scoped google oauth credentials`.
+- [x] Red tests state single-use/TTL 10 phút/owner mismatch; refresh hai caller chỉ một request; invalid_grant → reconnect; connection khác owner 404; ciphertext không mở được với binding owner khác. Assert token/code không có trong view/log fixture.
+- [x] Run `python -m pytest tests/test_google_oauth.py tests/test_google_credentials.py -q`, kỳ vọng fail.
+- [x] Implement flow authorization code với state, PKCE S256, exact redirect URI, `access_type=offline`; client secret cấu hình backend, scope `drive.file`. SDK calls blocking chạy ngoài event loop; HTTPX REST calls async. Fixed Google endpoints/no redirect không kiểm soát. Token refresh row lock, rotate và giữ refresh cũ nếu provider không trả mới.
+- [x] Tách cipher error trung lập nếu cần, map về PluginServiceError ở adapter cũ; thêm keyring Google riêng, không đổi token/binding plugin cũ. Kiểm scope được cấp; thiếu offline token báo cần reconnect, không coi ready cho Automation. Không suy luận account email từ token response; lấy identity metadata bằng API có quyền phù hợp.
+- [x] Green tests và credential/plugin regressions hiện có; migration scratch schema; commit `feat: add owner-scoped google oauth credentials`.
 
 ### Task 2: G2 — Picker, file allowlist và UI Connectors
 

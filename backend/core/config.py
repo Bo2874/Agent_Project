@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     artifact_runner_url: str = "http://127.0.0.1:8081"
     artifact_runner_key: SecretStr | None = None
     google_connector_enabled: bool = False
+    google_client_id: str = ""
+    google_client_secret: SecretStr | None = None
+    google_redirect_uri: str = "http://127.0.0.1:8000/connectors/google/callback"
+    google_credential_encryption_keys: SecretStr | None = None
+    google_picker_api_key: str = ""
+    google_cloud_project_number: str = ""
     automations_enabled: bool = False
     v2_enabled: bool = False
     v2_plugins_enabled: bool = False
