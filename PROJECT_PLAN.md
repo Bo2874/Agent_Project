@@ -6,7 +6,7 @@ Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memor
 
 **Hướng mở rộng mới đã duyệt ngày 2026-11-04:** giao diện A theo phong cách Claude,
 Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Automations theo lịch.
-Plan01 đã triển khai; Plan02 đang nghiệm thu Word/PDF. Google Connectors và Automations là các mốc tiếp theo.
+Plan01 và Plan02 đã triển khai, nghiệm thu offline. Google Connectors và Automations là các mốc tiếp theo.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
 Plan01 đã gộp vào `main` tại máy (commit `4b92d31`):
@@ -18,9 +18,11 @@ Chưa bật runtime hoặc áp dụng migration vào DB đang dùng. [Review và
 [Hướng dẫn](docs/manual-artifacts.md), [số đo](docs/acceptance/2026-11-04-artifact-excel.json).
 Live model chưa chạy; Connectors/Automations chưa triển khai. Các kết quả/điểm chưa nghiệm thu
 trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.
-Đang hoàn tất [Plan02 — Word rồi PDF văn bản](docs/superpowers/plans/2026-11-04-workspace-02-documents.md)
-trên nhánh `feat/workspace-documents`; runtime, preview/render và browser đã qua; full suite 1.184 passed/2 skipped,
-gate offline Word/PDF 34 passed. Đang review cuối trước khi tích hợp.
+Đã hoàn tất [Plan02 — Word rồi PDF văn bản](docs/superpowers/plans/2026-11-04-workspace-02-documents.md)
+trên nhánh `feat/workspace-documents`; runtime, preview/render và browser đã qua; full suite sau sửa review
+1.194 passed/2 skipped, gate offline Word/PDF 34 passed. Chưa gộp main/push hoặc bật runtime.
+[Nghiệm thu Plan02](docs/acceptance/2026-11-05-workspace-documents.md).
+Tiếp theo: Plan03 — Google OAuth, chọn từng file, Sheets → Docs → upload Artifact lên Drive.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần

@@ -2042,6 +2042,9 @@
   Mẫu 75 hàng/3 trang tiếng Việt đã kiểm tra ảnh từng trang, không mất chữ/cắt hàng.
 - Browser queue/worker/checkpoint thật với model fixture đã qua tạo/sửa/upload/chọn file,
   xem bản cũ, PDF reflow và desktop/mobile. Gate offline Word/PDF đạt 34 tests;
-  full suite đạt 1.184 tests, 2 skips trên Windows (1.196,32 giây). Đang review cuối.
+  full suite sau sửa review đạt 1.194 tests, 2 skips trên Windows (1.042,54 giây).
+- Review độc lập có hai lỗi Important: inline image trong Form PDF và mất symbol trong Word khi sửa
+  chữ cạnh nó. Đã sửa cùng 10 ca RED→GREEN; không có minor trì hoãn. Plan02 hoàn tất, sẵn sàng tích hợp.
+  Phần tiếp theo là Plan03: OAuth/chọn từng file, Google Sheets → Docs → upload Drive.
 - [Hồ sơ nghiệm thu](docs/acceptance/2026-11-05-workspace-documents.md),
   [giới hạn và vận hành](docs/manual-artifacts.md). Live provider chưa chạy; Google/Automations chưa triển khai.

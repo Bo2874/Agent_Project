@@ -44,6 +44,8 @@ yêu cầu sửa trong chat để tạo phiên bản mới có preview. Nội du
   Các run/bảng/style không bị sửa được giữ lại; bản gốc và các nhánh sửa vẫn tải xuống riêng được.
 - Word có ảnh/drawing, embedded objects, external relationships, hyperlink, footnote/endnote,
   comments, track changes, fields hoặc content controls chưa được hỗ trợ và bị từ chối trước sửa.
+  Run có symbol/font glyph, discretionary hyphen hoặc ngắt trang/cột đặc biệt cũng bị từ chối;
+  không chuyển chúng thành chuỗi text rồi âm thầm làm mất khi sửa chữ liền kề.
   Python cho Word cũng qua cùng preflight, chạy cách ly và cần duyệt như Excel.
 - PDF được đọc theo trang và dựng lại từ nội dung mong muốn, không cam kết giữ bố cục trang gốc.
   PDF mới giữ kèm DOCX của chính phiên bản đó. Sửa theo node ID luôn dùng nguồn của parent đã chọn,

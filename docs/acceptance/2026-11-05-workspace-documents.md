@@ -1,6 +1,7 @@
 # Nghiệm thu Plan02: Word và PDF văn bản
 
-Trạng thái: gate offline và hồi quy toàn project đã qua; đang review cuối, chưa merge/push hoặc bật runtime.
+Trạng thái: Plan02 hoàn tất; gate offline, review độc lập và hồi quy sau sửa đã qua.
+Nhánh `feat/workspace-documents` sẵn sàng tích hợp; chưa merge/push hoặc bật runtime.
 
 Phạm vi triển khai: tạo/sửa DOCX; đọc và dựng lại PDF text; giữ nguồn DOCX của từng phiên bản PDF;
 render preview PNG theo đúng owner/version. Không có OCR, xử lý ảnh, Google Connectors hay Automations.
@@ -24,6 +25,11 @@ render preview PNG theo đúng owner/version. Không có OCR, xử lý ảnh, Go
   752,09 giây; có một warning cấu hình `cache_dir` vì gate chủ động tắt cache provider của pytest.
   [Báo cáo browser của gate](2026-11-05-documents/browser-gate.json).
 - Full suite: **1.184 passed, 2 skipped**, 1.196,32 giây; hai ca symlink bỏ qua trên Windows.
+- Review độc lập phát hiện hai lỗi Important về ảnh trong Form PDF và ký hiệu trong Word;
+  đã sửa trong một lượt với 10 ca RED→GREEN. Hồi quy sau sửa: **1.194 passed, 2 skipped**,
+  1.042,54 giây. [Hồ sơ review](2026-11-05-documents-review.md),
+  [quyết định triển khai](2026-11-05-documents-decisions.md),
+  [kết quả kiểm thử](2026-11-05-documents-verification.txt).
 
 ## Kiểm tra bố cục và giới hạn renderer
 

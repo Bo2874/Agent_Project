@@ -15,6 +15,7 @@ from artifact_runtime.document_types import (
 )
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+TEXT_RUN_CHILDREN = {W + name for name in ("rPr", "t", "tab", "br", "cr")}
 UNSUPPORTED = {
     "drawing",
     "pict",
@@ -72,6 +73,22 @@ def load_safe_docx(source: Path):
                     for node in tree.iter()
                 ):
                     raise ValueError("Unsupported DOCX content; refusing a lossy edit")
+                if name.startswith("word/"):
+                    for run in tree.iter(W + "r"):
+                        for child in run:
+                            # run.text reconstructs children: only accept the text forms it
+                            # roundtrips. Symbols, discretionary hyphens and special breaks
+                            # must never disappear when adjacent text is replaced.
+                            if child.tag not in TEXT_RUN_CHILDREN or (
+                                child.tag == W + "br"
+                                and (
+                                    child.get(W + "type", "textWrapping") != "textWrapping"
+                                    or child.get(W + "clear", "none") != "none"
+                                )
+                            ):
+                                raise ValueError(
+                                    "Unsupported DOCX run content; refusing a lossy edit"
+                                )
     document = Document(source)
     if any(child.tag not in {W + "p", W + "tbl", W + "sectPr"} for child in document.element.body):
         raise ValueError("Unsupported document block")

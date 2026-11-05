@@ -83,6 +83,64 @@ def test_pdf_bounds_and_loss_consent_are_enforced(tmp_path):
     assert not list(tmp_path.glob("*/output*"))
 
 
+def test_inline_image_in_nested_form_requires_loss_approval(tmp_path):
+    from pypdf.generic import ArrayObject, NumberObject
+
+    from artifact_runtime.pdf import read_pdf_text, rebuild_pdf
+
+    path = text_pdf(tmp_path / "nested-inline.pdf")
+    writer = PdfWriter(clone_from=path)
+    page = writer.pages[0]
+    form = DecodedStreamObject()
+    form.set_data(b"q BI /W 1 /H 1 /CS /RGB /BPC 8 ID \xff\x00\x00 EI Q")
+    form.update(
+        {
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/BBox"): ArrayObject([NumberObject(n) for n in (0, 0, 10, 10)]),
+            NameObject("/Resources"): DictionaryObject(),
+        }
+    )
+    # A second Form exercises recursive content inspection, not only direct page resources.
+    outer = DecodedStreamObject()
+    outer.set_data(b"/Inner Do")
+    outer.update(
+        {
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/BBox"): form["/BBox"],
+            NameObject("/Resources"): writer._add_object(
+                DictionaryObject(
+                    {
+                        NameObject("/XObject"): DictionaryObject(
+                            {NameObject("/Inner"): writer._add_object(form)}
+                        )
+                    }
+                )
+            ),
+        }
+    )
+    page["/Resources"][NameObject("/XObject")] = DictionaryObject(
+        {NameObject("/Outer"): writer._add_object(outer)}
+    )
+    stream = DecodedStreamObject()
+    stream.set_data(page.get_contents().get_data() + b"\n/Outer Do")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    with path.open("wb") as target:
+        writer.write(target)
+    extracted = read_pdf_text(path)
+    assert extracted.coverage == "partial"
+    assert extracted.omitted_pages == [1] and extracted.pages[0].has_images
+    assert extracted.warnings and "Original text" in extracted.pages[0].text
+    with pytest.raises(ValueError, match="[Aa]pproval"):
+        rebuild_pdf(
+            DocumentBlocks(blocks=[{"kind": "paragraph", "text": "Updated text"}]),
+            source_pdf=path,
+            output_dir=tmp_path / "refused",
+        )
+    assert not list((tmp_path / "refused").glob("*"))
+
+
 def test_safe_pdf_navigation_is_not_active_content(tmp_path):
     from pypdf.generic import ArrayObject, NumberObject
 

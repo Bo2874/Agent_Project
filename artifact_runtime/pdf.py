@@ -7,7 +7,21 @@ from artifact_runtime.document_types import DocumentBlocks
 from artifact_runtime.pdf_types import PdfPage, PdfTextDocument
 
 
-def _has_images(resources, depth=0):
+def _stream_has_images(stream, reader, page_bytes, total_bytes):
+    from pypdf.generic import ContentStream
+
+    if not stream:
+        return False
+    size = len(stream.get_data())
+    page_bytes[0] += size
+    total_bytes[0] += size
+    if page_bytes[0] > 8388608 or total_bytes[0] > 33554432:
+        raise ValueError("PDF expanded content exceeds extraction limit")
+    content = stream if isinstance(stream, ContentStream) else ContentStream(stream, reader)
+    return any(operator == b"INLINE IMAGE" for _, operator in content.operations)
+
+
+def _has_images(resources, reader, page_bytes, total_bytes, depth=0):
     if depth > 10:
         raise ValueError("PDF resource nesting limit exceeded")
     objects = resources.get("/XObject", {})
@@ -15,13 +29,18 @@ def _has_images(resources, depth=0):
         objects = objects.get_object()
     if len(objects) > 200:
         raise ValueError("PDF resource limit exceeded")
+    images = False
     for value in objects.values():
         item = value.get_object()
         if item.get("/Subtype") == "/Image":
-            return True
-        if item.get("/Subtype") == "/Form" and _has_images(item.get("/Resources", {}), depth + 1):
-            return True
-    return False
+            images = True
+        if item.get("/Subtype") == "/Form":
+            inline = _stream_has_images(item, reader, page_bytes, total_bytes)
+            nested = _has_images(
+                item.get("/Resources", {}), reader, page_bytes, total_bytes, depth + 1
+            )
+            images |= inline or nested
+    return images
 
 
 def read_pdf_text(source: Path) -> PdfTextDocument:
@@ -52,24 +71,20 @@ def read_pdf_text(source: Path) -> PdfTextDocument:
         or set(names) - {"/Dests"}
     ):
         raise ValueError("Active PDF content, forms and embedded files are not supported")
-    pages, omitted, total = [], [], 0
+    pages, omitted, total_bytes = [], [], [0]
     for number, page in enumerate(reader.pages, 1):
         if any(key in page for key in ("/AA", "/Annots")):
             raise ValueError("PDF annotations and active content are not supported")
         stream = page.get_contents()
-        size = len(stream.get_data()) if stream else 0
-        total += size
-        if size > 8388608 or total > 33554432:
-            raise ValueError("PDF expanded content exceeds extraction limit")
-        text = page.extract_text() or ""
-        if len(text) > 200000 or sum(len(item.text) for item in pages) + len(text) > 400000:
-            raise ValueError("PDF text exceeds extraction limit")
+        page_bytes = [0]
+        inline = _stream_has_images(stream, reader, page_bytes, total_bytes)
         resources = page.get("/Resources", {})
         if hasattr(resources, "get_object"):
             resources = resources.get_object()
-        images = _has_images(resources) or bool(
-            stream and any(operator == b"INLINE IMAGE" for _, operator in stream.operations)
-        )
+        images = _has_images(resources, reader, page_bytes, total_bytes) or inline
+        text = page.extract_text() or ""
+        if len(text) > 200000 or sum(len(item.text) for item in pages) + len(text) > 400000:
+            raise ValueError("PDF text exceeds extraction limit")
         if images or not text.strip():
             omitted.append(number)
         pages.append(PdfPage(number=number, text=text, has_images=images))

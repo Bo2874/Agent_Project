@@ -199,6 +199,60 @@ def test_replacement_across_runs_keeps_unrelated_formatting(tmp_path):
     assert changed.runs[-1].text == " tail" and changed.runs[-1].underline is True
 
 
+@pytest.mark.parametrize(
+    "tag,attributes",
+    [
+        ("sym", {"font": "Wingdings", "char": "F0FC"}),
+        ("noBreakHyphen", {}),
+        ("softHyphen", {}),
+        ("separator", {}),
+        ("continuationSeparator", {}),
+        ("lastRenderedPageBreak", {}),
+        ("br", {"type": "page"}),
+        ("br", {"type": "column"}),
+        ("br", {"clear": "all"}),
+    ],
+)
+def test_special_run_content_refused_before_adjacent_text_edit(tmp_path, tag, attributes):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    from artifact_runtime.document import apply_document
+
+    document = Document()
+    run = document.add_paragraph().add_run("Approved ")
+    special = OxmlElement(f"w:{tag}")
+    for key, value in attributes.items():
+        special.set(qn(f"w:{key}"), value)
+    run._r.append(special)
+    run.add_text(" status")
+    path = tmp_path / "special.docx"
+    document.save(path)
+    original = path.read_bytes()
+    digest = hashlib.sha256(original).hexdigest()
+    with pytest.raises(ValueError, match="Unsupported DOCX"):
+        apply_document(
+            ArtifactOperation(
+                kind="edit_docx",
+                parent_version_id=uuid4(),
+                payload={
+                    "operations": [
+                        {
+                            "kind": "replace_text",
+                            "node_id": f"{digest}:0",
+                            "old": "Approved",
+                            "new": "Reviewed",
+                        }
+                    ]
+                },
+            ),
+            input_path=path,
+            output_dir=tmp_path / "refused",
+        )
+    assert path.read_bytes() == original
+    assert not list((tmp_path / "refused").glob("*"))
+
+
 def test_docx_payload_rejects_code_and_unknown_operations():
     with pytest.raises(ValidationError):
         ArtifactOperation(
