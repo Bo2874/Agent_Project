@@ -265,6 +265,44 @@ async def test_cancel_after_runner_before_publish_cleans_stage(bridge, monkeypat
     assert list(service.storage_service().storage.root.rglob("content.xlsx")) == []
 
 
+async def test_lost_lease_before_publication_cleans_all_staged_files(bridge, monkeypatch):  # noqa: F811
+    from backend.background.queue import BackgroundJobOwnershipError
+    from backend.services import run_events
+
+    service, context, sessions = bridge
+
+    async def expired(session):
+        raise BackgroundJobOwnershipError("Lost test lease")
+
+    monkeypatch.setattr(run_events, "fence", expired)
+    with pytest.raises(BackgroundJobOwnershipError):
+        await service.execute(context, ArtifactOperation(kind="create_xlsx", payload=plan()))
+    async with sessions() as session:
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(ArtifactVersion)
+                .where(ArtifactVersion.owner_user_id == context.user_id)
+            )
+            == 0
+        )
+    assert list(service.storage_service().storage.root.rglob("content.xlsx")) == []
+
+
+async def test_orphan_reconciliation_reclaims_hard_killed_unpack_workspace(bridge):  # noqa: F811
+    from test_artifact_temporary import killed_workspace
+
+    service, _, sessions = bridge
+    storage = service.storage_service().storage
+    stale = killed_workspace(storage.root, "artifact-stage-")
+    old = time.time() - 90000
+    os.utime(stale, (old, old))
+    assert await reconcile_orphans(sessions, storage, dry_run=True) == 1
+    assert stale.exists()
+    assert await reconcile_orphans(sessions, storage) == 1
+    assert not stale.exists()
+
+
 @pytest.mark.skipif(
     os.environ.get("ARTIFACT_WORKFLOW_GATE") != "1", reason="Run explicit offline workflow gate"
 )

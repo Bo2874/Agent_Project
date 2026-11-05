@@ -19,6 +19,7 @@ from artifact_runtime.protocol import (
     canonical,
     unpack_bundle,
 )
+from artifact_runtime.temporary import temporary_workspace
 from backend.services.artifacts.storage import ArtifactStorage, StoredArtifact
 
 
@@ -88,7 +89,9 @@ class ArtifactRunnerClient:
                                     raise ValueError("Runner output exceeds transport limit")
                                 await asyncio.to_thread(bundle.write, chunk)
                             bundle.seek(0)
-                            with tempfile.TemporaryDirectory(dir=self.storage.root) as folder:
+                            with temporary_workspace(
+                                self.storage.root, "artifact-stage-"
+                            ) as folder:
                                 report, paths = await asyncio.to_thread(
                                     unpack_bundle, bundle, Path(folder)
                                 )

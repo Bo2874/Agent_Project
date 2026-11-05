@@ -343,6 +343,8 @@ kết thúc `_test`; nó khởi động broker loopback riêng và model fixture
 Đã kiểm hard broker restart và hard worker exit sau publish trước receipt; reconcile chỉ cho
 Artifact call có fingerprint/deterministic job ID khớp, không replay external write chưa rõ.
 Số đo workbook và hai sửa đồng thời: [report](docs/acceptance/2026-11-04-artifact-excel.json).
+Lượt nghiệm thu sau review 2026-11-05: [kết quả và quyết định](docs/acceptance/2026-11-05-workspace-review.md),
+[số đo cuối](docs/acceptance/2026-11-05-artifact-excel.json). Chưa bật tính năng trên môi trường người dùng.
 
 Dọn staging cũ bằng `python -m scripts.reconcile_artifacts` để xem trước, rồi `--apply` khi
 người vận hành chọn thực thi. Mặc định grace 24 giờ, chỉ xóa file không còn DB reference,

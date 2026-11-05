@@ -60,7 +60,11 @@ class CapabilityCatalog:
                     by_word.setdefault(word, set()).add(name)
         payload = [
             {
-                "descriptor": r.descriptor.model_dump(mode="json"),
+                # The false/default extension must not invalidate pre-Artifact checkpoints.
+                "descriptor": r.descriptor.model_dump(
+                    mode="json",
+                    exclude={"immutable_output"} if not r.descriptor.immutable_output else set(),
+                ),
                 "binding_name": r.binding_name,
                 "keywords": sorted(r.keywords),
                 "always_load": r.always_load,

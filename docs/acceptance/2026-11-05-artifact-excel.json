@@ -1,0 +1,64 @@
+{
+  "rows": 10000,
+  "data_columns": 12,
+  "sheets": 2,
+  "charts": 1,
+  "cached_sum": 50005000,
+  "create_and_two_concurrent_edits_seconds": 134.96,
+  "xlsx_bytes": 701677,
+  "calculation_status": "fresh",
+  "stages": [
+    {
+      "action": "execute",
+      "seconds": 7.88
+    },
+    {
+      "action": "inspect",
+      "seconds": 11.14
+    },
+    {
+      "action": "recalculate",
+      "seconds": 21.39
+    },
+    {
+      "action": "inspect",
+      "seconds": 12.71
+    },
+    {
+      "action": "execute",
+      "seconds": 20.73
+    },
+    {
+      "action": "execute",
+      "seconds": 21.04
+    },
+    {
+      "action": "inspect",
+      "seconds": 13.38
+    },
+    {
+      "action": "inspect",
+      "seconds": 13.78
+    },
+    {
+      "action": "recalculate",
+      "seconds": 25.52
+    },
+    {
+      "action": "recalculate",
+      "seconds": 25.78
+    },
+    {
+      "action": "inspect",
+      "seconds": 14.03
+    },
+    {
+      "action": "inspect",
+      "seconds": 14.29
+    }
+  ],
+  "sample_count": 75,
+  "sampled_max_cpu_percent": 101.06,
+  "measurement": "Sampled Docker CPU/memory, not exact peak; includes monitoring overhead.",
+  "sampled_max_memory_mib": 267.5
+}

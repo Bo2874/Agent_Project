@@ -43,6 +43,20 @@ async def test_revoke_suppresses_private_output_but_preserves_known_api_spend():
     assert result.data["usage"]["total_tokens"] == 10 and result.data["cost_usd"] == 0.01
 
 
+async def test_legacy_positional_context_still_enforces_authorization():
+    async def revoked(name):
+        raise ToolAuthorizationError()
+
+    async def forbidden(context, arguments):
+        raise AssertionError("A revoked tool must not execute")
+
+    registry = ToolRegistry()
+    registry.register(make_tool(forbidden))
+    context = ToolContext(uuid4(), uuid4(), "user", uuid4(), revoked)
+    result = await ToolExecutor().execute(registry, context, "test_tool", {"value": 1})
+    assert result.error_code == "plugin_authorization_changed"
+
+
 def make_context() -> ToolContext:
     return ToolContext(
         user_id=uuid4(),

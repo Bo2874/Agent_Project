@@ -68,6 +68,42 @@ def descriptor(name="search", **overrides):
     )
 
 
+def test_legacy_catalog_fingerprint_is_stable_without_artifact_capabilities():
+    import hashlib
+    import json
+
+    record = CapabilityRecord(descriptor(), "docs__main__search")
+    # This is the pre-artifact wire shape persisted in old checkpoints.
+    legacy = record.descriptor.model_dump(mode="json", exclude={"immutable_output"})
+    payload = [
+        {
+            "descriptor": legacy,
+            "binding_name": "docs__main__search",
+            "keywords": [],
+            "always_load": False,
+        }
+    ]
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert CapabilityCatalog((record,)).version == f"cc1:0:{digest}"
+    host = CapabilityDescriptor(
+        capability_id="local.write",
+        kind="tool",
+        name="write",
+        description="Write output",
+        version="1",
+        side_effect="write",
+        requires_approval=False,
+        immutable_output=True,
+    )
+    changed = host.model_copy(update={"immutable_output": False, "requires_approval": True})
+    assert (
+        CapabilityCatalog((CapabilityRecord(host, "write"),)).version
+        != CapabilityCatalog((CapabilityRecord(changed, "write"),)).version
+    )
+
+
 def test_metadata_index_filters_kinds_plugins_tags_and_vietnamese():
     catalog = CapabilityCatalog(
         (

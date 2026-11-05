@@ -25,8 +25,6 @@ class ToolContext:
     conversation_id: UUID
     user_role: str
     run_id: UUID | None = None
-    artifact_version_ids: tuple[UUID, ...] = ()
-    operation_key: str | None = None
     authorization_guard: Callable[[str], Awaitable[None]] | None = field(
         default=None, repr=False, compare=False
     )
@@ -39,6 +37,8 @@ class ToolContext:
     progress_callback: Callable[[Mapping[str, Any]], Awaitable[None]] | None = field(
         default=None, repr=False, compare=False
     )
+    artifact_version_ids: tuple[UUID, ...] = ()
+    operation_key: str | None = None
 
 
 class ToolAuthorizationError(RuntimeError):

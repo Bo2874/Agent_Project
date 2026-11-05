@@ -1,17 +1,20 @@
 # Kế hoạch phát triển Personal AI Agent
 
-Cập nhật: 2026-11-04
+Cập nhật: 2026-11-05
 
 Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memory, Skills, sandbox và trang quản trị đủ tốt để học và trình bày khi phỏng vấn.
 
 **Hướng mở rộng mới đã duyệt ngày 2026-11-04:** giao diện A theo phong cách Claude,
 Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Automations theo lịch.
-Thiết kế đã duyệt và kế hoạch mới không có nghĩa các tính năng này đã triển khai.
+Plan01 đã triển khai; Word/PDF, Google Connectors và Automations vẫn là các mốc tiếp theo.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
-Đang nghiệm thu trên nhánh `feat/workspace-excel` tại `.worktrees/workspace-excel`:
+Đã hoàn thành code và kiểm thử offline trên nhánh `feat/workspace-excel` tại `.worktrees/workspace-excel`:
 [giao diện A và Excel xuyên suốt](docs/superpowers/plans/2026-11-04-workspace-01-excel.md).
 Gate offline DB/Docker/worker thật đạt 55 tests; browser fixture worker đạt desktop/mobile.
+Lượt sửa review cuối: 1.141 tests đạt, 2 skips được ghi rõ; tương thích checkpoint/kiểm quyền cũ,
+race preview, rich-text refusal và thu hồi scratch sau hard-kill đã có regression.
+Chưa gộp vào main hoặc bật runtime. [Review và kết quả cuối](docs/acceptance/2026-11-05-workspace-review.md).
 [Hướng dẫn](docs/manual-artifacts.md), [số đo](docs/acceptance/2026-11-04-artifact-excel.json).
 Live model chưa chạy; Word/PDF/Connectors/Automations chưa triển khai. Các kết quả/điểm chưa nghiệm thu
 trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.

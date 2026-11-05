@@ -2000,3 +2000,22 @@
   không đổi từ baseline (8 migration đã áp dụng, test models, contracts README); không sửa lan.
   Toàn pytest: 1127 passed/2 skipped trong 319,29s; skip benchmark lớn đã chạy ở gate riêng
   và quyền symlink Windows. Review độc lập cuối nhánh được ghi sau khi hoàn tất.
+
+### 2026-11-05 — Plan01: hoàn tất lượt sửa review và kiểm thử cuối
+
+- Review độc lập phát hiện 6 Important; sửa một lượt, mỗi lỗi có RED→GREEN; bổ sung lỗi
+  handoff cleanup khi worker mất lease. Không chạy lại review độc lập sau sửa.
+- Bảo toàn ToolContext positional guard và hash/policy checkpoint cũ (kể cả pending approval).
+  Preview không bỏ lỡ version khi đang tải. Rich text chưa giữ được sẽ bị từ chối trước sửa.
+- Scratch có UUID + OS lock và thu hồi sau hard-kill; sweep lỗi ghi log rồi retry, không tự chết.
+- Toàn pytest **1141 passed/2 skipped**, 415,57s; fixture lớn chạy riêng đạt. Format 62 file Python
+  thay đổi, Ruff check, Node syntax và Compose đạt; 10 lỗi format baseline tiếp tục được ghi rõ.
+- Fixture cuối: 134.96s tạo + hai sửa cùng parent,
+  701677 bytes; 75 mẫu CPU/RAM, RAM lấy mẫu tối đa
+  267.5 MiB. Không nâng profile sandbox, không gọi live model.
+- Packaged broker HTTP/Calc và Linux hard-kill/lock/symlink probes đạt. User deletion/retention
+  chưa có; quota tính cả phiên bản cũ, trần web/runner độc lập đã được ghi trong manual.
+- [Review/decisions](docs/acceptance/2026-11-05-workspace-review.md),
+  [test evidence](docs/acceptance/2026-11-05-artifact-verification.txt),
+  [số đo cuối](docs/acceptance/2026-11-05-artifact-excel.json).
+- Chưa merge/push hoặc bật tính năng trên môi trường người dùng; main và .env được giữ nguyên.

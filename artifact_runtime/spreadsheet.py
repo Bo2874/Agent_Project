@@ -73,6 +73,18 @@ def preflight_workbook(path: Path) -> None:
             )
         # A relationship may target the network even without an externalLinks part.
         for name in names:
+            if name == "xl/sharedStrings.xml" or (
+                name.startswith("xl/worksheets/") and name.endswith(".xml")
+            ):
+                # openpyxl's default load flattens these runs without a loss warning.
+                # Refuse before any edit or Python fallback rather than silently restyle.
+                with archive.open(name) as source:
+                    for _, node in ElementTree.iterparse(source, events=("end",)):
+                        if node.tag.rsplit("}", 1)[-1] == "r":
+                            raise ValueError(
+                                "Rich-text cell formatting is not supported for editing"
+                            )
+                        node.clear()
             if name.endswith(".rels") or name == "[Content_Types].xml":
                 if archive.getinfo(name).file_size > 1048576:
                     raise ValueError("Spreadsheet relationship exceeds limit")

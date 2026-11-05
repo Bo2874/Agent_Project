@@ -28,7 +28,8 @@ Các bản sao này hiện quản lý/tải xuống được; bộ xử lý Word
 - Ghi ô, thêm sheet, SUM/SUMIF/AVERAGE/COUNT/IF, định dạng vùng, biểu đồ cột/ngang/đường.
 - Chuỗi qua `write_cells` luôn là text; công thức đi qua `set_formula`.
 - Python cho yêu cầu phức tạp chạy trong sandbox, bắt buộc approval; Python nhỏ cũ giữ nguyên.
-- Macro, ảnh, external links, embedded objects và drawing không giữ được bị từ chối.
+- Macro, ảnh, external links, embedded objects, rich text (nhiều kiểu chữ trong một ô)
+  và drawing không giữ được bị từ chối trước khi sửa, kể cả Python fallback.
   Công thức cũ an toàn ngoài danh sách được giữ nhưng đánh dấu chưa hỗ trợ tính lại.
 - “Đã tính lại công thức” chỉ có sau UNO `calculateAll()` và kiểm inventory/cache.
   Upload đơn thuần không xác nhận cache còn mới.
@@ -70,6 +71,12 @@ Google/Automations và Workspace Artifacts mặc định tắt cho đến khi ng
 ## Giới hạn và phục hồi
 
 Mặc định 20 MiB/file, 200 MiB/user (tính cả bản cũ); binary transport tối đa 40 MiB.
+Chưa có thao tác xóa phiên bản để giải phóng quota. Orphan cleanup chỉ dọn dữ liệu không còn
+tham chiếu, không xóa version đã lưu. Khi chạm quota, cần người vận hành tăng quota/dung lượng
+theo cấu hình; thiết kế retention/xóa có kiểm soát sẽ được làm riêng.
+Giới hạn cấu hình web và giới hạn cố định trong protocol/sandbox là các trần độc lập:
+giới hạn thực tế là trần nhỏ nhất. Tăng `ARTIFACT_MAX_FILE_BYTES` không nâng trần 20 MiB
+của một file trong runner, cũng không nâng trần transport, CPU/RAM hoặc archive.
 Code: 1 CPU/512 MiB, 15s CPU/30s wall. Calc: 1 CPU/1024 MiB, 60s CPU/90s wall, pids 64.
 Hai job đồng thời/broker. Giới hạn sandbox độc lập giới hạn Agent/chat.
 Input chỉ đọc, output tmpfs, root chỉ đọc, không mạng, không credentials/socket trong sandbox.
@@ -84,7 +91,11 @@ Python vẫn cần quyết định duyệt đã ghi nhận. Process chết trư�
 Gián đoạn giữa các stage chỉ dùng lại job ID cũ, không chạy lại job đã bắt đầu chưa hoàn tất.
 
 Broker `/health/live` kiểm tiến trình; gate offline mới kiểm Docker/Calc thực thi.
-Reaper chạy mỗi 30s và khi startup, chỉ xóa resource có label runner/job khớp.
+Startup thu hồi job đang chạy dở; reaper sweep mỗi 30s, chỉ xóa resource có label runner/job khớp.
+Lỗi sweep được ghi log và thử lại ở chu kỳ kế tiếp; cancellation vẫn dừng task bình thường.
+Thư mục upload/validation tạm có tên UUID riêng và OS file lock; broker thu hồi sau một giờ
+nếu không còn lock. Thư mục unpack/copy của worker dùng cùng cơ chế, được đối soát theo lịch
+orphan bên dưới. File mới, workspace còn hoạt động, symlink và cấu trúc lạ luôn được giữ.
 Không dùng `docker system prune` để dọn Artifact.
 
 COMMIT mất phản hồi có thể giữ staging để tránh xóa output đã commit. Dọn orphan sau 24 giờ
@@ -95,7 +106,8 @@ python -m scripts.reconcile_artifacts
 python -m scripts.reconcile_artifacts --apply
 ```
 
-Lệnh đầu chỉ báo số lượng. Lệnh hai xóa file cũ không có version tham chiếu; giữ file mới,
+Lệnh đầu chỉ báo số lượng file/thư mục scratch. Lệnh hai xóa file cũ không có version tham chiếu
+và workspace scratch cũ đã mất lock; giữ file mới,
 file được tham chiếu, đường dẫn lạ và symlink. DB không truy cập được thì dừng dọn.
 Tắt `WORKSPACE_ARTIFACTS_ENABLED`/`DEV_WORKSPACE_ARTIFACTS_ENABLED` và restart web/worker để
 ẩn/từ chối API; giữ binary volume và journal để bật lại.
@@ -117,3 +129,12 @@ workbook 10.000×12 có hai sheet/công thức/biểu đồ và hai child cùng 
 lấy mẫu, thời gian và kích thước; không gọi là peak chính xác. Live model/provider quality
 chưa được kiểm bởi gate này; chỉ chạy khi người dùng yêu cầu riêng. Browser QA kiểm UI A
 cùng worker thật và model fixture.
+
+Kiểm thử hồi quy race preview bằng component thật trong Chrome headless:
+
+```powershell
+node tests/artifact_panel_browser.cjs
+```
+
+`CHROME_PATH` có thể chỉ định Chrome khác. Test dùng profile riêng, không mở tài khoản/dịch vụ
+ngoài; kiểm event đến trong lúc mở file, đổi trang, refresh, đóng và chuyển hội thoại.

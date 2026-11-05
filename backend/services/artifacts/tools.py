@@ -253,12 +253,13 @@ class ArtifactToolService:
                 companion_sources=[{"role": "operation_fingerprint", "sha256": fingerprint}],
                 source_run_id=context.run_id,
             )
-            # publish_version owns cleanup after this point, including ambiguous COMMIT responses.
-            cleanup.discard(current.key)
             async with self.sessions() as session:
                 from backend.services.run_events import fence
 
                 await fence(session)
+                # Hand off cleanup only when publication actually starts. A failed lease
+                # fence still belongs to this scope, whereas an ambiguous COMMIT does not.
+                cleanup.discard(current.key)
                 ref = await service.publish_version(
                     session,
                     context.user_id,

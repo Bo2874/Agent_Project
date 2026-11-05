@@ -19,6 +19,7 @@ from artifact_runtime.protocol import (
     copy_checked,
     unpack_bundle,
 )
+from artifact_runtime.temporary import reap_workspaces, temporary_workspace
 
 LABEL = "personal-agent.artifact-runner"
 JOB_LABEL = "personal-agent.artifact-job"
@@ -143,6 +144,7 @@ class DockerBroker:
     async def reap_stale(self) -> None:
         # All resources have an expiry label. A restarted broker also catches orphaned
         # resources when its filesystem transaction was interrupted before registration.
+        await asyncio.to_thread(reap_workspaces, self.root, "artifact-upload-")
         ids = (await self.command("ps", "-aq", "--filter", f"label={LABEL}=1")).split()
         for identifier in ids:
             raw = await self.command("inspect", identifier, check=False)
@@ -176,6 +178,8 @@ class DockerBroker:
             ).fetchall()
         for (job,) in expired:
             root = self.root / str(UUID(job))
+            if root.is_dir():
+                await asyncio.to_thread(reap_workspaces, root, "artifact-validated-")
             for name in ("result.bundle", "pending.bundle", "intake.bundle", "intake.log"):
                 (root / name).unlink(missing_ok=True)
 
@@ -357,13 +361,11 @@ class DockerBroker:
                     output=root / "pending.bundle",
                     deadline=90 if render else 30,
                 )
-                with (root / "pending.bundle").open("rb") as source:
-                    report, validated = unpack_bundle(source, root / "validated")
-                if bool(report.files) != (request.action != "inspect"):
-                    raise RunnerError("Unexpected output count for runner action")
-                for path in validated:
-                    path.unlink()
-                (root / "validated").rmdir()
+                with temporary_workspace(root, "artifact-validated-") as folder:
+                    with (root / "pending.bundle").open("rb") as source:
+                        report, _ = unpack_bundle(source, folder)
+                    if bool(report.files) != (request.action != "inspect"):
+                        raise RunnerError("Unexpected output count for runner action")
                 (root / "pending.bundle").replace(result)
                 self.set_status(job, "completed")
                 return result

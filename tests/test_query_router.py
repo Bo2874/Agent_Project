@@ -352,6 +352,102 @@ async def test_resume_rejects_changed_catalog_before_model_or_tools(registry, co
     assert model.requests == [] and registry.calls == []
 
 
+async def test_resume_preserves_pre_artifact_jev_policy(registry, context):
+    from agent_core.graph import build_agent_graph
+
+    class UnavailableDecisionProvider:
+        async def decide(self, request):
+            raise AssertionError("A pinned route must not call the router")
+
+    saver = await failed_checkpoint(registry, context, ENABLED)
+    graph = build_agent_graph(checkpointer=saver)
+    config = agent_checkpoint_config(context.run_id)
+    state = await graph.aget_state(config)
+    saved = dict(state.values["routing_decision"])
+    saved.update(provider="jev", policy_version="jev_query2.1.3")
+    await graph.aupdate_state(config, {"routing_decision": saved})
+    model = Model()
+    items = await collect(
+        model,
+        registry,
+        context,
+        resume=True,
+        graph_checkpointer=saver,
+        decision_provider=UnavailableDecisionProvider(),
+        routing_flags=FeatureFlags(),
+    )
+    assert items[0].route == "chat" and items[0].policy_version == "jev_query2.1.3"
+    assert len(model.requests) == 1 and model.requests[0][1] is None
+
+
+async def test_legacy_catalog_pending_approval_resumes_without_rerouting(registry, context):
+    import hashlib
+
+    from agent_core.graph import AgentLoopEvent, build_agent_graph
+
+    entry = registry.get("calculator")
+    registry.replace_owned(
+        [entry], [replace(entry, policy=ToolExecutionPolicy(requires_approval=True))]
+    )
+    saver = InMemorySaver()
+    stream = stream_agent_graph(
+        model=Model(call_tool=True),
+        messages=messages("Calculate 2+2"),
+        registry=registry,
+        context=context,
+        routing_flags=ENABLED,
+        graph_checkpointer=saver,
+    )
+    try:
+        async for item in stream:
+            if isinstance(item, AgentLoopEvent) and item.kind == "tool_approval_required":
+                break
+    finally:
+        await stream.aclose()
+    graph = build_agent_graph(checkpointer=saver)
+    config = agent_checkpoint_config(context.run_id)
+    state = await graph.aget_state(config)
+    saved = dict(state.values["routing_decision"])
+    catalog = registry.capability_catalog("user")
+    legacy = [
+        {
+            "descriptor": r.descriptor.model_dump(mode="json", exclude={"immutable_output"}),
+            "binding_name": r.binding_name,
+            "keywords": sorted(r.keywords),
+            "always_load": r.always_load,
+        }
+        for r in catalog.records
+    ]
+    digest = hashlib.sha256(
+        json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    revision = catalog.version.split(":")[1]
+    saved.update(
+        provider="jev", policy_version="jev_query2.1.3", catalog_version=f"cc1:{revision}:{digest}"
+    )
+    await graph.aupdate_state(config, {"routing_decision": saved})
+
+    class PinnedProvider:
+        async def decide(self, request):
+            raise AssertionError("Resume must use the pinned route")
+
+    async def approved(*args):
+        return True
+
+    model = Model()
+    await collect(
+        model,
+        registry,
+        context,
+        resume=True,
+        graph_checkpointer=saver,
+        approval_handler=approved,
+        decision_provider=PinnedProvider(),
+        routing_flags=FeatureFlags(),
+    )
+    assert len(registry.calls) == 1 and len(model.requests) == 1
+
+
 async def test_enabling_flag_does_not_reroute_legacy_checkpoint(registry, context, monkeypatch):
     saver = await failed_checkpoint(registry, context, None)
     from agent_core.graph import runner

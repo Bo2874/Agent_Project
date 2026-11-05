@@ -1,5 +1,6 @@
 """Conservative artifact reconciliation; never replay unknown external actions."""
 
+import asyncio
 import hashlib
 import os
 import time
@@ -117,4 +118,17 @@ async def reconcile_orphans(sessions, storage, *, grace_seconds=86400, limit=100
                     removed += 1
             if removed >= limit:
                 return removed
+    # Scratch has its own generated namespace and an OS-held active-workspace lease.
+    from artifact_runtime.temporary import reap_workspaces
+
+    async with sessions() as session:
+        await session.scalar(select(1))
+    removed += await asyncio.to_thread(
+        reap_workspaces,
+        storage.root,
+        "artifact-stage-",
+        grace_seconds=grace_seconds,
+        limit=limit - removed,
+        dry_run=dry_run,
+    )
     return removed

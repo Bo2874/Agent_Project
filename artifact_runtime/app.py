@@ -3,10 +3,10 @@
 import asyncio
 import hashlib
 import hmac
+import logging
 import os
 import re
 import struct
-import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +18,9 @@ from fastapi.responses import FileResponse
 from artifact_runtime.auth import sign
 from artifact_runtime.containers import DockerBroker, RunnerError
 from artifact_runtime.protocol import MAX_MANIFEST_BYTES, ArtifactRunRequest
+from artifact_runtime.temporary import temporary_workspace
+
+logger = logging.getLogger(__name__)
 
 
 class RequestReader:
@@ -59,7 +62,12 @@ def create_app(broker: DockerBroker, *, key: str) -> FastAPI:
     async def sweep():
         while True:
             await asyncio.sleep(30)
-            await broker.reap_stale()
+            try:
+                await broker.reap_stale()
+            except Exception:
+                # Cancellation remains a BaseException; sweep failures are visible
+                # in logs and cannot disable cleanup for the process lifetime.
+                logger.exception("Artifact reaper failed; retrying on the next sweep")
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -123,7 +131,7 @@ def create_app(broker: DockerBroker, *, key: str) -> FastAPI:
                     raise HTTPException(429, "Runner is busy; retry later")
             except ValueError as error:
                 raise HTTPException(422, str(error)) from error
-            with tempfile.TemporaryDirectory(prefix="upload-", dir=broker.root) as folder:
+            with temporary_workspace(broker.root, "artifact-upload-") as folder:
                 paths = []
                 try:
                     for item in operation.inputs:

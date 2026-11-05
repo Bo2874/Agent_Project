@@ -26,7 +26,10 @@ def main():
                 limit=args.limit,
                 dry_run=not args.apply,
             )
-            print(f"{'Deleted' if args.apply else 'Would delete'} {count} old unreferenced files")
+            print(
+                f"{'Deleted' if args.apply else 'Would delete'} {count} "
+                "old unreferenced files/scratch directories"
+            )
         finally:
             await engine.dispose()
 

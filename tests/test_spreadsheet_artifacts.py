@@ -141,6 +141,30 @@ def test_text_cells_do_not_become_formulas(tmp_path):
     assert cell.data_type == "s"
 
 
+def test_rich_text_is_refused_before_silent_format_loss(tmp_path):
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
+
+    workbook = Workbook()
+    workbook.active["A1"] = CellRichText("Normal ", TextBlock(InlineFont(b=True), "bold"))
+    source = tmp_path / "rich.xlsx"
+    workbook.save(source)
+    original = source.read_bytes()
+    output = tmp_path / "edited"
+    with pytest.raises(ValueError, match="[Rr]ich.text"):
+        apply_spreadsheet(
+            ArtifactOperation(
+                kind="edit_xlsx",
+                parent_version_id=uuid4(),
+                payload={"operations": [{"kind": "add_sheet", "name": "New"}]},
+            ),
+            input_path=source,
+            output_dir=output,
+        )
+    assert source.read_bytes() == original
+    assert not list(output.glob("*.xlsx"))
+
+
 @pytest.mark.parametrize(
     "part,content",
     [

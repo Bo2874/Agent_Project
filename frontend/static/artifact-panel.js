@@ -23,6 +23,7 @@
     const body = element("div", "artifact-preview-body");
     panel.append(header, controls, lineage, origin, status, body); root.append(panel);
     let generation = 0, controller = null, current = null, context = null, focused = null, versionOffset = 0;
+    const pendingReady = new Map();
     const narrow = matchMedia("(max-width: 760px)");
     const primary = root.querySelector(".chat-main, .artifact-primary");
     function accessibility() {
@@ -33,6 +34,7 @@
     narrow.addEventListener("change", accessibility);
     function close() {
       ++generation; controller?.abort(); controller = null; panel.hidden = true; current = null; context = null;
+      pendingReady.clear();
       root.classList.remove("artifact-preview-open"); accessibility();
       if (focused?.isConnected) focused.focus(); focused = null;
     }
@@ -117,6 +119,7 @@
     }
     async function open(versionId, contextId, query = {}, focus = true) {
       const token = ++generation; controller?.abort(); controller = new AbortController();
+      pendingReady.clear();
       if (panel.hidden) focused = document.activeElement;
       panel.hidden = false; root.classList.add("artifact-preview-open"); context = contextId; current = null;
       accessibility(); if (focus) closeButton.focus();
@@ -125,6 +128,8 @@
         const params = new URLSearchParams(query);
         const data = await requestJson(`/api/artifact-versions/${encodeURIComponent(versionId)}/preview?${params}`, { signal: controller.signal });
         if (token !== generation || panel.hidden || context !== contextId) return;
+        const ready = pendingReady.get(data.artifact_id); pendingReady.clear();
+        if (ready && ready.version_id !== data.version_id) { void open(ready.version_id, contextId, {}, false); return; }
         current = data; panel.dataset.versionId = data.version_id; name.textContent = data.name;
         status.textContent = statusText(data.calculation_status);
         lineage.textContent = `Phiên bản ${data.version_number}${data.parent_version_id ? ` · sửa từ ${data.parent_version_id.slice(0, 8)}` : " · bản đầu"}`;
@@ -144,7 +149,9 @@
       }
     });
     return { open, close, onVersionReady(ref, contextId) {
-      if (!panel.hidden && current && context === contextId && current.artifact_id === ref.artifact_id && current.version_id !== ref.version_id) void open(ref.version_id, contextId, {}, false);
+      if (panel.hidden || context !== contextId) return;
+      if (!current) { pendingReady.set(ref.artifact_id, ref); return; }
+      if (current.artifact_id === ref.artifact_id && current.version_id !== ref.version_id) void open(ref.version_id, contextId, {}, false);
     } };
   };
   window.renderArtifactCards = (bubble, refs, contextId) => {

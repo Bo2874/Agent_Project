@@ -57,6 +57,23 @@ def real_broker(tmp_path):
     return DockerBroker(tmp_path, docker=os.environ.get("ARTIFACT_DOCKER", "docker"))
 
 
+async def test_reaper_reclaims_hard_killed_upload_and_validation_workspaces(real_broker):
+    from test_artifact_temporary import killed_workspace
+
+    upload = killed_workspace(real_broker.root, "artifact-upload-")
+    job = str(uuid4())
+    folder = real_broker.root / job
+    folder.mkdir()
+    validated = killed_workspace(folder, "artifact-validated-")
+    old = time.time() - 90000
+    os.utime(upload, (old, old))
+    os.utime(validated, (old, old))
+    with real_broker.db() as db:
+        db.execute("INSERT INTO jobs VALUES (?,?,?,?)", (job, "fixture", "failed", old))
+    await real_broker.reap_stale()
+    assert not upload.exists() and not validated.exists()
+
+
 async def test_input_is_readonly_and_network_blocked(real_broker, tmp_path):
     code = """
 from pathlib import Path
