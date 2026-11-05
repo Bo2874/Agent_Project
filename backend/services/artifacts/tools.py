@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from agent_core.tools import ToolContext, ToolResult
 from artifact_runtime.protocol import (
+    DOCX_MIME,
     ArtifactInput,
     ArtifactOperation,
     ArtifactRunRequest,
@@ -86,8 +87,8 @@ class ArtifactToolService:
                 )
                 if binding is None:
                     raise HTTPException(404, "Artifact is not in this run's scope.")
-        if row.mime_type != XLSX_MIME:
-            raise HTTPException(415, "Hiện chỉ xử lý Excel .xlsx.")
+        if row.mime_type not in {XLSX_MIME, DOCX_MIME}:
+            raise HTTPException(415, "This document format is not supported yet.")
         return row
 
     async def run(self, context, job, *, stored=None, operation=None, action="execute", **kwargs):
@@ -98,7 +99,11 @@ class ArtifactToolService:
                 source = stack.enter_context(service.storage.path(stored.key).open("rb"))
                 inputs = (
                     ArtifactInput(
-                        "input-0.xlsx", stored.mime_type, stored.size_bytes, stored.sha256, source
+                        "input-0" + service.storage.path(stored.key).suffix,
+                        stored.mime_type,
+                        stored.size_bytes,
+                        stored.sha256,
+                        source,
                     ),
                 )
             return await self.runner(context.user_id).execute(
@@ -171,6 +176,8 @@ class ArtifactToolService:
             "python": "run_artifact_python",
             "create_xlsx": "artifact_create",
             "edit_xlsx": "artifact_edit",
+            "create_docx": "artifact_create",
+            "edit_docx": "artifact_edit",
         }[request.kind]
         try:
             await self.check(context, tool)
@@ -203,9 +210,14 @@ class ArtifactToolService:
                         "Phiên bản đã được lưu.",
                         data={"artifact_refs": [published(previous).model_dump(mode="json")]},
                     )
-                target = validate_name(name or (parent.name if parent else "report.xlsx"))
-                if Path(target).suffix.lower() != ".xlsx":
-                    raise ValueError("Output must be an XLSX file.")
+                extension = ".docx" if request.kind.endswith("docx") else ".xlsx"
+                target = validate_name(name or (parent.name if parent else "report" + extension))
+                if Path(target).suffix.lower() not in {".xlsx", ".docx"} or (
+                    request.kind != "python" and Path(target).suffix.lower() != extension
+                ):
+                    raise ValueError("Output filename must match the operation format.")
+                if parent and Path(parent.name).suffix.lower() != Path(target).suffix.lower():
+                    raise ValueError("Input format does not match the edit operation.")
                 from backend.services.artifacts.storage import StoredArtifact
 
                 input = (
@@ -224,12 +236,17 @@ class ArtifactToolService:
             generated = await self.run(context, job("execute"), stored=input, operation=request)
             cleanup.update(item.key for item in generated.files)
             if len(generated.files) != 1:
-                raise ValueError("Produce exactly one output-0.xlsx file per action.")
+                raise ValueError("Produce exactly one output file per action.")
             current = generated.files[0]
+            if (
+                current.mime_type
+                != {".xlsx": XLSX_MIME, ".docx": DOCX_MIME}[Path(target).suffix.lower()]
+            ):
+                raise ValueError("Generated file format does not match the requested output.")
             await asyncio.to_thread(validate_archive, service.storage.path(current.key))
             inspection = await self.run(context, job("preflight"), stored=current, action="inspect")
             calculation = inspection.manifest.calculation
-            if calculation.status != "unsupported":
+            if current.mime_type == XLSX_MIME and calculation.status != "unsupported":
                 recalculated = await self.run(
                     context, job("calculate"), stored=current, action="recalculate"
                 )
@@ -269,7 +286,7 @@ class ArtifactToolService:
                     operation_key=key,
                 )
             return ToolResult.success(
-                "Đã lưu phiên bản Excel mới; bản gốc được giữ nguyên.",
+                "Đã lưu phiên bản file mới; bản gốc được giữ nguyên.",
                 data={
                     "artifact_refs": [ref.model_dump(mode="json")],
                     "warnings": list(calculation.warnings),

@@ -100,7 +100,7 @@ class ArtifactRunnerClient:
                                         stored = await asyncio.to_thread(
                                             self.storage.put,
                                             source,
-                                            f"{self.owner}/{uuid4()}/{uuid4()}/content.xlsx",
+                                            f"{self.owner}/{uuid4()}/{uuid4()}/content{path.suffix}",
                                             max_bytes=20971520,
                                         )
                                     files.append(stored)

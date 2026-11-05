@@ -13,7 +13,7 @@ from pydantic import (
     model_validator,
 )
 
-from artifact_runtime.protocol import StrictModel
+from artifact_runtime.base import StrictModel
 
 
 def sheet_name(value: str) -> str:

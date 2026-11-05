@@ -16,7 +16,14 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 PREFIXES = {"artifact-stage-", "artifact-upload-", "artifact-validated-"}
 IDENTITY = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-MEMBER = re.compile(r"(?:input|output)-[0-2]\.xlsx")
+MEMBER = re.compile(r"(?:input|output)-[0-2]\.(?:xlsx|docx|pdf|png)")
+
+
+def _native_root(root: Path) -> Path:
+    root = Path(root).absolute()
+    if os.name == "nt" and not str(root).startswith("\\\\?\\"):
+        root = Path("\\\\?\\" + str(root))
+    return root
 
 
 def _plain(path, *, directory=False):
@@ -83,6 +90,7 @@ def _remove_empty_workspace(folder):
 
 @contextmanager
 def temporary_workspace(root: Path, prefix: str):
+    root = _native_root(root)
     if prefix not in PREFIXES or not _plain(root, directory=True):
         raise ValueError("Invalid artifact temporary storage root or prefix")
     folder = root / f"{prefix}{uuid4()}"
@@ -110,6 +118,7 @@ def temporary_workspace(root: Path, prefix: str):
 
 
 def reap_workspaces(root: Path, prefix: str, *, grace_seconds=3600, limit=1000, dry_run=False):
+    root = _native_root(root)
     if prefix not in PREFIXES or grace_seconds < 3600 or limit < 1:
         raise ValueError("Invalid artifact scratch recovery bounds")
     if not _plain(root, directory=True):

@@ -40,10 +40,10 @@ Mở rộng operation kind bằng `create_docx`, `edit_docx`, `rebuild_pdf`; `pa
 
 **Interfaces:** `inspect_docx(source: Path) -> DocumentOutline`; `apply_document(operation: ArtifactOperation, *, input_path: Path|None, output_dir: Path) -> GeneratedArtifact`. Outline gồm node ID theo input version + block position, loại/style/text/table cells; edits nhắm node ID, không replace toàn XML theo chuỗi.
 
-- [ ] Red `test_docx_edit_heading_table_and_keep_original` asserts heading/style/bảng đã sửa, hash bản gốc giữ nguyên; `test_stale_node_id_rejected` asserts input version khác bị chặn; `test_unsupported_content_loss_requires_approval` asserts không publish khi đường xử lý làm mất ảnh/footnote.
-- [ ] Chạy `python -m pytest tests/test_document_artifacts.py -q`; xác nhận fail trước implementation.
-- [ ] Implement python-docx với paragraph/run/table helpers; giữ phần không sửa khi thư viện hỗ trợ. Inspect ảnh, embedded objects, revision markup trước edit; chặn hoặc tạo loss proposal để duyệt nếu không giữ được. Không có OCR/image manipulation. Thêm dependencies trong sandbox lock, không cài runtime nặng vào FastAPI process.
-- [ ] Green tests; kiểm DOCX mở lại được, không chỉ ZIP hợp lệ. Chạy Artifact tools regression và commit `feat: add versioned word artifact editing`.
+- [x] Red `test_docx_edit_heading_table_and_keep_original` asserts heading/style/bảng đã sửa, hash bản gốc giữ nguyên; `test_stale_node_id_rejected` asserts input version khác bị chặn; `test_unsupported_content_loss_requires_approval` asserts không publish khi đường xử lý làm mất ảnh/footnote.
+- [x] Chạy `python -m pytest tests/test_document_artifacts.py -q`; xác nhận fail trước implementation.
+- [x] Implement python-docx với paragraph/run/table helpers; giữ phần không sửa khi thư viện hỗ trợ. Inspect ảnh, embedded objects, revision markup trước edit; chặn hoặc tạo loss proposal để duyệt nếu không giữ được. Không có OCR/image manipulation. Thêm dependencies trong sandbox lock, không cài runtime nặng vào FastAPI process.
+- [x] Green tests; kiểm DOCX mở lại được, không chỉ ZIP hợp lệ. Chạy Artifact tools regression và commit `feat: add versioned word artifact editing`.
 
 ### Task 2: D2 — PDF văn bản, nguồn có thể chỉnh sửa và xuất lại
 

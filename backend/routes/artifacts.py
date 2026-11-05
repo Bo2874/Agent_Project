@@ -105,10 +105,11 @@ async def upload_artifact(
     file: Annotated[UploadFile, File()],
 ):
     name = validate_name(file.filename or "")
-    if Path(name).suffix.lower() != ".xlsx":
-        raise HTTPException(415, "Hiện hỗ trợ tải XLSX. Word/PDF sẽ có ở giai đoạn tiếp theo.")
+    extension = Path(name).suffix.lower()
+    if extension not in {".xlsx", ".docx"}:
+        raise HTTPException(415, "Supported uploads: XLSX and DOCX.")
     if (file.content_type or "").split(";", 1)[0] not in {
-        XLSX_MIME,
+        MIME_TYPES[extension[1:]],
         "application/octet-stream",
         "",
     }:
@@ -116,7 +117,7 @@ async def upload_artifact(
     stored = await asyncio.to_thread(
         service.storage.put,
         file.file,
-        f"{user.id}/{uuid4()}/{uuid4()}/content.xlsx",
+        f"{user.id}/{uuid4()}/{uuid4()}/content{extension}",
         max_bytes=service.max_file_bytes,
     )
     publication_started = False
@@ -135,7 +136,7 @@ async def upload_artifact(
 
         with service.storage.path(stored.key).open("rb") as source:
             input = ArtifactInput(
-                "input-0.xlsx", stored.mime_type, stored.size_bytes, stored.sha256, source
+                "input-0" + extension, stored.mime_type, stored.size_bytes, stored.sha256, source
             )
             report = await runner_client(service, user.id).execute(
                 ArtifactRunRequest(job_id=uuid4(), action="inspect", inputs=(input.descriptor(),)),

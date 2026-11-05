@@ -83,6 +83,24 @@ def test_scratch_cleanup_refuses_unexpected_nested_content(tmp_path):
     assert (folder / "unexpected" / "keep.txt").read_text() == "keep"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows native long-path boundary")
+def test_long_scratch_path_supports_binary_unpack_and_reconciliation(tmp_path):
+    from artifact_runtime.temporary import reap_workspaces, temporary_workspace
+
+    root = tmp_path / ("a" * 70) / ("b" * 70)
+    extended = Path("\\\\?\\" + str(root.absolute()))
+    extended.mkdir(parents=True)
+    with temporary_workspace(root, "artifact-stage-") as active:
+        path = active / "output-0.xlsx"
+        path.write_bytes(b"long path output")
+        assert path.read_bytes() == b"long path output"
+    stale = killed_workspace(extended, "artifact-stage-")
+    old = time.time() - 90000
+    os.utime(stale, (old, old))
+    assert reap_workspaces(root, "artifact-stage-", grace_seconds=86400) == 1
+    assert not stale.exists()
+
+
 @pytest.mark.parametrize("failure", [OSError, sqlite3.OperationalError])
 async def test_reaper_retries_after_transient_failure(tmp_path, monkeypatch, caplog, failure):
     from artifact_runtime import app as module

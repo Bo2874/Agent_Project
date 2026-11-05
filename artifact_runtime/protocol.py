@@ -8,16 +8,25 @@ from pathlib import Path
 from typing import BinaryIO, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
+
+from artifact_runtime.base import StrictModel
+from artifact_runtime.document_types import (  # noqa: F401 - shared schema exports
+    DocumentBlocks,
+    DocumentEdits,
+    DocumentOutline,
+    PreviewManifest,
+)
+from artifact_runtime.spreadsheet_types import SpreadsheetPlan
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+PDF_MIME = "application/pdf"
+PNG_MIME = "image/png"
+GENERATED_TYPES = {".xlsx": XLSX_MIME, ".docx": DOCX_MIME, ".pdf": PDF_MIME, ".png": PNG_MIME}
 MAX_FILE_BYTES = 20971520
 MAX_TOTAL_BYTES = 41943040
 MAX_MANIFEST_BYTES = 1048576
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class PublishedArtifact(StrictModel):
@@ -32,10 +41,30 @@ class PublishedArtifact(StrictModel):
 
 
 class ArtifactOperation(StrictModel):
-    kind: Literal["create_xlsx", "edit_xlsx", "python"]
+    kind: Literal["create_xlsx", "edit_xlsx", "create_docx", "edit_docx", "python"]
     parent_version_id: UUID | None = None
-    payload: dict = Field(default_factory=dict)
+    payload: SpreadsheetPlan | DocumentBlocks | DocumentEdits | dict = Field(default_factory=dict)
     code: str | None = Field(default=None, min_length=1, max_length=32000)
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def typed_payload(cls, value, info):
+        schema = {
+            "create_xlsx": SpreadsheetPlan,
+            "edit_xlsx": SpreadsheetPlan,
+            "create_docx": DocumentBlocks,
+            "edit_docx": DocumentEdits,
+        }.get(info.data.get("kind"))
+        return schema.model_validate(value) if schema else value
+
+    @field_serializer("payload")
+    def wire_payload(self, value):
+        # Old saved jobs omitted optional defaults. Preserve that exact wire shape.
+        return (
+            value.model_dump(mode="json", exclude_unset=True)
+            if isinstance(value, BaseModel)
+            else value
+        )
 
     @model_validator(mode="after")
     def valid_kind(self):
@@ -44,28 +73,33 @@ class ArtifactOperation(StrictModel):
                 raise ValueError("Python operations require code and no structured payload")
         elif self.code is not None:
             raise ValueError("Structured operations cannot contain code")
-        else:
-            from artifact_runtime.spreadsheet_types import SpreadsheetPlan
-
-            SpreadsheetPlan.model_validate(self.payload)
-        if self.kind == "edit_xlsx" and self.parent_version_id is None:
+        if self.kind.startswith("edit_") and self.parent_version_id is None:
             raise ValueError("Editing requires a parent version")
-        if self.kind == "create_xlsx" and self.parent_version_id is not None:
+        if self.kind.startswith("create_") and self.parent_version_id is not None:
             raise ValueError("Creating cannot specify a parent version")
         return self
 
 
 class BlobDescriptor(StrictModel):
-    name: str = Field(pattern=r"^(input|output)-[0-2]\.xlsx$")
-    mime_type: Literal["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] = (
-        XLSX_MIME
-    )
+    name: str = Field(pattern=r"^(input|output)-[0-2]\.(xlsx|docx|pdf|png)$")
+    mime_type: str = XLSX_MIME
     size_bytes: int = Field(gt=0, le=MAX_FILE_BYTES)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
+    @model_validator(mode="after")
+    def matching_type(self):
+        if GENERATED_TYPES[Path(self.name).suffix] != self.mime_type:
+            raise ValueError("Filename and MIME type must match")
+        return self
+
     @classmethod
     def from_bytes(cls, name: str, content: bytes):
-        return cls(name=name, size_bytes=len(content), sha256=hashlib.sha256(content).hexdigest())
+        return cls(
+            name=name,
+            mime_type=GENERATED_TYPES[Path(name).suffix],
+            size_bytes=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
 
 
 class ArtifactRunRequest(StrictModel):
@@ -85,8 +119,8 @@ class ArtifactRunRequest(StrictModel):
             raise ValueError("Inspection/recalculation requires exactly one input and no code")
         if sum(item.size_bytes for item in self.inputs) > MAX_TOTAL_BYTES:
             raise ValueError("Too many input bytes")
-        if [item.name for item in self.inputs] != [
-            f"input-{i}.xlsx" for i in range(len(self.inputs))
+        if [Path(item.name).stem for item in self.inputs] != [
+            f"input-{i}" for i in range(len(self.inputs))
         ]:
             raise ValueError("Input names must be generated in sequence")
         return self
@@ -106,8 +140,8 @@ class GeneratedArtifact(StrictModel):
     def bounded(self):
         if sum(item.size_bytes for item in self.files) > MAX_TOTAL_BYTES:
             raise ValueError("Too many output bytes")
-        if [item.name for item in self.files] != [
-            f"output-{i}.xlsx" for i in range(len(self.files))
+        if [Path(item.name).stem for item in self.files] != [
+            f"output-{i}" for i in range(len(self.files))
         ]:
             raise ValueError("Output names must be generated in sequence")
         return self
@@ -178,8 +212,8 @@ def collect_outputs(
     total = 0
     for index, path in enumerate(paths):
         info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or path.suffix.lower() != ".xlsx":
-            raise ValueError("Only regular .xlsx output files are allowed")
+        if not stat.S_ISREG(info.st_mode) or path.suffix not in GENERATED_TYPES:
+            raise ValueError("Only regular supported output files are allowed")
         if not 0 < info.st_size <= max_file_bytes:
             raise ValueError("Output file exceeds size limit")
         total += info.st_size
@@ -192,7 +226,10 @@ def collect_outputs(
         result.append(
             (
                 BlobDescriptor(
-                    name=f"output-{index}.xlsx", size_bytes=info.st_size, sha256=digest.hexdigest()
+                    name=f"output-{index}{path.suffix}",
+                    mime_type=GENERATED_TYPES[path.suffix],
+                    size_bytes=info.st_size,
+                    sha256=digest.hexdigest(),
                 ),
                 path,
             )

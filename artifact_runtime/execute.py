@@ -16,10 +16,19 @@ def main():
     request = ArtifactRunRequest.model_validate_json(Path("/input/operation.json").read_bytes())
     output = Path("/output")
     report = GeneratedArtifact()
+    input_path = Path("/input") / request.inputs[0].name if request.inputs else None
     if request.action == "inspect":
-        from artifact_runtime.spreadsheet import inspect_spreadsheet
+        if input_path.suffix == ".docx":
+            from artifact_runtime.document import inspect_docx
 
-        report = inspect_spreadsheet(Path("/input/input-0.xlsx"), request=request)
+            outline = inspect_docx(
+                input_path, offset=request.preview_offset, limit=request.preview_limit
+            )
+            report = GeneratedArtifact(preview_manifest=outline.model_dump(mode="json"))
+        else:
+            from artifact_runtime.spreadsheet import inspect_spreadsheet
+
+            report = inspect_spreadsheet(input_path, request=request)
     elif request.action == "recalculate":
         from artifact_runtime.recalculation import recalculate_xlsx
 
@@ -31,8 +40,15 @@ def main():
             from artifact_runtime.spreadsheet import load_safe
 
             for item in request.inputs:
-                workbook = load_safe(Path("/input") / item.name)
-                workbook.close()
+                if item.name.endswith(".docx"):
+                    from artifact_runtime.document import load_safe_docx
+
+                    load_safe_docx(Path("/input") / item.name)
+                elif item.name.endswith(".xlsx"):
+                    workbook = load_safe(Path("/input") / item.name)
+                    workbook.close()
+                else:
+                    raise ValueError("Python input format is not supported")
         with Path("/tmp/python.log").open("wb") as logs:
             result = subprocess.run(
                 [sys.executable, "-I", "-B", "-c", request.operation.code],
@@ -48,6 +64,10 @@ def main():
             raise RuntimeError(
                 Path("/tmp/python.log").read_bytes()[-4096:].decode("utf-8", "replace")
             )
+    elif request.operation.kind in {"create_docx", "edit_docx"}:
+        from artifact_runtime.document import apply_document
+
+        report = apply_document(request.operation, input_path=input_path, output_dir=output)
     else:
         from artifact_runtime.spreadsheet import apply_spreadsheet
 
