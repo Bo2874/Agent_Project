@@ -39,6 +39,8 @@ async function send(method, params = {}) {
     await send('Runtime.enable');
     const source = fs.readFileSync(path.join(__dirname, '../frontend/static/artifact-panel.js'), 'utf8');
     await send('Runtime.evaluate', { expression: source });
+    const librarySource = fs.readFileSync(path.join(__dirname, '../frontend/static/artifact-library.js'), 'utf8');
+    await send('Runtime.evaluate', { expression: librarySource });
     const result = await send('Runtime.evaluate', { awaitPromise: true, returnByValue: true,
       expression: `(${async function () {
         const check = (value, message) => { if (!value) throw new Error(message); };
@@ -73,7 +75,33 @@ async function send(method, params = {}) {
         queue.shift().resolve(data('v1')); queue.shift().resolve(data('v2', 'other'));
         await Promise.all([first, switched]); await tick();
         check(queue.length === 0 && root.querySelector('.artifact-preview').dataset.versionId === 'v2', 'conversation switch must discard stale events');
-        panel.close(); root.remove(); return 'PASS';
+        panel.close();
+        const documentPreview = panel.open('document-version', 'chat-doc');
+        queue.shift().resolve({ ...data('v1'), version_id: 'document-version', name: '<svg onload=alert(1)>.docx',
+          mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          calculation_status: 'not_calculated', preview: { kind: 'pages', page_count: 2,
+            source_version_id: 'document-version', assets: [
+              { asset_id: 'page-one', page: 1, width: 1200, height: 1600, url: 'javascript:alert(1)' },
+              { asset_id: 'page-two', page: 2, width: 1200, height: 1600 }], warnings: ['Text-only document'] } });
+        await documentPreview; await tick();
+        const images = root.querySelectorAll('.artifact-document-page img');
+        check(images.length === 2, 'Word/PDF must render page images');
+        check(images[0].getAttribute('src') === '/api/artifact-versions/document-version/preview-assets/page-one', 'asset URLs must be built from pinned IDs');
+        check(!root.querySelector('h2 svg'), 'document names must remain text');
+        panel.close(); panel.onVersionReady(ref('new-doc'), 'chat-doc');
+        check(root.querySelector('.artifact-preview').hidden && queue.length === 0, 'document ready must not open a closed panel');
+        root.remove();
+        const chooser = document.createElement('section');
+        chooser.innerHTML = '<div data-artifact-selection><button data-working-choose>Choose</button><span data-working-count></span><div data-working-chips></div><p data-working-status></p></div>';
+        document.body.append(chooser);
+        const documents = [{ version_id: 'word', name: 'input.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', can_edit: true },
+          { version_id: 'pdf', name: 'input.pdf', mime_type: 'application/pdf', can_edit: true }];
+        const selection = window.ArtifactWorkspace.createChatPanel(chooser, { requestJson: async url => url.startsWith('/api/conversations') ? { items: [] } : { items: documents, total: 2 } });
+        await selection.setConversation('conversation');
+        chooser.querySelector('[data-working-choose]').click(); await tick();
+        const choices = [...chooser.querySelectorAll('input[type=checkbox]')];
+        check(choices.length === 2 && choices.every(input => !input.disabled), 'uploaded Word and PDF must be selectable');
+        chooser.querySelector('dialog').close(); chooser.remove(); return 'PASS';
       }.toString()})()` });
     if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
     assert.equal(result.result.value, 'PASS');

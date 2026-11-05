@@ -111,6 +111,9 @@ body:has(.workspace-shell) .ambient { display: none; }
 .artifact-preview .document-hint { font-size: 11px; }
 .artifact-sheets button[aria-pressed=true] { background: #f0eee7; color: var(--accent); }
 .artifact-grid-wrap { max-width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 8px; max-height: 52vh; }
+.artifact-document-page { margin: 18px 0; }
+.artifact-document-page figcaption { margin-bottom: 8px; }
+.artifact-document-page img { display: block; width: 100%; height: auto; background: white; border: 1px solid var(--line); box-shadow: 0 3px 12px rgb(0 0 0 / 6%); }
 .artifact-grid { border-collapse: collapse; width: 100%; font-size: 11px; table-layout: auto; }
 .artifact-grid th, .artifact-grid td { padding: 8px 10px; border: 1px solid var(--line); min-width: 65px; max-width: 260px; overflow-wrap: anywhere; vertical-align: top; text-align: left; }
 .artifact-grid th { background: #f0eee7; color: var(--muted); font-weight: 500; position: sticky; top: 0; }

@@ -18,11 +18,41 @@ from pathlib import Path
 from uuid import uuid4
 
 
+def workflow_tests(formats):
+    tests = []
+    if "xlsx" in formats:
+        tests += [
+            "tests/test_artifact_workflow.py",
+            "tests/test_artifact_api.py",
+            "tests/test_artifact_tools.py",
+            "tests/test_artifact_publication.py",
+            "tests/test_artifact_runner.py",
+            "tests/test_artifact_storage.py",
+            "tests/test_artifact_versions.py",
+        ]
+    if "docx" in formats:
+        tests += ["tests/test_document_artifacts.py", "tests/test_word_tools.py"]
+    if "pdf" in formats:
+        tests += ["tests/test_pdf_artifacts.py"]
+    if formats & {"docx", "pdf"}:
+        tests += [
+            "tests/test_artifact_bundles.py",
+            "tests/test_artifact_preview_assets.py",
+            "tests/test_document_rendering.py",
+            "tests/test_document_browser.py",
+        ]
+    return tests
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true", required=True)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--formats", default="xlsx", help="Comma-separated xlsx,docx,pdf")
     args = parser.parse_args()
+    formats = {value.strip().lower() for value in args.formats.split(",")}
+    if not formats or not formats <= {"xlsx", "docx", "pdf"}:
+        parser.error("--formats must contain only xlsx,docx,pdf")
     from sqlalchemy.engine import make_url
 
     try:
@@ -68,6 +98,8 @@ def main():
         }
         environment["ARTIFACT_GATE_RUNNER_URL"] = f"http://127.0.0.1:{port}"
         environment["ARTIFACT_GATE_RUNNER_KEY"] = environment["ARTIFACT_RUNNER_KEY"]
+        if formats & {"docx", "pdf"}:
+            environment["ARTIFACT_DOCUMENT_FORMATS"] = ",".join(sorted(formats & {"docx", "pdf"}))
         if args.report:
             args.report.parent.mkdir(parents=True, exist_ok=True)
             environment["ARTIFACT_GATE_REPORT"] = str(args.report.resolve())
@@ -161,13 +193,7 @@ def main():
                     "-p",
                     "no:cacheprovider",
                     f"--basetemp={directory}/pytest",
-                    "tests/test_artifact_workflow.py",
-                    "tests/test_artifact_api.py",
-                    "tests/test_artifact_tools.py",
-                    "tests/test_artifact_publication.py",
-                    "tests/test_artifact_runner.py",
-                    "tests/test_artifact_storage.py",
-                    "tests/test_artifact_versions.py",
+                    *workflow_tests(formats),
                 ],
                 cwd=root,
                 env=environment,

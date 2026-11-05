@@ -322,11 +322,27 @@ class ArtifactToolService:
                     context, job("preview"), stored=current, action="inspect"
                 )
             await self.check(context, tool)
+            preview = inspection.manifest.preview_manifest
+            if current.mime_type in {DOCX_MIME, PDF_MIME}:
+                from backend.services.artifacts.previews import stage_preview
+
+                async def render(stage, **kwargs):
+                    return await self.run(context, job(stage), **kwargs)
+
+                preview, pages = await stage_preview(service.storage, current, render, cleanup)
+                companions += pages
+                if request.kind == "rebuild_pdf_text_only":
+                    preview["warnings"] = [
+                        *preview.get("warnings", []),
+                        "This version was rebuilt from approved text only; "
+                        "original images/unreadable content were omitted.",
+                    ]
+                await self.check(context, tool)
             staged = ValidatedArtifact(
                 current,
                 target,
                 calculation_status=calculation.status,
-                preview_manifest=inspection.manifest.preview_manifest,
+                preview_manifest=preview,
                 companion_sources=[{"role": "operation_fingerprint", "sha256": fingerprint}],
                 source_run_id=context.run_id,
                 companions=companions,

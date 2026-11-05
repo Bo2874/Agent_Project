@@ -125,7 +125,9 @@ class BlobDescriptor(StrictModel):
 
 class ArtifactRunRequest(StrictModel):
     job_id: UUID
-    action: Literal["execute", "inspect", "recalculate"] = "execute"
+    action: Literal["execute", "inspect", "recalculate", "render_document", "render_pages"] = (
+        "execute"
+    )
     operation: ArtifactOperation | None = None
     inputs: tuple[BlobDescriptor, ...] = Field(default=(), max_length=3)
     preview_sheet: str | None = Field(default=None, max_length=31)
@@ -137,6 +139,15 @@ class ArtifactRunRequest(StrictModel):
 
     @model_validator(mode="after")
     def valid_request(self):
+        suffix = Path(self.inputs[0].name).suffix if self.inputs else None
+        if self.action == "render_document" and suffix != ".docx":
+            raise ValueError("Writer preview requires a DOCX input")
+        if self.action == "render_pages" and (
+            suffix not in {".docx", ".pdf"} or self.preview_limit > 3
+        ):
+            raise ValueError("Page rendering requires Word/PDF and at most three pages")
+        if self.action == "recalculate" and suffix != ".xlsx":
+            raise ValueError("Recalculation requires an XLSX input")
         if self.action == "execute" and self.operation is None:
             raise ValueError("Execution requires an operation")
         if self.action != "execute" and (self.operation is not None or len(self.inputs) != 1):

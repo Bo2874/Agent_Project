@@ -101,9 +101,14 @@ class PrivacyPolicy:
                     filtered["selected_artifacts"] = [
                         {
                             "name": clean(item["name"].strip())[:255],
-                            "type": "xlsx"
-                            if item["name"].lower().endswith(".xlsx")
-                            else "source_copy",
+                            "type": next(
+                                (
+                                    extension
+                                    for extension in ("xlsx", "docx", "pdf")
+                                    if item["name"].lower().endswith("." + extension)
+                                ),
+                                "source_copy",
+                            ),
                         }
                         for item in artifacts[:40]
                         if isinstance(item, dict)

@@ -2029,3 +2029,19 @@
 - [Hồ sơ gộp](docs/acceptance/2026-11-05-workspace-main-merge.md).
   Không bật runtime hoặc migrate DB đang dùng. Phần phát triển tiếp theo là Plan02: Word → PDF văn bản → preview/render QA;
   sau đó Google Connectors rồi Automations. OCR/ảnh vẫn ngoài phạm vi đã chốt.
+
+### 2026-11-05 — Plan02: Word, PDF text và preview
+
+- Triển khai trên `feat/workspace-documents`, worktree riêng, base `34fd73c`; D1 commit `80e86a7`,
+  D2 commit `6e8be4b`. Chưa gộp main hoặc push; `.env` và dịch vụ đang dùng không thay đổi.
+- Word có blocks/outline theo hash input, chỉnh sửa có cấu trúc và giữ phần không sửa. Từ chối
+  ảnh/field/footnote/revision/external relationship trước khi xử lý; Python cùng preflight.
+- PDF có text coverage, chunk đọc tiếp trong trang dài, nguồn DOCX theo đúng phiên bản parent;
+  PDF hỗn hợp cần duyệt phạm vi text. Primary/source/preview cùng quota và commit nguyên tử.
+- Preview Writer/Poppler theo owner/version/asset, chỉ PNG; panel mở khi chọn, giữ đóng khi có output.
+  Mẫu 75 hàng/3 trang tiếng Việt đã kiểm tra ảnh từng trang, không mất chữ/cắt hàng.
+- Browser queue/worker/checkpoint thật với model fixture đã qua tạo/sửa/upload/chọn file,
+  xem bản cũ, PDF reflow và desktop/mobile. Gate offline Word/PDF đạt 34 tests;
+  full suite đạt 1.184 tests, 2 skips trên Windows (1.196,32 giây). Đang review cuối.
+- [Hồ sơ nghiệm thu](docs/acceptance/2026-11-05-workspace-documents.md),
+  [giới hạn và vận hành](docs/manual-artifacts.md). Live provider chưa chạy; Google/Automations chưa triển khai.

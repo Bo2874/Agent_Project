@@ -352,7 +352,8 @@ async def test_resume_rejects_changed_catalog_before_model_or_tools(registry, co
     assert model.requests == [] and registry.calls == []
 
 
-async def test_resume_preserves_pre_artifact_jev_policy(registry, context):
+@pytest.mark.parametrize("policy_version", ["jev_query2.1.3", "jev_query2.1.4"])
+async def test_resume_preserves_pre_artifact_jev_policy(registry, context, policy_version):
     from agent_core.graph import build_agent_graph
 
     class UnavailableDecisionProvider:
@@ -364,7 +365,7 @@ async def test_resume_preserves_pre_artifact_jev_policy(registry, context):
     config = agent_checkpoint_config(context.run_id)
     state = await graph.aget_state(config)
     saved = dict(state.values["routing_decision"])
-    saved.update(provider="jev", policy_version="jev_query2.1.3")
+    saved.update(provider="jev", policy_version=policy_version)
     await graph.aupdate_state(config, {"routing_decision": saved})
     model = Model()
     items = await collect(
@@ -376,7 +377,7 @@ async def test_resume_preserves_pre_artifact_jev_policy(registry, context):
         decision_provider=UnavailableDecisionProvider(),
         routing_flags=FeatureFlags(),
     )
-    assert items[0].route == "chat" and items[0].policy_version == "jev_query2.1.3"
+    assert items[0].route == "chat" and items[0].policy_version == policy_version
     assert len(model.requests) == 1 and model.requests[0][1] is None
 
 

@@ -1,6 +1,6 @@
 # Workspace 02 — Word và PDF Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Mở rộng Artifact foundation đã nghiệm thu để tạo/sửa DOCX và PDF có văn bản qua chat.
 
@@ -62,11 +62,11 @@ Mở rộng operation kind bằng `create_docx`, `edit_docx`, `rebuild_pdf`; `pa
 
 **Interfaces:** `render_version(source: Path, *, mime_type: str, output_dir: Path) -> PreviewManifest`; `GET /api/artifact-versions/{id}/preview-assets/{asset_id}` theo owner, không nhận arbitrary path. Manifest có page count, asset IDs, checksum/source version ID.
 
-- [ ] Red `test_preview_assets_cannot_cross_owner_or_version` asserts 404; `test_render_failure_does_not_publish_incomplete_bundle` asserts không version “hoàn tất” với source/preview dở; `test_preview_content_is_safe` asserts HTML/SVG active không được phục vụ như inline user content.
-- [ ] Implement DOCX→PDF preview bằng Writer, PDF→page PNG bằng Poppler trong renderer profile có giới hạn; cache theo version/hash, không tên file. Xóa preview qua cleanup chung chỉ khi không còn tham chiếu.
-- [ ] Green tests và `python -m scripts.check_artifact_workflow --offline --formats docx,pdf`. Render fixture heading dài, bảng 3 trang, dấu tiếng Việt; xem ảnh từng trang để sửa overflow, font lỗi, bảng cắt và thiếu nội dung.
-- [ ] Browser với worker thật/model fixture: tạo DOCX, sửa file đưa vào, xem bản cũ, xuất PDF mới/reflow; panel đóng vẫn đóng khi nhận output. Chạy regression toàn suite/Ruff/JS/Compose/diff theo roadmap.
-- [ ] Ghi giới hạn định dạng/coverage, số đo renderer và bằng chứng QA; commit `feat: preview and verify word pdf artifact versions`.
+- [x] Red `test_preview_assets_cannot_cross_owner_or_version` asserts 404; `test_render_failure_does_not_publish_incomplete_bundle` asserts không version “hoàn tất” với source/preview dở; `test_preview_content_is_safe` asserts HTML/SVG active không được phục vụ như inline user content.
+- [x] Implement DOCX→PDF preview bằng Writer, PDF→page PNG bằng Poppler trong renderer profile có giới hạn; cache theo version/hash, không tên file. Xóa preview qua cleanup chung chỉ khi không còn tham chiếu.
+- [x] Green tests và `python -m scripts.check_artifact_workflow --offline --formats docx,pdf`. Render fixture heading dài, bảng 3 trang, dấu tiếng Việt; xem ảnh từng trang để sửa overflow, font lỗi, bảng cắt và thiếu nội dung.
+- [x] Browser với worker thật/model fixture: tạo DOCX, sửa file đưa vào, xem bản cũ, xuất PDF mới/reflow; panel đóng vẫn đóng khi nhận output. Chạy regression toàn suite/Ruff/JS/Compose/diff theo roadmap.
+- [x] Ghi giới hạn định dạng/coverage, số đo renderer và bằng chứng QA; commit `feat: preview and verify word pdf artifact versions`.
 
 ## Điều kiện chuyển plan 03
 

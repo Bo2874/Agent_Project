@@ -122,6 +122,7 @@ async def upload_artifact(
         max_bytes=service.max_file_bytes,
     )
     publication_started = False
+    cleanup = {stored.key}
     try:
         settings = get_settings()
         if extension != ".pdf":
@@ -146,12 +147,37 @@ async def upload_artifact(
                 cancel=cancel,
             )
         await cancel()
+        preview = report.manifest.preview_manifest
+        companions = ()
+        if extension in {".docx", ".pdf"}:
+            from backend.services.artifacts.previews import stage_preview
+
+            async def render(stage, *, stored, action, **kwargs):
+                with service.storage.path(stored.key).open("rb") as source:
+                    input = ArtifactInput(
+                        "input-0" + service.storage.path(stored.key).suffix,
+                        stored.mime_type,
+                        stored.size_bytes,
+                        stored.sha256,
+                        source,
+                    )
+                    return await runner_client(service, user.id).execute(
+                        ArtifactRunRequest(
+                            job_id=uuid4(), action=action, inputs=(input.descriptor(),), **kwargs
+                        ),
+                        (input,),
+                        cancel=cancel,
+                    )
+
+            preview, companions = await stage_preview(service.storage, stored, render, cleanup)
+        await cancel()
         staged = ValidatedArtifact(
             stored=stored,
             name=name,
             origin="upload",
             calculation_status=report.manifest.calculation.status,
-            preview_manifest=report.manifest.preview_manifest,
+            preview_manifest=preview,
+            companions=companions,
         )
         publication_started = True
         return await service.publish_version(
@@ -170,7 +196,8 @@ async def upload_artifact(
         raise HTTPException(422, str(error)[-1000:]) from error
     finally:
         if not publication_started:
-            await asyncio.to_thread(service.storage.delete, stored.key)
+            for key in cleanup:
+                await asyncio.to_thread(service.storage.delete, key)
 
 
 @router.post("/api/artifacts/import-document", response_model=PublishedArtifact, status_code=201)
@@ -395,6 +422,37 @@ async def preview_artifact(
         "preview": manifest,
         "source_conversation_id": str(conversation) if conversation else None,
     }
+
+
+@router.get("/api/artifact-versions/{version_id}/preview-assets/{asset_id}")
+async def preview_asset(
+    version_id: UUID, asset_id: UUID, session: DbSession, user: CurrentUser, service: Service
+):
+    row = await service.open_owned_version(session, user.id, version_id)
+    records = [
+        item
+        for item in row.companion_sources
+        if item.get("role") == "preview_page"
+        and item.get("asset_id") == str(asset_id)
+        and item.get("version_id") == str(row.id)
+    ]
+    if len(records) != 1:
+        raise HTTPException(404, "Preview asset not found.")
+    item = records[0]
+    if item.get("mime_type") != "image/png" or item["storage_key"].split("/", 1)[0] != str(user.id):
+        raise HTTPException(404, "Preview asset not found.")
+    path = service.storage.path(item["storage_key"])
+    if not path.is_file():
+        raise HTTPException(404, "Preview asset not found.")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
 
 
 @router.get("/api/conversations/{conversation_id}/artifacts")

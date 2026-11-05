@@ -124,6 +124,14 @@ router = APIRouter(prefix="/api/conversations", tags=["chat"])
 logger = logging.getLogger(__name__)
 
 
+def chat_tool_selection_config(settings):
+    return ToolSelectionConfig(
+        lazy_load_threshold=settings.tool_lazy_load_threshold,
+        max_loaded_tools=settings.tool_max_loaded,
+        schema_token_budget=10000 if settings.workspace_artifacts_enabled else 6000,
+    )
+
+
 def sse_event(event: str, data: dict[str, object]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -1124,10 +1132,7 @@ async def resume_agent_run(
         max_repeated_observations=settings.agent_max_repeated_observations,
     )
     context_budget = settings.context_budget
-    tool_selection_config = ToolSelectionConfig(
-        lazy_load_threshold=settings.tool_lazy_load_threshold,
-        max_loaded_tools=settings.tool_max_loaded,
-    )
+    tool_selection_config = chat_tool_selection_config(settings)
     skill_selection_config = SkillSelectionConfig(
         minimum_score=settings.skill_selection_min_score,
         ambiguity_margin=settings.skill_selection_ambiguity_margin,
@@ -1235,10 +1240,7 @@ async def post_message(
         max_repeated_observations=settings.agent_max_repeated_observations,
     )
     context_budget = settings.context_budget
-    tool_selection_config = ToolSelectionConfig(
-        lazy_load_threshold=settings.tool_lazy_load_threshold,
-        max_loaded_tools=settings.tool_max_loaded,
-    )
+    tool_selection_config = chat_tool_selection_config(settings)
     skill_selection_config = SkillSelectionConfig(
         minimum_score=settings.skill_selection_min_score,
         ambiguity_margin=settings.skill_selection_ambiguity_margin,

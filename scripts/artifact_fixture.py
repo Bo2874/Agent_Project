@@ -28,16 +28,83 @@ class OfflineArtifactModel:
         pass
 
     async def stream(self, messages, tools=None, **kwargs):
+        query = next(
+            message["content"] for message in reversed(messages) if message["role"] == "user"
+        )
+        document_format = re.search(r"\b(docx|pdf)\b", query, re.I)
+        if document_format and tools:
+            format = document_format.group(1).lower()
+            match = re.search(r"edit\s+([0-9a-f-]{36})", query)
+            latest = messages[-1]
+            name, call_id, args = None, "artifact-fixture-1", None
+            if latest.get("role") == "tool":
+                if latest.get("tool_call_id") == "artifact-fixture-inspect":
+                    observation = json.loads(latest["content"])
+                    outline = json.loads(observation["content"])
+                    node = next(
+                        item
+                        for item in outline["nodes"]
+                        if item["kind"] in {"heading", "paragraph"} and item["text"]
+                    )
+                    name, args = (
+                        "artifact_edit",
+                        {
+                            "format": format,
+                            "parent_version_id": match.group(1),
+                            "payload": {
+                                "operations": [
+                                    {
+                                        "kind": "replace_text",
+                                        "node_id": node["node_id"],
+                                        "old": node["text"],
+                                        "new": "Báo cáo đã sửa",
+                                    }
+                                ]
+                            },
+                        },
+                    )
+            elif match:
+                name, call_id, args = (
+                    "artifact_inspect",
+                    "artifact-fixture-inspect",
+                    {"version_id": match.group(1)},
+                )
+            else:
+                name, args = (
+                    "artifact_create",
+                    {
+                        "format": format,
+                        "name": "fixture-report." + format,
+                        "payload": {
+                            "blocks": [
+                                {"kind": "heading", "text": "Báo cáo mẫu", "level": 1},
+                                {"kind": "paragraph", "text": "Nội dung tiếng Việt từ worker."},
+                                {"kind": "table", "rows": [["Mục", "Giá trị"], ["Sách", "15"]]},
+                            ]
+                        },
+                    },
+                )
+            if name:
+                yield LLMChunk(
+                    tool_call_deltas=(
+                        LLMToolCallDelta(
+                            index=0,
+                            id=call_id,
+                            name=name,
+                            arguments=json.dumps(args, ensure_ascii=False),
+                        ),
+                    ),
+                    finish_reason="tool_calls",
+                    usage=TokenUsage(prompt_tokens=20, completion_tokens=10, total_tokens=30),
+                )
+                return
         if any(message.get("role") == "tool" for message in messages) or not tools:
             yield LLMChunk(
-                content="Saved a verified Excel version.",
+                content="Saved a verified file version.",
                 finish_reason="stop",
                 usage=TokenUsage(prompt_tokens=20, completion_tokens=10, total_tokens=30),
             )
             return
-        query = next(
-            message["content"] for message in reversed(messages) if message["role"] == "user"
-        )
         match = re.search(r"edit\s+([0-9a-f-]{36})", query)
         operations = [
             {

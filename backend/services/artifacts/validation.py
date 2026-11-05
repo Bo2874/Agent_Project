@@ -1,6 +1,7 @@
 """Envelope validation only. Office content parsing runs in isolated containers."""
 
 import stat
+import struct
 import unicodedata
 import zipfile
 from dataclasses import dataclass, field
@@ -54,6 +55,17 @@ def validate_archive(path: Path, *, max_unpacked_bytes=104857600, max_entries=20
                 names.add(name)
     except (zipfile.BadZipFile, OSError, NotImplementedError) as error:
         raise ArtifactStorageError("Invalid .xlsx archive.") from error
+
+
+def validate_preview_png(path: Path):
+    with path.open("rb") as source:
+        header = source.read(24)
+    if len(header) != 24 or header[:8] != b"\x89PNG\r\n\x1a\n" or header[12:16] != b"IHDR":
+        raise ArtifactStorageError("Invalid PNG preview asset")
+    width, height = struct.unpack("!II", header[16:24])
+    if not 1 <= width <= 1600 or not 1 <= height <= 1600:
+        raise ArtifactStorageError("PNG preview dimensions exceed limits")
+    return width, height
 
 
 @dataclass(frozen=True)

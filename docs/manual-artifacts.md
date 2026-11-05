@@ -1,11 +1,11 @@
-# File làm việc: Excel
+# File làm việc: Excel, Word và PDF văn bản
 
-Giai đoạn này triển khai giao diện A và Excel. Word/PDF, Google Workspace và lịch tự động
+Giao diện A hỗ trợ file Excel, Word và PDF có văn bản. Google Workspace và lịch tự động
 thuộc các kế hoạch tiếp theo. `.env` thật không được thay đổi trong quá trình triển khai.
 
 ## Sử dụng
 
-1. Mở **File làm việc** hoặc tab **File làm việc** trong Thư viện, tải `.xlsx` lên.
+1. Mở **File làm việc** hoặc tab **File làm việc** trong Thư viện, tải `.xlsx`, `.docx` hoặc PDF có văn bản lên.
    Không cần index RAG; file có thể được chọn ngay sau khi kiểm tra định dạng.
 2. Trong chat, bấm **＋ File làm việc**, chọn phiên bản rồi lưu lựa chọn. Phiên bản được ghim;
    bản sửa mới không tự thay input. Mỗi hội thoại chọn tối đa 20 phiên bản.
@@ -21,7 +21,8 @@ Tên file/công thức hiển thị như văn bản; download luôn dùng ID phi
 
 Thư viện RAG cũ tiếp tục dùng cho hỏi đáp nguồn. **Lưu bản sao làm việc** sao chép nguyên
 bytes DOCX/PDF/TXT sang kho độc lập, kể cả nguồn chưa index. Xóa nguồn không xóa bản sao.
-Các bản sao này hiện quản lý/tải xuống được; bộ xử lý Word/PDF thuộc kế hoạch 02.
+Các bản sao nguồn giữ nguyên bytes và có thể tải xuống. Bản sao cũ chưa có preview trang;
+yêu cầu sửa trong chat để tạo phiên bản mới có preview. Nội dung chưa hỗ trợ được báo lỗi rõ ràng.
 
 ## Phạm vi Excel
 
@@ -35,6 +36,35 @@ Các bản sao này hiện quản lý/tải xuống được; bộ xử lý Word
   Upload đơn thuần không xác nhận cache còn mới.
 - Preview tối đa 512 ô/512 KiB, 100 cột; text rút gọn 256 ký tự. Biểu đồ preview tối đa
   4 chart, 6 series/chart, 100 điểm/series. Download giữ dữ liệu đầy đủ.
+
+## Phạm vi Word và PDF
+
+- Tạo Word với heading, đoạn văn, danh sách, bảng; sửa text theo node ID gắn với đúng hash
+  của bản đầu vào, chỉnh style/cỡ chữ/bold/italic/alignment và ô bảng, thêm các block cuối tài liệu.
+  Các run/bảng/style không bị sửa được giữ lại; bản gốc và các nhánh sửa vẫn tải xuống riêng được.
+- Word có ảnh/drawing, embedded objects, external relationships, hyperlink, footnote/endnote,
+  comments, track changes, fields hoặc content controls chưa được hỗ trợ và bị từ chối trước sửa.
+  Python cho Word cũng qua cùng preflight, chạy cách ly và cần duyệt như Excel.
+- PDF được đọc theo trang và dựng lại từ nội dung mong muốn, không cam kết giữ bố cục trang gốc.
+  PDF mới giữ kèm DOCX của chính phiên bản đó. Sửa theo node ID luôn dùng nguồn của parent đã chọn,
+  không lấy nguồn của phiên bản mới nhất ở nhánh khác.
+- Không OCR. PDF không có text trả `unsupported_scanned_pdf`. Với trang có ảnh hoặc không đọc được
+  text, inspect báo coverage/omitted pages; dựng lại chỉ phần text phải qua tool
+  `artifact_rebuild_pdf_text_only` và bước duyệt đúng file, nội dung, danh sách trang bị ảnh hưởng.
+  PDF mã hóa, form, annotation, script và attachment chưa hỗ trợ. Bookmark/đích điều hướng trang
+  thông thường do Writer tạo được chấp nhận.
+- PDF tối đa 20 trang, 20 MiB; stream giải nén tối đa 8 MiB/trang, 32 MiB/tài liệu, text tối đa
+  200.000 ký tự/trang và 400.000/tài liệu. Trang dài đọc tiếp bằng `limit=1`, page `offset`
+  và `text_offset=next_text_offset`; cảnh báo cắt preview không có nghĩa đã đọc hết nguồn.
+- Preview Word/PDF dùng Writer và Poppler trong renderer cách ly, tối đa 20 trang, PNG cạnh dài
+  1.600 pixel. Tất cả trang phải hoàn thành trước khi công bố phiên bản; lỗi render không để lại
+  một output được báo thành công thiếu preview. Tài liệu vượt giới hạn bị từ chối rõ ràng.
+- Preview dùng đúng owner/version/asset UUID, chỉ phục vụ PNG, không HTML/SVG. Đóng panel vẫn giữ
+  đóng khi có output mới. Không có trình sửa trực tiếp; người dùng yêu cầu sửa qua chat.
+- PDF, nguồn DOCX và ảnh preview lưu nguyên tử, cùng tính quota; orphan cleanup giữ cả bộ đã commit,
+  kể cả trường hợp mất phản hồi commit. Bật Artifacts dùng allowance schema tool 10.000 token
+  (catalog tài liệu khoảng 6.200); tắt Artifacts giữ 6.000. Đây là phần ngữ cảnh schema, không phải
+  một giới hạn ngân sách chạy tác vụ mới.
 
 ## Khởi động
 
@@ -64,13 +94,13 @@ Local Windows chạy broker qua loopback; web/worker dùng chung private artifac
 
 Host Python dùng `WORKSPACE_ARTIFACTS_ENABLED`, `ARTIFACT_RUNNER_URL`, `ARTIFACT_RUNNER_KEY`,
 `ARTIFACT_STORAGE_PATH`. Với allowlist tùy chỉnh, thêm `artifact_inspect`, `artifact_create`,
-`artifact_edit`, `run_artifact_python`. Restart cả web và worker sau khi đổi cấu hình/code.
+`artifact_edit`, `run_artifact_python`, `artifact_rebuild_pdf_text_only`. Restart cả web và worker sau khi đổi cấu hình/code.
 ReAct hỗ trợ vòng làm việc nhiều bước; routing nhận metadata file làm việc riêng nguồn RAG.
 Google/Automations và Workspace Artifacts mặc định tắt cho đến khi người vận hành bật.
 
 ## Giới hạn và phục hồi
 
-Mặc định 20 MiB/file, 200 MiB/user (tính cả bản cũ); binary transport tối đa 40 MiB.
+Mặc định 20 MiB/file, 200 MiB/user (tính cả bản cũ, nguồn kèm và preview); binary transport tối đa 40 MiB/lượt.
 Chưa có thao tác xóa phiên bản để giải phóng quota. Orphan cleanup chỉ dọn dữ liệu không còn
 tham chiếu, không xóa version đã lưu. Khi chạm quota, cần người vận hành tăng quota/dung lượng
 theo cấu hình; thiết kế retention/xóa có kiểm soát sẽ được làm riêng.
@@ -121,6 +151,7 @@ thiếu hạ tầng phải báo NOT RUN, không coi mock là nghiệm thu.
 ```powershell
 $env:ARTIFACT_TEST_DATABASE_URL='postgresql+asyncpg://test_user:test_password@127.0.0.1:5432/artifacts_test'
 python -m scripts.check_artifact_workflow --offline --report artifact-acceptance.json
+python -m scripts.check_artifact_workflow --offline --formats docx,pdf --report document-acceptance.json
 ```
 
 Gate hard-kill/restart broker, hard-crash worker sau publish, resume bằng queue/checkpoint
@@ -129,6 +160,11 @@ workbook 10.000×12 có hai sheet/công thức/biểu đồ và hai child cùng 
 lấy mẫu, thời gian và kích thước; không gọi là peak chính xác. Live model/provider quality
 chưa được kiểm bởi gate này; chỉ chạy khi người dùng yêu cầu riêng. Browser QA kiểm UI A
 cùng worker thật và model fixture.
+
+`--formats docx,pdf` chạy kiểm tra Word/PDF, bundle/preview/owner, mẫu tiếng Việt ba trang và
+trình duyệt với queue/worker/checkpoint thật. Cần Node và Chrome (`CHROME_PATH` nếu khác mặc định).
+Không thay việc kiểm tra chất lượng với provider thật. Ảnh và số đo mẫu:
+[nghiệm thu tài liệu](acceptance/2026-11-05-documents/renderer.json).
 
 Kiểm thử hồi quy race preview bằng component thật trong Chrome headless:
 

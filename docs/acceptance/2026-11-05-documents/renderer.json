@@ -1,0 +1,14 @@
+{
+  "page_count": 3,
+  "rows": 75,
+  "elapsed_seconds": 18.344,
+  "pdf_sha256": "e9f5982c9ea2b3c047faeb1e57b278438a1720f7a3d8c9b4501b26d1a8c9491b",
+  "writer": {
+    "container_peak_bytes": 195710976,
+    "elapsed_ms": 4050
+  },
+  "poppler": {
+    "container_peak_bytes": 43601920,
+    "elapsed_ms": 2792
+  }
+}

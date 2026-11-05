@@ -1,6 +1,7 @@
 /* Private working files. Selection pins a version; upload never starts RAG. */
 (() => {
   const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const editableFile = item => item.can_edit !== false && [XLSX, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/pdf'].includes(item.mime_type);
   const node = (tag, className = "", text = "") => {
     const element = document.createElement(tag);
     element.className = className;
@@ -67,7 +68,7 @@
         const open = window.ArtifactWorkspace?.onOpen;
         description.append(open ? action(item.name, () => open(item.version_id, "library"), "artifact-name-button") : node("strong", "", item.name));
         description.append(node("p", "document-hint", `${sourceLabel(item.origin)} · v${item.version_number} · ${sizeLabel(item.size_bytes)}`));
-        if (!item.can_edit) description.append(node("p", "document-hint", "Bản sao nguồn được giữ nguyên. Chỉnh sửa Word/PDF sẽ có ở giai đoạn tiếp theo."));
+        if (!item.can_edit) description.append(node("p", "document-hint", "Bản sao nguồn được giữ nguyên để tải xuống. Định dạng hoặc cấu trúc này chưa hỗ trợ chỉnh sửa."));
         const download = node("a", "ghost-button", "Tải xuống");
         download.href = `/api/artifact-versions/${encodeURIComponent(item.version_id)}/download`;
         const actions = node("div", "document-card-actions"); actions.append(download);
@@ -100,7 +101,7 @@
       busy = true; controls();
       try {
         for (const file of input.files) {
-          if (!/\.xlsx$/i.test(file.name)) throw new Error("Hiện chỉ tải lên Excel .xlsx.");
+          if (!/\.(xlsx|docx|pdf)$/i.test(file.name)) throw new Error("Chọn Excel .xlsx, Word .docx hoặc PDF có văn bản.");
           if (file.size > 20971520) throw new Error("File vượt giới hạn 20 MiB.");
           message(`Đang lưu và kiểm tra ${file.name}…`);
           const body = new FormData(); body.append("file", file);
@@ -184,19 +185,19 @@
         const row = node("label", "document-picker-item");
         const checkbox = node("input"); checkbox.type = "checkbox"; checkbox.value = item.version_id;
         checkbox.checked = draft.has(item.version_id);
-        const editable = item.mime_type === XLSX;
+        const editable = editableFile(item);
         checkbox.dataset.editable = String(editable);
         checkbox.disabled = busy || externalDisabled || !editable;
         checkbox.addEventListener("change", () => { if (checkbox.checked) draft.add(item.version_id); else draft.delete(item.version_id); controls(); });
         const text = node("span"); text.append(node("strong", "", item.name));
-        text.append(node("small", "document-hint", editable ? `v${item.version_number || "đã chọn"} · ${sizeLabel(item.size_bytes)}` : "Bản sao nguồn; hiện chỉ chỉnh sửa Excel"));
+        text.append(node("small", "document-hint", editable ? `v${item.version_number || "đã chọn"} · ${sizeLabel(item.size_bytes)}` : "Định dạng hoặc cấu trúc chưa hỗ trợ chỉnh sửa"));
         row.append(checkbox, text); list.append(row);
       }
-      if (!merged.size) list.append(node("p", "document-empty", "Chưa có file phù hợp. Tải Excel tại thư viện hoặc yêu cầu Agent tạo file."));
+      if (!merged.size) list.append(node("p", "document-empty", "Chưa có file phù hợp. Tải Excel, Word hoặc PDF văn bản tại thư viện hoặc yêu cầu Agent tạo file."));
       page.textContent = total ? `${offset + 1}–${Math.min(offset + 20, total)} / ${total}` : "0 file";
       controls();
       list.querySelectorAll("input[type=checkbox]").forEach(input => {
-        const item = merged.get(input.value); input.disabled = busy || externalDisabled || item.mime_type !== XLSX;
+        const item = merged.get(input.value); input.disabled = busy || externalDisabled || !editableFile(item);
       });
     }
     async function loadPicker() {

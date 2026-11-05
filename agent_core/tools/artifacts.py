@@ -22,7 +22,7 @@ class CreateInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, max_length=255)
     format: Literal["xlsx", "docx", "pdf"] = "xlsx"
-    payload: SpreadsheetPlan | DocumentBlocks | DocumentEdits
+    payload: SpreadsheetPlan | DocumentBlocks
 
     @model_validator(mode="after")
     def matching_payload(self):
@@ -43,6 +43,7 @@ class CreateInput(BaseModel):
 class EditInput(CreateInput):
     name: str | None = Field(default=None, max_length=255)
     parent_version_id: UUID
+    payload: SpreadsheetPlan | DocumentBlocks | DocumentEdits
 
 
 class InspectInput(BaseModel):

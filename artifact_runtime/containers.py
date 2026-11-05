@@ -340,7 +340,7 @@ class DockerBroker:
                     output=root / "intake.log",
                     deadline=15,
                 )
-                render = request.action == "recalculate" or (
+                render = request.action in {"recalculate", "render_document", "render_pages"} or (
                     request.operation
                     and request.operation.kind in {"rebuild_pdf", "rebuild_pdf_text_only"}
                 )

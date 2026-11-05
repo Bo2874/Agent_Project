@@ -453,7 +453,7 @@ async def run_agent_graph_stream(
             ) or (
                 routing_decision.provider == "jev"
                 and routing_decision.policy_version
-                in {QUERY_POLICY_VERSION, "jev_query2.1.3", "jev_query2.0.0"}
+                in {QUERY_POLICY_VERSION, "jev_query2.1.4", "jev_query2.1.3", "jev_query2.0.0"}
                 and decision_provider is not None
             )
             if (

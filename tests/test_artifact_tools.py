@@ -226,3 +226,37 @@ def test_file_task_routes_to_tools_not_rag_only():
     assert "artifact_edit" in request.instructions
     prepared, _ = PrivacyPolicy().prepare(request)
     assert json.loads(prepared.state)["selected_artifacts"][0]["name"] == "budget.xlsx"
+
+
+@pytest.mark.parametrize("extension", ["docx", "pdf"])
+def test_working_document_routing_keeps_its_type(extension):
+    from agent_core.routing.policy import PrivacyPolicy
+    from agent_core.routing.query_router import build_query_request
+
+    request = build_query_request(
+        [{"role": "user", "content": "Edit this document"}],
+        selected_artifacts=[{"name": "report." + extension}],
+    )
+    prepared, _ = PrivacyPolicy().prepare(request)
+    assert json.loads(prepared.state)["selected_artifacts"][0]["type"] == extension
+
+
+def test_workspace_catalog_fits_chat_schema_allowance():
+    from types import SimpleNamespace
+
+    from agent_core.tools.selector import ToolSelector
+    from backend.routes.chat import chat_tool_selection_config
+
+    settings = SimpleNamespace(
+        workspace_artifacts_enabled=True, tool_lazy_load_threshold=8, tool_max_loaded=4
+    )
+    registry = ToolRegistry()
+    register_artifact_tools(registry, object())
+    names = tuple(tool.name for tool in registry.list_tools())
+    config = chat_tool_selection_config(settings)
+    selected = ToolSelector(config).fit(
+        registry, "user", names, mode="all", required=names, max_tools=len(names)
+    )
+    assert selected.loaded_names == frozenset(names)
+    settings.workspace_artifacts_enabled = False
+    assert chat_tool_selection_config(settings).schema_token_budget == 6000

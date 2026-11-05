@@ -12,7 +12,11 @@ from backend.models import AgentRun, Conversation, DocumentVersion, User
 from backend.models.artifact import Artifact, ArtifactVersion
 from backend.schemas.artifact import PublishedArtifact
 from backend.services.artifacts.storage import MIME_TYPES, ArtifactStorage, ArtifactStorageError
-from backend.services.artifacts.validation import ValidatedArtifact, validate_name
+from backend.services.artifacts.validation import (
+    ValidatedArtifact,
+    validate_name,
+    validate_preview_png,
+)
 
 logger = logging.getLogger(__name__)
 BINARY_ROLES = {"editable_source", "preview_pdf", "preview_page"}
@@ -142,6 +146,10 @@ class ArtifactService:
                 await asyncio.to_thread(
                     self.storage.verify, companion.stored, max_bytes=self.max_file_bytes
                 )
+                if companion.role == "preview_page":
+                    await asyncio.to_thread(
+                        validate_preview_png, self.storage.path(companion.stored.key)
+                    )
             if len(set(identities)) != len(identities) or len(owned_keys) != 1 + len(
                 staged.companions
             ):
@@ -248,6 +256,18 @@ class ArtifactService:
             ):
                 raise ArtifactStorageError("Artifact storage quota exceeded.", 413)
             version_id = uuid4()
+            preview = staged.preview_manifest
+            if preview.get("kind") == "pages":
+                pages = [item for item in staged.companions if item.role == "preview_page"]
+                if (
+                    preview.get("source_sha256") != staged.stored.sha256
+                    or sorted(item.page for item in pages)
+                    != list(range(1, preview.get("page_count", 0) + 1))
+                    or {str(item.asset_id) for item in pages}
+                    != {item.get("asset_id") for item in preview.get("assets", [])}
+                ):
+                    raise ArtifactStorageError("Incomplete preview version bundle")
+                preview = {**preview, "source_version_id": str(version_id)}
             row = ArtifactVersion(
                 id=version_id,
                 artifact_id=artifact.id,
@@ -265,7 +285,7 @@ class ArtifactService:
                 source_document_version_id=staged.source_document_version_id,
                 source_run_id=staged.source_run_id,
                 calculation_status=staged.calculation_status,
-                preview_manifest=staged.preview_manifest,
+                preview_manifest=preview,
                 companion_sources=staged.companion_sources
                 + [item.record(version_id) for item in staged.companions],
             )

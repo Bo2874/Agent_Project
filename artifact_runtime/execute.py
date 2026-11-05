@@ -34,6 +34,22 @@ def main():
             from artifact_runtime.spreadsheet import inspect_spreadsheet
 
             report = inspect_spreadsheet(input_path, request=request)
+    elif request.action == "render_document":
+        from artifact_runtime.rendering import export_docx_pdf
+
+        metrics = export_docx_pdf(input_path, output / "output-0.pdf")
+        report = GeneratedArtifact(preview_manifest={"render_metrics": metrics})
+    elif request.action == "render_pages":
+        from artifact_runtime.rendering import render_version
+
+        preview = render_version(
+            input_path,
+            mime_type=request.inputs[0].mime_type,
+            output_dir=output,
+            offset=request.preview_offset,
+            limit=request.preview_limit,
+        )
+        report = GeneratedArtifact(preview_manifest=preview.model_dump(mode="json"))
     elif request.action == "recalculate":
         from artifact_runtime.recalculation import recalculate_xlsx
 

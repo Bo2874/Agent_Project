@@ -1,0 +1,17 @@
+{
+  "formats": [
+    "docx",
+    "pdf"
+  ],
+  "checks": [
+    "Word create/edit, upload/select/edit, pinned original and old-version preview",
+    "PDF create/reflow/edit, exact-version page assets, mobile dialog and closed-panel behavior"
+  ],
+  "docx_original": "56b4bea7-3fe6-4143-954b-f8d1103f2c5a",
+  "docx_revised": "aefd0069-7ffd-42a2-97f5-6d3d2d840d21",
+  "uploaded_original": "05189be2-77c4-4412-98d3-e08c16dc44b5",
+  "uploaded_sha256": "bf43df51f22b9d0787535ad5a9ce28f806c1b8f1e2bb92ee891a5a717867d57d",
+  "uploaded_revised": "0c53962e-6f4c-4f82-b360-96a3f6015d75",
+  "pdf_original": "85f68e84-080c-4831-86a4-ee543262be8f",
+  "pdf_revised": "5e78382e-3be4-47e8-8836-8d2100ec16f3"
+}

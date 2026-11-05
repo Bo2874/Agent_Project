@@ -41,7 +41,22 @@
     function columnName(column) { let text = ""; while (column) { column--; text = String.fromCharCode(65 + column % 26) + text; column = Math.floor(column / 26); } return text; }
     function render(data) {
       body.replaceChildren();
-      if (data.preview.kind === "source_copy") { body.append(element("p", "document-hint", "Bản sao nguồn được giữ nguyên. Hiện chỉ có preview và chỉnh sửa Excel; bạn có thể tải file này xuống.")); return; }
+      if (data.preview.kind === "source_copy") { body.append(element("p", "document-hint", "Bản sao nguồn được giữ nguyên để tải xuống. Yêu cầu chỉnh sửa trong chat để tạo phiên bản có preview; cấu trúc chưa hỗ trợ sẽ được báo rõ.")); return; }
+      if (data.preview.kind === "pages") {
+        const preview = data.preview;
+        body.append(element("p", "document-hint", `${preview.page_count} trang · Preview của phiên bản đang chọn`));
+        for (const warning of preview.warnings || []) body.append(element("p", "document-hint", warning));
+        for (const asset of preview.assets || []) {
+          const figure = element("figure", "artifact-document-page");
+          const image = element("img"); image.loading = "lazy"; image.decoding = "async";
+          image.alt = `Trang ${asset.page} của ${data.name}`;
+          image.src = `/api/artifact-versions/${encodeURIComponent(data.version_id)}/preview-assets/${encodeURIComponent(asset.asset_id)}`;
+          image.width = asset.width; image.height = asset.height;
+          image.addEventListener("error", () => { image.hidden = true; figure.append(element("p", "document-hint", "Không tải được trang preview. Bạn vẫn có thể tải file xuống.")); });
+          figure.append(element("figcaption", "document-hint", `Trang ${asset.page}`), image); body.append(figure);
+        }
+        return;
+      }
       const preview = data.preview, sheets = element("div", "artifact-sheets");
       for (const sheet of preview.sheets || []) {
         const tab = button(sheet.name, () => { void open(data.version_id, context, { sheet: sheet.name }, false); });
@@ -131,7 +146,7 @@
         const ready = pendingReady.get(data.artifact_id); pendingReady.clear();
         if (ready && ready.version_id !== data.version_id) { void open(ready.version_id, contextId, {}, false); return; }
         current = data; panel.dataset.versionId = data.version_id; name.textContent = data.name;
-        status.textContent = statusText(data.calculation_status);
+        status.textContent = data.preview.kind === "pages" ? "Đã dựng preview từ đúng phiên bản file" : statusText(data.calculation_status);
         lineage.textContent = `Phiên bản ${data.version_number}${data.parent_version_id ? ` · sửa từ ${data.parent_version_id.slice(0, 8)}` : " · bản đầu"}`;
         download.href = `/api/artifact-versions/${encodeURIComponent(data.version_id)}/download`; download.hidden = false;
         if (data.source_conversation_id) { origin.href = `/chat?conversation=${encodeURIComponent(data.source_conversation_id)}`; origin.hidden = false; }
@@ -162,7 +177,7 @@
       if ([...list.children].some(item => item.dataset.versionId === ref.version_id)) continue;
       const card = element("div", "artifact-card"); card.dataset.versionId = ref.version_id;
       const open = button(ref.name, () => { void window.ArtifactWorkspace?.onOpen?.(ref.version_id, contextId); }, "artifact-card-open");
-      open.append(element("small", "document-hint", `${Math.ceil(ref.size_bytes / 1024)} KB · ${statusText(ref.calculation_status)}`));
+      open.append(element("small", "document-hint", `${Math.ceil(ref.size_bytes / 1024)} KB${ref.mime_type === 'application/pdf' || ref.mime_type?.endsWith('wordprocessingml.document') ? ' · Mở xem tài liệu' : ` · ${statusText(ref.calculation_status)}`}`));
       const download = element("a", "text-link", "Tải xuống"); download.href = `/api/artifact-versions/${encodeURIComponent(ref.version_id)}/download`;
       card.append(open, download); list.append(card);
     }

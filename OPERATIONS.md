@@ -335,6 +335,10 @@ trên database đang dùng. Kết quả ở `reports/checks/2026-10-19-m2-runtim
 
 Xem [manual Artifacts](docs/manual-artifacts.md) cho startup profile `artifacts`, migration
 0031/0032, allowlist, private storage, health, runner cleanup và rollback bằng flag.
+Plan02 mở rộng Word/PDF text và page preview; phải build lại cả image code/render có Writer/Poppler.
+Không có migration mới cho bộ nguồn/preview; quota tính cả companion và PNG. Với allowlist riêng,
+thêm `artifact_rebuild_pdf_text_only` cho luồng duyệt PDF hỗn hợp. Giới hạn/OCR/format và bằng chứng:
+[nghiệm thu Word/PDF](docs/acceptance/2026-11-05-workspace-documents.md).
 Giữ `WORKSPACE_ARTIFACTS_ENABLED`/`DEV_WORKSPACE_ARTIFACTS_ENABLED=false` cho đến khi môi
 trường đích có image code/render, broker key và migration. Restart cả web và worker khi bật.
 
