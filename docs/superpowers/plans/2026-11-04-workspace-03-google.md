@@ -30,13 +30,13 @@
 
 ## File map và hợp đồng liên module
 
-Tạo `backend/models/google_connection.py`, `backend/schemas/google.py`, `backend/services/google/{oauth,credentials,access,client,sheets,mutations,docs,drive,tools}.py`, `backend/routes/connections.py`, `agent_core/tools/google.py`, `frontend/templates/connectors.html`, `frontend/static/connectors.js`, migration `20261104_0032_create_google_connections.py`. Sửa model exports, main/pages/Tool Registry/config/env mẫu. Mỗi package có `__init__.py`.
+Tạo `backend/models/google_connection.py`, `backend/schemas/google.py`, `backend/services/google/{oauth,credentials,access,client,sheets,mutations,docs,drive,tools}.py`, `backend/routes/connections.py`, `agent_core/tools/google.py`, `frontend/templates/connectors.html`, `frontend/static/connectors.js`, migration `20261105_0033_create_google_connections.py`. Sửa model exports, main/pages/Tool Registry/config/env mẫu. Mỗi package có `__init__.py`.
 
 Models: `GoogleConnection` (unique owner/provider cho một tài khoản đầu tiên), `GoogleOAuthState` (hash/state expiry/single-use/owner binding), `GoogleFileGrant` (connection, owner, file, MIME, generation, revoked), `GoogleWorkFile` (conversation + grant, composite owner FK), `GoogleMutation` (idempotency/run/digest/status/receipt). Automation context sau này dùng `AutomationGrant` tham chiếu `GoogleFileGrant`, không tạo FK tới bảng chưa có ở migration 0032. Không lưu plaintext token trong ORM JSON.
 
 DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `GoogleWriteProposal(id: UUID, digest: str, snapshot_hash: str, expires_at: datetime)`; mutation states `prepared|approved|sent|completed|unknown|rejected`. Không có `approved: bool` từ model để vượt approval.
 
-### G1 — OAuth và credential theo owner
+### Task 1: G1 — OAuth và credential theo owner
 
 **Files:** model/schema/migration/oauth/credentials trên; `backend/core/credential_cipher.py`, config/env mẫu; mới `tests/test_google_oauth.py`, `tests/test_google_credentials.py`.
 
@@ -48,7 +48,7 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 - [ ] Tách cipher error trung lập nếu cần, map về PluginServiceError ở adapter cũ; thêm keyring Google riêng, không đổi token/binding plugin cũ. Kiểm scope được cấp; thiếu offline token báo cần reconnect, không coi ready cho Automation. Không suy luận account email từ token response; lấy identity metadata bằng API có quyền phù hợp.
 - [ ] Green tests và credential/plugin regressions hiện có; migration scratch schema; commit `feat: add owner-scoped google oauth credentials`.
 
-### G2 — Picker, file allowlist và UI Connectors
+### Task 2: G2 — Picker, file allowlist và UI Connectors
 
 **Files:** access/client/routes/frontend trên; sửa `agent_core/tools/types.py`, `backend/services/agent_context.py`; mới `tests/test_google_file_access.py`.
 
@@ -59,7 +59,7 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 - [ ] UI state configured/disconnected/reconnect/no files/loading/error và nút thu hồi từng file. Browser token Picker chỉ ở memory, xóa sau picker; kiểm Origin/CSRF của mutation routes theo cơ chế app. Không xin scope Drive rộng hơn.
 - [ ] Green access tests; browser fixture chọn/bỏ file, chuyển account không hồi sinh grant cũ; commit `feat: select scoped google files for agent work`.
 
-### G3 — Sheets đọc, đề xuất ghi và journal chống phát lại
+### Task 3: G3 — Sheets đọc, đề xuất ghi và journal chống phát lại
 
 **Files:** sheets/mutations/client; mới `tests/test_google_sheets.py`, `tests/test_google_mutations.py`.
 
@@ -71,7 +71,7 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 - [ ] Recheck snapshot ngay trước update; nếu khác, invalidate approval. Ghi nhận race còn lại với sửa ngoài Google: không hứa transaction xuyên Google/DB. Approval payload fingerprint phải khớp proposal đã pin; ngoài thời hạn cần proposal mới.
 - [ ] Green tests gồm concurrent same-key và scope revoke giữa prepare/execute. Commit `feat: add scoped sheets reads and journaled writes`.
 
-### G4 — Tool Calling và nghiệm thu ba luồng Sheets
+### Task 4: G4 — Tool Calling và nghiệm thu ba luồng Sheets
 
 **Files:** tools/agent bridge; dependency registry; mới `tests/test_google_tools.py`, `scripts/check_google_connector.py`; cập nhật `OPERATIONS.md`.
 
@@ -82,7 +82,7 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 - [ ] Green offline fixtures; chạy `python -m scripts.check_google_connector --offline`. Sau đó OAuth thủ công và `--live --connection-id <id> --file-id <selected-test-sheet>` trên file thử user chọn; script hiện kế hoạch thay đổi, không chạm tài liệu khác. Chỉ dọn dữ liệu fixture đã xác định, không xóa Sheet.
 - [ ] Nghiệm thu đọc, thêm hàng, cập nhật vùng, revoke/reconnect và unknown outcome; ghi rõ live chưa chạy nếu thiếu account. Commit `feat: integrate google sheets tools with chat approvals`.
 
-### G5 — Google Docs văn bản
+### Task 5: G5 — Google Docs văn bản
 
 **Files:** docs/tools/schema; mới `tests/test_google_docs.py`.
 
@@ -92,7 +92,7 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 - [ ] Implement Docs batchUpdate với writeControl revision được API hỗ trợ; giữ component không sửa, reject edit không biểu diễn được. File mới do ứng dụng tạo đăng ký owner/work-context trước cho Agent dùng; tạo mới cũng journal unknown outcome.
 - [ ] Green unit và live trên Doc thử được chọn; đọc lại nội dung so yêu cầu, URL trả về validated. Commit `feat: add selected google docs text tools`.
 
-### G6 — Artifact lên Drive và gate Connectors
+### Task 6: G6 — Artifact lên Drive và gate Connectors
 
 **Files:** drive/tools/routes; mới `tests/test_google_drive_artifacts.py`; mở rộng check script/manual/notes/plan.
 
