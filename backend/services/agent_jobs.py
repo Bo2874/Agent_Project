@@ -26,8 +26,7 @@ from backend.services.run_events import (
 )
 
 
-async def enqueue_run(arguments):
-    run_id = arguments["agent_run_id"]
+def run_input(arguments):
     payload = {k: str(arguments[k]) for k in ("conversation_id", "user_message_id", "user_id")}
     payload.update(
         model_messages=arguments["model_messages"],
@@ -46,6 +45,12 @@ async def enqueue_run(arguments):
         query_messages=arguments.get("query_messages"),
         rag_search_mode=arguments["rag_search_mode"],
     )
+    return payload
+
+
+async def enqueue_run(arguments):
+    run_id = arguments["agent_run_id"]
+    payload = run_input(arguments)
     if get_settings().workspace_artifacts_enabled:
         from backend.services.artifacts.selection import selected_versions
 
@@ -206,6 +211,9 @@ async def agent_run_handler(context, payload):
             run.rag_trace, run.status = trace, "running"
             await session.commit()
             role, started = owner.role, datetime.fromisoformat(trace["runtime_started_at"])
+            execution_source = await session.scalar(
+                select(Conversation.source_kind).where(Conversation.id == run.conversation_id)
+            )
         saver = get_langgraph_checkpointer()
         resume = await saver.aget_tuple(agent_checkpoint_config(run_id)) is not None
         if resume:
@@ -261,6 +269,7 @@ async def agent_run_handler(context, payload):
             query_messages=data.get("query_messages"),
             operation_journal=OperationJournal(run_id),
             elapsed_seconds_floor=(datetime.now(UTC) - started).total_seconds() if resume else 0,
+            execution_source=execution_source,
         ):
             if packet.startswith("event: delta\n"):
                 import json

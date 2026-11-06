@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from agent_core.graph import AgentLoopEvent
+from agent_core.graph import AgentLoopEvent, AgentQuotaLimitError
 from agent_core.graph.budgeting import UsageReservation
 from backend.database import SessionFactory
 from backend.models import UsageCounter
@@ -187,8 +187,19 @@ class AgentQuotaGuard:
         from backend.services.run_events import current_job, runtime_session
 
         if current_job.get() is not None:
-            async with runtime_session():
-                pass
+            async with runtime_session() as session:
+                if current_job.get().job_type == "automation.run":
+                    from uuid import UUID
+
+                    from backend.models.automation import AutomationRun
+                    from backend.services.automations.authority import resolve_run_authority
+
+                    row = await session.get(
+                        AutomationRun, UUID(current_job.get().payload["automation_run_id"])
+                    )
+                    if row is None or row.agent_run_id is None:
+                        raise AgentQuotaLimitError("Automation authority unavailable")
+                    await resolve_run_authority(session, agent_run_id=row.agent_run_id)
         if action == "tool":
             await add_usage(self.user_id, metric="tool_call", amount=1)
 

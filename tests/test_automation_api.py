@@ -96,6 +96,7 @@ async def test_api_owner_revision_immutability_and_invalid_grants(google_db, mon
                         "file_id": "unselected",
                         "action": "read_sheet",
                         "range_a1": "Sheet1!A1:B100",
+                    "sheet_id": 0,
                     }
                 ]
             ),

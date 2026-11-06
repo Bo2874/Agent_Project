@@ -89,6 +89,7 @@ class AutomationGrant(Base):
     file_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     action: Mapped[str] = mapped_column(String(32))
     range_a1: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    sheet_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     connection_generation: Mapped[int] = mapped_column(Integer)
     grant_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

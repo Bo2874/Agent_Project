@@ -88,6 +88,20 @@ class GoogleToolService:
                     GoogleConnection.offline_ready.is_(True),
                 )
             )
+            allowed = None
+            from backend.models.automation import AutomationGrant, AutomationRun
+
+            automation = await session.scalar(
+                select(AutomationRun).where(AutomationRun.agent_run_id == context.run_id)
+            )
+            if automation is not None:
+                allowed = set(
+                    await session.scalars(
+                        select(AutomationGrant.connection_id).where(
+                            AutomationGrant.revision_id == automation.revision_id
+                        )
+                    )
+                )
             return [
                 {
                     "connection_id": str(row.id),
@@ -96,6 +110,7 @@ class GoogleToolService:
                     "generation": row.generation,
                 }
                 for row in rows
+                if allowed is None or row.id in allowed
             ]
 
     async def guard(self, context, name):

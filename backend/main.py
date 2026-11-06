@@ -16,8 +16,8 @@ from backend.dependencies_tools import close_tool_connections, start_tool_connec
 from backend.routes import (
     admin,
     artifacts,
-    automations,
     auth,
+    automations,
     chat,
     connections,
     documents,

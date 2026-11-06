@@ -16,7 +16,7 @@ class ConversationBusyError(RuntimeError):
 async def list_conversations(session: AsyncSession, user_id: UUID) -> list[Conversation]:
     result = await session.execute(
         select(Conversation)
-        .where(Conversation.user_id == user_id)
+        .where(Conversation.user_id == user_id, Conversation.source_kind == "chat")
         .order_by(Conversation.updated_at.desc())
     )
     return list(result.scalars())
@@ -60,6 +60,10 @@ async def delete_conversation(
     )
     if conversation is None:
         return False
+    if conversation.source_kind == "automation":
+        raise ConversationBusyError(
+            "Lịch sử Automation được giữ để đối soát; hãy quản lý trong Automations."
+        )
     runs = list(
         (
             await session.scalars(

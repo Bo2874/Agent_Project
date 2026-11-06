@@ -63,6 +63,7 @@ class GrantDraft(AutomationModel):
     file_id: GoogleFileId | None = None
     action: GoogleAction
     range_a1: str | None = Field(default=None, min_length=1, max_length=160)
+    sheet_id: int | None = Field(default=None, ge=0, strict=True)
 
     @model_validator(mode="after")
     def exact_target(self):
@@ -79,9 +80,13 @@ class GrantDraft(AutomationModel):
             from backend.services.google.ranges import parse_range
 
             try:
-                parse_range(self.range_a1)
+                bounds = parse_range(self.range_a1)
+                if not bounds.tab or self.sheet_id is None:
+                    raise ValueError("Select a named tab and its stable sheet ID")
             except GoogleServiceError as exc:
                 raise ValueError(exc.detail) from exc
+        elif self.sheet_id is not None:
+            raise ValueError("Only Sheets grants use a tab ID")
         return self
 
 

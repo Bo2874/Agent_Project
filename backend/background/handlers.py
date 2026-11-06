@@ -44,6 +44,7 @@ async def purge_operational_data_handler(
 
 def build_background_job_registry() -> BackgroundJobRegistry:
     from backend.services.agent_jobs import agent_run_handler
+    from backend.services.automations.execution import automation_run_handler
 
     registry = BackgroundJobRegistry()
     registry.register("maintenance.purge_expired_memories", purge_expired_memories_handler)
@@ -51,6 +52,7 @@ def build_background_job_registry() -> BackgroundJobRegistry:
     registry.register("documents.cleanup", cleanup_document_handler)
     registry.register("documents.prepare", prepare_document_handler)
     registry.register("agent.run", agent_run_handler)
+    registry.register("automation.run", automation_run_handler)
     return registry
 
 

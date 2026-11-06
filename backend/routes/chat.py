@@ -289,6 +289,7 @@ async def stream_assistant_response(
     rag_search_mode: RagSearchMode = "fast",
     operation_journal=None,
     elapsed_seconds_floor=0,
+    execution_source="chat",
 ) -> AsyncIterator[str]:
     recorder = AgentRunRecorder(
         agent_run_id=agent_run_id,
@@ -315,6 +316,16 @@ async def stream_assistant_response(
             partial_reason = event.progress.get("stop_reason")
         await quota_guard.record_event(event)
         await recorder(event)
+        if execution_source == "automation" and event.kind == "tool_approval_resolved":
+            from backend.models.automation import AutomationRun
+            from backend.services.automations.execution import sync_automation_run
+
+            async with SessionFactory() as session:
+                auto_id = await session.scalar(
+                    select(AutomationRun.id).where(AutomationRun.agent_run_id == agent_run_id)
+                )
+                if auto_id:
+                    await sync_automation_run(session, auto_id)
         if (
             operation_journal is not None
             and document_tools is not None
@@ -516,6 +527,10 @@ async def stream_assistant_response(
             from backend.services.run_events import runtime_session
 
             async with runtime_session() as guard_session:
+                if execution_source == "automation":
+                    from backend.services.automations.authority import resolve_run_authority
+
+                    await resolve_run_authority(guard_session, agent_run_id=agent_run_id)
                 if operation_journal is not None:
                     from backend.models import User
 
@@ -586,6 +601,10 @@ async def stream_assistant_response(
                         await document_tools.validate()
 
                 runtime.context = replace(runtime.context, authorization_guard=document_guard)
+        if execution_source == "automation":
+            from backend.services.automations.authority import scope_registry
+
+            execution_registry = scope_registry(execution_registry)
         yield await routing_progress("completed")
         if react_enabled or not routing_flags.is_enabled("routing"):
             await extract_memories()
@@ -626,13 +645,29 @@ async def stream_assistant_response(
                 ) as scoped:
                     yield scoped
 
+        async def approve_call(context, approval_id, request):
+            if execution_source == "automation":
+                from backend.models.automation import AutomationRun
+                from backend.services.automations.authority import authorize_automation_call
+                from backend.services.automations.execution import sync_automation_run
+
+                async with SessionFactory() as session:
+                    if await authorize_automation_call(session, context, request):
+                        return True
+                    identity = await session.scalar(
+                        select(AutomationRun.id).where(AutomationRun.agent_run_id == agent_run_id)
+                    )
+                    if identity:
+                        await sync_automation_run(session, identity)
+            return await tool_approval_manager.wait_for_decision(context, approval_id, request)
+
         async for item in stream_agent_graph(
             model=model,
             messages=model_messages,
             registry=execution_registry,
             context=runtime.context,
             event_handler=record_event,
-            approval_handler=tool_approval_manager.wait_for_decision,
+            approval_handler=approve_call,
             limits=limits,
             context_budget=context_budget,
             tool_selection_config=tool_selection_config,
