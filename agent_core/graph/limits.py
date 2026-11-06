@@ -33,7 +33,8 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
         if budget["max_steps"] is not None and state["step_number"] > budget["max_steps"]:
             return "step_limit"
         if (
-            state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
+            budget["max_total_tokens"] is not None
+            and state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
             >= budget["max_total_tokens"]
         ):
             return "token_limit"
@@ -57,7 +58,8 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
         if budget["max_steps"] is not None and state["step_number"] >= budget["max_steps"]:
             return "step_limit"
         if (
-            state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
+            budget["max_total_tokens"] is not None
+            and state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
             >= budget["max_total_tokens"]
         ):
             return "token_limit"
@@ -76,7 +78,8 @@ def limit_reason(state: AgentState) -> AgentLimitReason | None:
         if budget["max_steps"] is not None and state["step_number"] > budget["max_steps"]:
             return "step_limit"
         if (
-            state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
+            budget["max_total_tokens"] is not None
+            and state["usage"]["total_tokens"] + state.get("budget_held_tokens", 0)
             >= budget["max_total_tokens"]
         ):
             return "token_limit"

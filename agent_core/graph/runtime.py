@@ -68,7 +68,7 @@ class AgentNodeExecutionError(AgentLoopError):
 @dataclass(frozen=True, slots=True)
 class AgentLimits:
     max_steps: int | None = None
-    max_total_tokens: int = 20_000
+    max_total_tokens: int | None = 20_000
     max_duration_seconds: float | None = None
     max_identical_tool_calls: int | None = None
     max_repeated_observations: int | None = None
@@ -76,7 +76,7 @@ class AgentLimits:
     def __post_init__(self) -> None:
         if self.max_steps is not None and self.max_steps < 1:
             raise ValueError("max_steps phải lớn hơn hoặc bằng 1")
-        if self.max_total_tokens < 1:
+        if self.max_total_tokens is not None and self.max_total_tokens < 1:
             raise ValueError("max_total_tokens phải lớn hơn hoặc bằng 1")
         if self.max_duration_seconds is not None and self.max_duration_seconds <= 0:
             raise ValueError("max_duration_seconds phải lớn hơn 0")
@@ -181,7 +181,9 @@ def _build_status_block(
         budget=AgentStatusBudget(
             current_step=step_number,
             max_steps=limits.max_steps,
-            used_tokens=min(used_tokens, limits.max_total_tokens),
+            used_tokens=min(used_tokens, limits.max_total_tokens)
+            if limits.max_total_tokens is not None
+            else used_tokens,
             max_tokens=limits.max_total_tokens,
             elapsed_seconds=(
                 perf_counter() - started_at if elapsed_seconds is None else elapsed_seconds

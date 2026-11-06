@@ -473,7 +473,7 @@ if (chatApp) {
       ? `đã chạy ${budget.time_seconds.elapsed}s`
       : `còn ${budget.time_seconds.remaining}s`;
     budgetView.textContent = `${stepText} · ` +
-      `${budget.tokens.used}/${budget.tokens.limit} token · ${timeText}`;
+      `${budget.tokens.limit == null ? budget.tokens.used : `${budget.tokens.used}/${budget.tokens.limit}`} token · ${timeText}`;
     timeline.statusBlock.replaceChildren(goal, progress, remaining, budgetView);
     timeline.statusBlock.hidden = false;
   }

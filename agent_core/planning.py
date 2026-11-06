@@ -149,10 +149,14 @@ def create_plan(
                     else None
                 ),
                 budget=TaskBudget(
-                    max_tokens=proposed.max_tokens
-                    or (remaining_tokens - explicit)
-                    * (2 if proposed.tools else 1)
-                    // max(1, missing),
+                    max_tokens=(
+                        proposed.max_tokens
+                        or (remaining_tokens - explicit)
+                        * (2 if proposed.tools else 1)
+                        // max(1, missing)
+                    )
+                    if remaining_tokens is not None
+                    else proposed.max_tokens,
                     max_steps=(proposed.max_steps or (2 if entries else 1))
                     if remaining_steps is not None
                     else None,
@@ -164,7 +168,7 @@ def create_plan(
             )
         )
     plan = PlanSpec(goal=goal[:1000], tasks=tuple(tasks))
-    if sum(t.budget.max_tokens for t in tasks) > remaining_tokens:
+    if remaining_tokens is not None and sum(t.budget.max_tokens for t in tasks) > remaining_tokens:
         raise ValueError("Task token budgets exceed the remaining shared budget")
     if remaining_steps is not None and sum(t.budget.max_steps for t in tasks) > remaining_steps:
         raise ValueError("Task step budgets leave no final model turn")
@@ -229,7 +233,10 @@ def close_task(planning, state, *, summary, error=None):
             )
             refs[str(ref.chunk_id)] = ref
     if error is None:
-        if state["usage"]["total_tokens"] - attempt["tokens_start"] > task.budget.max_tokens:
+        if (
+            task.budget.max_tokens is not None
+            and state["usage"]["total_tokens"] - attempt["tokens_start"] > task.budget.max_tokens
+        ):
             error = "task_token_budget"
         validate({"summary": summary}, task.output_schema)
         if any(r["error_code"] in {"tool_timeout", "tool_outcome_unknown"} for r in rows):
@@ -341,7 +348,9 @@ def task_remaining(planning, state, elapsed):
         for r in state["tool_observations"][a["observation_offset"] :]
     )
     return {
-        "tokens": task.budget.max_tokens - (state["usage"]["total_tokens"] - a["tokens_start"]),
+        "tokens": task.budget.max_tokens - (state["usage"]["total_tokens"] - a["tokens_start"])
+        if task.budget.max_tokens is not None
+        else float("inf"),
         "steps": task.budget.max_steps - (state["step_number"] - a["first_step"])
         if task.budget.max_steps is not None
         else float("inf"),

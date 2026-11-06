@@ -205,6 +205,10 @@ def _limits_from_budget(budget: AgentBudget) -> AgentLimits:
     )
 
 
+def nullable_tokens(value):
+    return int(value) if isfinite(value) else None
+
+
 def _remaining_timeout(deadline, remaining=None):
     seconds = min(deadline - perf_counter(), remaining["seconds"] if remaining else float("inf"))
     return max(0.001, seconds) if isfinite(seconds) else None
@@ -844,10 +848,16 @@ async def run_agent_graph_stream(
             await operation_journal.total_spent() if operation_journal else 0,
         )
         pool = workers.SharedWorkerBudget(
-            state["budget"]["max_total_tokens"]
+            (
+                state["budget"]["max_total_tokens"]
+                if state["budget"]["max_total_tokens"] is not None
+                else float("inf")
+            )
             - prior_spend
             - state.get("budget_held_tokens", 0)
             - final_reserve
+            if state["budget"]["max_total_tokens"] is not None
+            else None
         )
         writer = get_stream_writer()
         writer_context = copy_context()
@@ -889,7 +899,14 @@ async def run_agent_graph_stream(
                 for t in wave
                 if (
                     t.task_id in past_workers
-                    or t.budget.max_tokens <= pool.available - pool.spent - pool.held
+                    or (pool.available is None and t.budget.max_tokens is None)
+                    or (
+                        t.budget.max_tokens is not None
+                        and (
+                            pool.available is None
+                            or t.budget.max_tokens <= pool.available - pool.spent - pool.held
+                        )
+                    )
                 )
                 and (dynamic_steps or step + t.budget.max_steps <= state["budget"]["max_steps"])
             ]
@@ -1503,7 +1520,11 @@ async def run_agent_graph_stream(
             to_model_messages(state["prepared_messages"]), state["tool_definitions"], output_tokens
         )
         available = (
-            state["budget"]["max_total_tokens"]
+            (
+                state["budget"]["max_total_tokens"]
+                if state["budget"]["max_total_tokens"] is not None
+                else float("inf")
+            )
             - state["usage"]["total_tokens"]
             - state.get("budget_held_tokens", 0)
         )
@@ -1877,7 +1898,11 @@ async def run_agent_graph_stream(
                 ):
                     task_error = "task_budget"
             available = (
-                state["budget"]["max_total_tokens"]
+                (
+                    state["budget"]["max_total_tokens"]
+                    if state["budget"]["max_total_tokens"] is not None
+                    else float("inf")
+                )
                 - state["usage"]["total_tokens"]
                 - tool_usage.total_tokens
                 - state.get("budget_held_tokens", 0)
@@ -1967,16 +1992,22 @@ async def run_agent_graph_stream(
                     replace(
                         context,
                         operation_key=op_key,
-                        remaining_tokens=max(
-                            0,
-                            min(
-                                state["budget"]["max_total_tokens"]
-                                - state["usage"]["total_tokens"]
-                                - used
-                                - final_reserve,
-                                task_limits["tokens"] if task_limits else float("inf"),
-                            ),
-                            # Delegated paid models must leave room for the root final turn.
+                        remaining_tokens=nullable_tokens(
+                            max(
+                                0,
+                                min(
+                                    (
+                                        state["budget"]["max_total_tokens"]
+                                        if state["budget"]["max_total_tokens"] is not None
+                                        else float("inf")
+                                    )
+                                    - state["usage"]["total_tokens"]
+                                    - used
+                                    - final_reserve,
+                                    task_limits["tokens"] if task_limits else float("inf"),
+                                ),
+                                # Delegated paid models must leave room for the root final turn.
+                            )
                         ),
                         remaining_steps=(
                             max(
@@ -2024,7 +2055,7 @@ async def run_agent_graph_stream(
                             goal=state["goal"],
                             registry=registry,
                             role=context.user_role,
-                            remaining_tokens=max(0, available - final_reserve),
+                            remaining_tokens=nullable_tokens(max(0, available - final_reserve)),
                             remaining_steps=state["budget"]["max_steps"] - step_number - 1
                             if state["budget"]["max_steps"] is not None
                             else None,

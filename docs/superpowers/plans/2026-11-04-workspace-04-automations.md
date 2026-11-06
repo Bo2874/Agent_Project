@@ -10,6 +10,10 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-04-agent-workspace-design.md`; phụ thuộc plan 01–03 và quy ước roadmap.
 
+## Execution update ? 2026-11-06
+
+User approved Plan04 offline now; live Google acceptance is deferred to combined end-to-end acceptance before enabling external automation use. This overrides the earlier live-before-Plan04 gate.
+
 ## Global Constraints
 
 - “Không có trần token/bước/thời gian tổng cho Automation theo lựa chọn user; vẫn ghi usage/chi phí.”
@@ -31,7 +35,7 @@
 
 ## File map và state contract
 
-Mới: `backend/models/automation.py`, `backend/models/notification.py`, `backend/schemas/automation.py`, `backend/services/automations/{service,schedules,dispatch,execution,authority,notifications}.py`, `backend/routes/automations.py`, `backend/routes/notifications.py`, `scripts/run_automation_scheduler.py`, `frontend/templates/automations.html`, `frontend/static/automations.js`, `frontend/static/notifications.js`; migration `20261104_0033_create_automations.py`. Package exports/init theo repo.
+Mới: `backend/models/automation.py`, `backend/models/notification.py`, `backend/schemas/automation.py`, `backend/services/automations/{service,schedules,dispatch,execution,authority,notifications}.py`, `backend/routes/automations.py`, `backend/routes/notifications.py`, `scripts/run_automation_scheduler.py`, `frontend/templates/automations.html`, `frontend/static/automations.js`, `frontend/static/notifications.js`; migration `20261106_0034_create_automations.py`. Package exports/init theo repo.
 
 Sửa runtime budget/task pool/planner, `backend/models/chat.py`, `backend/services/chat.py`, `agent_jobs.py`, `agent_context.py`, `background/handlers.py`, routes chat approvals/cancel, Google/Artifact authority, shell/pages/main/config/Compose.
 
@@ -39,7 +43,7 @@ Sửa runtime budget/task pool/planner, `backend/models/chat.py`, `backend/servi
 
 Run statuses `queued|running|waiting_approval|cancelling|needs_reconciliation|succeeded|failed|cancelled|skipped_overlap|missed`. Active partial unique index theo automation cho 5 trạng thái đầu; skipped/missed có thể không có AgentRun/job. Scheduled uniqueness `(automation_id,scheduled_for)` độc lập revision; manual run dùng request idempotency key riêng. Lock order khi mutation: Automation → AutomationRun → BackgroundJob.
 
-### A1 — Token tổng nullable xuyên runtime, giữ policy chat
+### Task 1: A1 — Token tổng nullable xuyên runtime, giữ policy chat
 
 **Files:** `agent_core/graph/{runtime,state,limits,budgeting,runner}.py`, `agent_core/task_workers.py`, `agent_core/planning.py`, `agent_core/contracts/tasks.py`, `backend/services/agent_jobs.py`, `frontend/static/chat.js`; sửa tests budgeting/jobs/planning/workers hiện có, thêm `tests/test_automation_budget_policy.py`.
 
@@ -50,18 +54,18 @@ Run statuses `queued|running|waiting_approval|cancelling|needs_reconciliation|su
 - [ ] Guard mọi arithmetic/comparison/reserve/final allowance, task aggregate, serialization và status format khi cap None. Automation children mặc định không nhận finite aggregate từ planner nếu root unlimited; context/output mỗi call vẫn hữu hạn. Giữ parallelism/task count limits hiện có. Chỉ `source='automation'` từ trusted run admission dùng policy mới, không nhận tùy chọn unlimited từ LLM.
 - [ ] Green target + tests task workers/planning hiện có; chạy graph > cap nhỏ với model fixture và resume bằng checkpoint thật. Không sửa `.env` hoặc migrate token budget lịch sử. Commit `feat: support unbounded automation token accounting`.
 
-### A2 — Automation, revision, grant và API owner
+### Task 2: A2 — Automation, revision, grant và API owner
 
 **Files:** model/schema/service/authority/migration trên; `models/__init__.py`, main/pages/config; mới `tests/test_automation_models.py`, `tests/test_automation_api.py`.
 
 **Interfaces:** `create_automation(session, owner: UUID, draft: AutomationDraft) -> AutomationView`; `revise_automation(session, owner, automation_id, draft) -> AutomationView`; `get_owned_automation_run(session, owner, run_id) -> AutomationRunView`. Draft: name/instruction, ScheduleSpec, file outputs và grants có explicit action/range. API `POST/GET /api/automations`, `GET/PATCH /api/automations/{id}`, `GET /api/automations/{id}/runs`.
 
 - [ ] Red owner isolation 404, invalid timezone/blank instruction rejected, grant không vượt selected Google files, revision cũ không thay đổi khi edit, two active runs vi phạm unique index. `test_waiting_approval_and_unknown_run_are_active` asserts không tạo lượt chạy song song mới.
-- [ ] Run hai file test trên thấy đỏ; implement DB/schema/grants với unique/FK và audit. Migration 0033 bao gồm `Conversation.source_kind` default `chat` ngay từ đầu; A4 chỉ sử dụng, không sửa migration đã áp dụng. Review UI draft trước bật lịch; không LLM tự đăng ký lịch chỉ từ câu trả lời prose.
+- [ ] Run hai file test trên thấy đỏ; implement DB/schema/grants với unique/FK và audit. Migration 0034 bao gồm `Conversation.source_kind` default `chat` ngay từ đầu; A4 chỉ sử dụng, không sửa migration đã áp dụng. Review UI draft trước bật lịch; không LLM tự đăng ký lịch chỉ từ câu trả lời prose.
 - [ ] Không cấp quyền xóa/chia sẻ/owner transfer mặc định; action scope lấy từ các công cụ thật plan 01–03. Sửa revision áp dụng lượt sau; quyền thu hồi luôn chặn call tiếp theo. Automation disabled tạo được rồi chạy thử trước bật.
 - [ ] Green API + migration scratch schema; commit `feat: persist owner-scoped automation revisions and grants`.
 
-### A3 — Lịch timezone và scheduler PostgreSQL
+### Task 3: A3 — Lịch timezone và scheduler PostgreSQL
 
 **Files:** schedules/dispatch/scheduler script; config/env mẫu, `pyproject.toml`, `uv.lock`, Compose; mới `tests/test_automation_schedule.py`, `tests/test_automation_dispatch.py`.
 
@@ -72,7 +76,7 @@ Run statuses `queued|running|waiting_approval|cancelling|needs_reconciliation|su
 - [ ] Implement stdlib zoneinfo với tzdata cho Windows. Claim automation row SKIP LOCKED, khóa ngắn; tick/run + queue.enqueue + next_run_at trong một transaction. Có active thì ghi skipped_overlap và tăng mốc; offline quá grace ghi missed cùng số mốc bị lỡ, nhảy future. Once hết hạn → không có next occurrence.
 - [ ] Scheduler độc lập với lifespan web; health heartbeat và shutdown hợp tác. Không gọi model/tool trong scheduler. Green tests + PostgreSQL 2 dispatcher thật; Compose scheduler service bật bằng flag, commit `feat: dispatch durable timezone-aware automation schedules`.
 
-### A4 — Execution conversation và worker dùng runtime chung
+### Task 4: A4 — Execution conversation và worker dùng runtime chung
 
 **Files:** execution/authority, `backend/services/agent_jobs.py`, `agent_context.py`, `chat.py`, `background/handlers.py`, `models/chat.py`; Google/Artifact tool services; mới `tests/test_automation_execution.py`. Dùng trường schema A2 đã tạo.
 
@@ -84,7 +88,7 @@ Run statuses `queued|running|waiting_approval|cancelling|needs_reconciliation|su
 - [ ] RunAuthority từ DB cho phép Google action đã được grant rõ khi tạo lịch, audit `approved_by_automation_grant`; không bool bypass do caller gửi. Vượt scope → waiting_approval. Raw Python vẫn chờ approval từng call; structured Artifact tools trong grant có thể chạy vắng mặt. Mỗi lời gọi kiểm generation hiện tại.
 - [ ] Map completed/failed/cancelled/waiting_approval/unknown ra AutomationRun; unknown → needs_reconciliation và giữ slot active. Giữ partial results/remote receipts. Green fixtures + worker/checkpoint thật, commit `feat: execute scheduled work through durable agent runtime`.
 
-### A5 — Dừng lượt, tắt lịch và race claim
+### Task 5: A5 — Dừng lượt, tắt lịch và race claim
 
 **Files:** service/dispatch/execution/routes và cancel/approval adapters hiện có; mới `tests/test_automation_controls.py`.
 
@@ -95,7 +99,7 @@ Run statuses `queued|running|waiting_approval|cancelling|needs_reconciliation|su
 - [ ] Cho owner đối soát file đích rồi chọn “Kết thúc lượt chưa rõ kết quả”: `close_unknown_run` chỉ nhận run needs_reconciliation, ghi audit xác nhận thủ công, terminal failed với reason `closed_without_replay` và giải phóng active slot. Giữ GoogleMutation/usage unknown nguyên trạng, không biến thành success/0 token và không gọi lại write. Test `assert provider_write.call_count == 1`, `assert run.status == 'failed'`, `assert run.stop_reason == 'closed_without_replay'`; actor khác 404.
 - [ ] Green controls + existing background/cancel/approval regressions. Kiểm Google append fixture đã completed trước stop vẫn hiển thị receipt, không báo undo. Commit `feat: separate stopping automation runs from disabling schedules`.
 
-### A6 — UI Automations, lịch sử và inbox
+### Task 6: A6 — UI Automations, lịch sử và inbox
 
 **Files:** templates/JS/routes/notifications models/services; shell/pages/main; mới `tests/test_automation_notifications.py`.
 
@@ -106,7 +110,7 @@ Run statuses `queued|running|waiting_approval|cancelling|needs_reconciliation|su
 - [ ] Green notification API; browser create draft→review→run thử→bật→stop/pause→bật lại. Kiểm reload/tab khác và trạng thái đang hủy; thẻ file chỉ mở preview khi bấm. Không email/push ngoài app.
 - [ ] Commit `feat: manage automation schedules runs and result inbox`.
 
-### A7 — Nghiệm thu restart, không lặp ghi và vận hành
+### Task 7: A7 — Nghiệm thu restart, không lặp ghi và vận hành
 
 **Files:** mới `scripts/check_automation_workflow.py`, `docs/manual-automations.md`; sửa `OPERATIONS.md`, Compose/env mẫu, `PROJECT_NOTES.md`, `PROJECT_PLAN.md`.
 

@@ -52,7 +52,7 @@ class AgentTokenUsage(TypedDict):
 
 class AgentBudget(TypedDict):
     max_steps: int | None
-    max_total_tokens: int
+    max_total_tokens: int | None
     max_duration_seconds: float | None
     elapsed_seconds: float
     max_identical_tool_calls: int | None
@@ -118,7 +118,7 @@ def empty_token_usage() -> AgentTokenUsage:
 def create_agent_budget(
     *,
     max_steps: int | None = None,
-    max_total_tokens: int = 20_000,
+    max_total_tokens: int | None = 20_000,
     max_duration_seconds: float | None = None,
     elapsed_seconds: float = 0,
     max_identical_tool_calls: int | None = None,
@@ -126,7 +126,7 @@ def create_agent_budget(
 ) -> AgentBudget:
     if max_steps is not None and max_steps < 1:
         raise ValueError("max_steps phải lớn hơn hoặc bằng 1")
-    if max_total_tokens < 1:
+    if max_total_tokens is not None and max_total_tokens < 1:
         raise ValueError("max_total_tokens phải lớn hơn hoặc bằng 1")
     if max_duration_seconds is not None and max_duration_seconds <= 0:
         raise ValueError("max_duration_seconds phải lớn hơn 0")

@@ -49,7 +49,9 @@ def tool_allowance(name: str, available: int, final_reserve: int, web_estimate: 
     if name == "search_web":
         return web_estimate
     if name == "summarize_documents":
-        return max(0, available - final_reserve)
+        # Delegated workflow has its own per-call context limit; no aggregate
+        # reservation is needed when the host aggregate is unbounded.
+        return max(0, available - final_reserve) if available != float("inf") else 0
     return 0
 
 

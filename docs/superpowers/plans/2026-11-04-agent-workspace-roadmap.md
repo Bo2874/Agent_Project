@@ -83,7 +83,8 @@
   Chưa push hoặc bật runtime. Plan03 đã hoàn tất triển khai, review và kiểm thử offline, gộp local main tại `b1c7aa2`:
   OAuth/chọn từng file, Sheets, Docs text và Drive export; gate Connectors 71 passed,
   hồi quy Docker 1.266 passed/1 Windows symlink skip. Bảy Important đã sửa, một Minor UX hoãn.
-  Live Google NOT RUN theo lựa chọn user, chưa đạt điều kiện chuyển Plan04. Plan04 chưa triển khai.
+  Live Google NOT RUN theo lựa chọn user. Ngày 2026-11-07 user cho phép làm Plan04 offline;
+  nghiệm thu Google thật và toàn luồng được gom ở cuối, trước khi bật automation dùng Google thật.
   Bật runner/flag và áp dụng migration trên môi trường người dùng là bước vận hành riêng.
 
 ## Tài liệu kỹ thuật dùng để chốt kế hoạch

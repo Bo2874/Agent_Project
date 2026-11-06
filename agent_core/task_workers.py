@@ -55,7 +55,7 @@ class SharedWorkerBudget:
     """
 
     def __init__(self, available):
-        self.available = max(0, available)
+        self.available = max(0, available) if available is not None else None
         self.spent = 0
         self.held = 0
         self.inflight = 0
@@ -65,7 +65,10 @@ class SharedWorkerBudget:
     @asynccontextmanager
     async def reserve(self, amount, upstream):
         async with self.lock:
-            if self.stopped or amount > self.available - self.spent - self.held - self.inflight:
+            if self.stopped or (
+                self.available is not None
+                and amount > self.available - self.spent - self.held - self.inflight
+            ):
                 raise AgentQuotaLimitError("Không đủ ngân sách chung cho worker.")
             self.inflight += amount
         receipt = UsageReservation()
@@ -83,7 +86,7 @@ class SharedWorkerBudget:
                         self.stopped = True
                     else:
                         self.spent += receipt.actual
-                        if self.spent + self.held > self.available:
+                        if self.available is not None and self.spent + self.held > self.available:
                             self.stopped = True
 
 

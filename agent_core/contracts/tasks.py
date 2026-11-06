@@ -31,7 +31,7 @@ TaskStatus = Literal[
 class TaskBudget(ContractModel):
     """Requested upper bounds; the orchestrator must reserve shared quota separately."""
 
-    max_tokens: PositiveInt
+    max_tokens: PositiveInt | None
     max_tool_calls: NonNegativeInt | None
     max_steps: PositiveInt | None
 

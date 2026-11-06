@@ -7,7 +7,7 @@ class AgentStatusBudget:
     current_step: int
     max_steps: int | None
     used_tokens: int
-    max_tokens: int
+    max_tokens: int | None
     elapsed_seconds: float
     max_seconds: float | None
 
@@ -16,7 +16,9 @@ class AgentStatusBudget:
             self.max_steps is not None and self.current_step > self.max_steps
         ):
             raise ValueError("Current step không hợp lệ")
-        if self.used_tokens < 0 or self.used_tokens > self.max_tokens:
+        if self.used_tokens < 0 or (
+            self.max_tokens is not None and self.used_tokens > self.max_tokens
+        ):
             raise ValueError("Token usage không hợp lệ")
         if self.elapsed_seconds < 0 or (self.max_seconds is not None and self.max_seconds <= 0):
             raise ValueError("Time budget không hợp lệ")
@@ -33,7 +35,9 @@ class AgentStatusBudget:
             "tokens": {
                 "used": self.used_tokens,
                 "limit": self.max_tokens,
-                "remaining": max(self.max_tokens - self.used_tokens, 0),
+                "remaining": max(self.max_tokens - self.used_tokens, 0)
+                if self.max_tokens is not None
+                else None,
             },
             "time_seconds": {
                 "elapsed": round(self.elapsed_seconds, 1),
