@@ -16,6 +16,7 @@ from backend.dependencies_tools import close_tool_connections, start_tool_connec
 from backend.routes import (
     admin,
     artifacts,
+    automations,
     auth,
     chat,
     connections,
@@ -72,6 +73,7 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "frontend" / "static"), name="static")
 app.include_router(auth.router)
+app.include_router(automations.router)
 connections.install(app)
 app.include_router(chat.router)
 app.include_router(documents.router)

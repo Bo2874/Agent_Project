@@ -35,7 +35,7 @@ User approved Plan04 offline now; live Google acceptance is deferred to combined
 
 ## File map và state contract
 
-Mới: `backend/models/automation.py`, `backend/models/notification.py`, `backend/schemas/automation.py`, `backend/services/automations/{service,schedules,dispatch,execution,authority,notifications}.py`, `backend/routes/automations.py`, `backend/routes/notifications.py`, `scripts/run_automation_scheduler.py`, `frontend/templates/automations.html`, `frontend/static/automations.js`, `frontend/static/notifications.js`; migration `20261106_0034_create_automations.py`. Package exports/init theo repo.
+Mới: `backend/models/automation.py`, `backend/models/notification.py`, `backend/schemas/automation.py`, `backend/services/automations/{service,schedules,dispatch,execution,authority,notifications}.py`, `backend/routes/automations.py`, `backend/routes/notifications.py`, `scripts/run_automation_scheduler.py`, `frontend/templates/automations.html`, `frontend/static/automations.js`, `frontend/static/notifications.js`; migration `20261107_0034_create_automations_and_result_inbox.py`. Package exports/init theo repo.
 
 Sửa runtime budget/task pool/planner, `backend/models/chat.py`, `backend/services/chat.py`, `agent_jobs.py`, `agent_context.py`, `background/handlers.py`, routes chat approvals/cancel, Google/Artifact authority, shell/pages/main/config/Compose.
 

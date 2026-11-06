@@ -27,6 +27,7 @@ class Conversation(Base):
     title: Mapped[str] = mapped_column(
         String(160), default="Cuộc trò chuyện mới", server_default="New conversation"
     )
+    source_kind: Mapped[str] = mapped_column(String(16), default="chat", server_default="chat")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

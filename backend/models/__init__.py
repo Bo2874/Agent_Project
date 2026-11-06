@@ -2,6 +2,7 @@ from backend.models.agent import AgentRun, RunStep, ToolCall
 from backend.models.agent_runtime import AgentApproval, AgentOperation, RunEvent
 from backend.models.artifact import Artifact, ArtifactVersion, ConversationArtifact, MessageArtifact
 from backend.models.audit import AuditLog
+from backend.models.automation import Automation, AutomationGrant, AutomationRevision, AutomationRun
 from backend.models.background_job import BackgroundJob
 from backend.models.base import Base
 from backend.models.chat import Conversation, ConversationSummary, Message, ModelCall
@@ -22,6 +23,7 @@ from backend.models.google_connection import (
     GoogleWorkFile,
 )
 from backend.models.memory import UserMemory
+from backend.models.notification import UserNotification
 from backend.models.plugin import (
     Plugin,
     PluginCatalogState,
@@ -38,6 +40,11 @@ from backend.models.usage_counter import UsageCounter
 from backend.models.user import User
 
 __all__ = [
+    "UserNotification",
+    "Automation",
+    "AutomationGrant",
+    "AutomationRevision",
+    "AutomationRun",
     "GoogleConnection",
     "GoogleFileGrant",
     "GoogleMutation",
