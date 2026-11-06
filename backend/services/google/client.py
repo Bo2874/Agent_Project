@@ -1,5 +1,7 @@
 """Fixed Google API origins, bounded JSON and sanitized errors; no model HTTP passthrough."""
 
+import asyncio
+
 import httpx
 
 from backend.services.google.errors import GoogleServiceError
@@ -16,6 +18,19 @@ class GoogleHTTP:
         self.transport = transport
 
     async def request(self, method, url, *, token=None, **kwargs):
+        for attempt in range(3 if method == "GET" else 1):
+            try:
+                return await self._request_once(method, url, token=token, **kwargs)
+            except GoogleServiceError as error:
+                if (
+                    method != "GET"
+                    or attempt == 2
+                    or error.code not in {"google_network_error", "google_transient_error"}
+                ):
+                    raise
+                await asyncio.sleep(0.1 * (attempt + 1))
+
+    async def _request_once(self, method, url, *, token=None, **kwargs):
         parsed = httpx.URL(url)
         if (
             parsed.scheme != "https"
@@ -49,6 +64,8 @@ class GoogleHTTP:
                         data = json.loads(body)
                     except (ValueError, UnicodeError):
                         data = {}
+                    if not isinstance(data, dict):
+                        raise GoogleServiceError(502, "Invalid Google response")
                     if response.status_code >= 300:
                         if url == TOKEN_URL and data.get("error") == "invalid_grant":
                             raise GoogleServiceError(
@@ -61,7 +78,11 @@ class GoogleHTTP:
                                 "google_permission_unavailable",
                             )
                         raise GoogleServiceError(
-                            502, "Google request failed", "google_provider_error"
+                            502,
+                            "Google request failed",
+                            "google_transient_error"
+                            if response.status_code in {429, 500, 502, 503, 504}
+                            else "google_provider_error",
                         )
                     if not isinstance(data, dict):
                         raise GoogleServiceError(502, "Invalid Google response")

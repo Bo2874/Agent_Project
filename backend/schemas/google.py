@@ -2,7 +2,16 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 SHEET_MIME = "application/vnd.google-apps.spreadsheet"
@@ -42,3 +51,96 @@ class GoogleFileSelection(GoogleModel):
 
 class GoogleWorkSelection(GoogleModel):
     file_refs: list[GoogleFileRef] = Field(max_length=20)
+
+
+GoogleCell = StrictStr | StrictInt | StrictFloat | StrictBool | None
+
+
+class SheetFormat(GoogleModel):
+    bold: bool | None = None
+    italic: bool | None = None
+    background: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    number_format: Literal["TEXT", "NUMBER", "PERCENT", "CURRENCY", "DATE"] | None = None
+
+
+class SheetChange(GoogleModel):
+    kind: Literal["append_rows", "update_range", "set_formulas", "format_range"]
+    range_a1: str = Field(min_length=1, max_length=160)
+    rows: list[list[GoogleCell]] = Field(default_factory=list, max_length=100)
+    format: SheetFormat | None = None
+    dedup_column: int | None = Field(default=None, ge=0, le=49)
+
+    @model_validator(mode="after")
+    def bounded(self):
+        if len(self.model_dump_json()) > 200000:
+            raise ValueError("Sheet write payload exceeds limit")
+        if self.kind == "format_range":
+            if self.format is None or self.rows or self.dedup_column is not None:
+                raise ValueError("Formatting requires only an explicit format")
+        elif (
+            not self.rows
+            or not 1 <= len(self.rows[0]) <= 50
+            or any(len(row) != len(self.rows[0]) for row in self.rows)
+            or self.format is not None
+        ):
+            raise ValueError("Write a rectangular matrix of at most 100 rows and 50 columns")
+        if self.kind == "set_formulas" and any(
+            not isinstance(cell, str) or not cell.startswith("=")
+            for row in self.rows
+            for cell in row
+        ):
+            raise ValueError("Formula writes require explicit formulas")
+        if self.dedup_column is not None and (
+            self.kind != "append_rows" or any(self.dedup_column >= len(row) for row in self.rows)
+        ):
+            raise ValueError("Dedup column must be present in appended rows")
+        return self
+
+
+class SheetSnapshot(GoogleModel):
+    file_id: GoogleFileId
+    range_a1: str
+    values: list[list[GoogleCell]]
+    snapshot_hash: str
+    next_offset: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GoogleWritePreview(GoogleModel):
+    operation: str = Field(max_length=40)
+    title: str = Field(max_length=600)
+    target: str = Field(max_length=500)
+    before: str = Field(max_length=12000)
+    after: str = Field(max_length=12000)
+    warning: str = Field(max_length=2000)
+
+
+class GoogleCommitInput(GoogleModel):
+    proposal_id: UUID
+    digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    preview: GoogleWritePreview
+
+
+class GoogleWriteProposal(GoogleModel):
+    id: UUID
+    digest: str
+    snapshot_hash: str
+    expires_at: datetime
+    preview: GoogleWritePreview
+
+    def commit_arguments(self):
+        return {
+            "proposal_id": str(self.id),
+            "digest": self.digest,
+            "preview": self.preview.model_dump(mode="json"),
+        }
+
+
+class GoogleWriteReceipt(GoogleModel):
+    operation_id: UUID
+    status: Literal["completed"] = "completed"
+    updated_range: str = ""
+    updated_rows: int = Field(default=0, ge=0)
+    updated_cells: int = Field(default=0, ge=0)
+    url: str
+    file_ref: GoogleFileRef | None = None

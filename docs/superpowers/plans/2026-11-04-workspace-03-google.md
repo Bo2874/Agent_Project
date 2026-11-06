@@ -65,11 +65,11 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 
 **Interfaces:** `read_sheet(context, ref, *, range_a1: str) -> SheetSnapshot`; `prepare_sheet_write(context, ref, change: SheetChange) -> GoogleWriteProposal`; `execute_sheet_write(context, proposal_id: UUID) -> GoogleWriteReceipt`. SheetChange union `append_rows`, `update_range`, `set_formulas`, `format_range`; proposal pin input, target, grant generation, snapshot/digest và approval record. Receipt có updated range, counts, operation ID; không raw auth headers.
 
-- [ ] Red `test_append_raw_preserves_equal_sign_as_text`: dữ liệu web `=...` không tự thành formula; `test_changed_snapshot_requires_new_approval`; `test_sent_but_lost_response_is_unknown_no_retry`: provider append call_count bằng 1 sau resume; `test_replayed_completed_write_reuses_receipt`.
-- [ ] Chạy `python -m pytest tests/test_google_sheets.py tests/test_google_mutations.py -q` thấy đỏ.
-- [ ] Implement values get/append/update và mapped batchUpdate formatting. Append mặc định RAW, formula write chỉ explicit operation. Read/range payload bounded và phân trang. Read-only/transient lỗi có retry có giới hạn; ghi không tự retry sau sent/unknown. Dedup URL theo cột được user chỉ định, không âm thầm thêm marker/cột phụ.
-- [ ] Recheck snapshot ngay trước update; nếu khác, invalidate approval. Ghi nhận race còn lại với sửa ngoài Google: không hứa transaction xuyên Google/DB. Approval payload fingerprint phải khớp proposal đã pin; ngoài thời hạn cần proposal mới.
-- [ ] Green tests gồm concurrent same-key và scope revoke giữa prepare/execute. Commit `feat: add scoped sheets reads and journaled writes`.
+- [x] Red `test_append_raw_preserves_equal_sign_as_text`: dữ liệu web `=...` không tự thành formula; `test_changed_snapshot_requires_new_approval`; `test_sent_but_lost_response_is_unknown_no_retry`: provider append call_count bằng 1 sau resume; `test_replayed_completed_write_reuses_receipt`.
+- [x] Chạy `python -m pytest tests/test_google_sheets.py tests/test_google_mutations.py -q` thấy đỏ.
+- [x] Implement values get/append/update và mapped batchUpdate formatting. Append mặc định RAW, formula write chỉ explicit operation. Read/range payload bounded và phân trang. Read-only/transient lỗi có retry có giới hạn; ghi không tự retry sau sent/unknown. Dedup URL theo cột được user chỉ định, không âm thầm thêm marker/cột phụ.
+- [x] Recheck snapshot ngay trước update; nếu khác, invalidate approval. Ghi nhận race còn lại với sửa ngoài Google: không hứa transaction xuyên Google/DB. Approval payload fingerprint phải khớp proposal đã pin; ngoài thời hạn cần proposal mới.
+- [x] Green tests gồm concurrent same-key và scope revoke giữa prepare/execute. Commit `feat: add scoped sheets reads and journaled writes`.
 
 ### Task 4: G4 — Tool Calling và nghiệm thu ba luồng Sheets
 

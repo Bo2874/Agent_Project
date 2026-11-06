@@ -26,6 +26,9 @@ class FakeGoogle:
         self.invalid_grant = False
         self.no_refresh = False
         self.scope = SCOPE
+        self.sheet_values = [["URL", "Topic"], ["https://existing.example/repo", "Existing"]]
+        self.writes = []
+        self.lose_write_response = False
         self.files = {
             "sheet-a": {
                 "id": "sheet-a",
@@ -94,6 +97,63 @@ class FakeGoogle:
                 httpx.Response(200, json=item)
                 if item
                 else httpx.Response(404, json={"error": {"code": 404}})
+            )
+        if request.url.path.startswith("/v4/spreadsheets/"):
+            import json
+            import re
+            from urllib.parse import unquote
+
+            if request.method == "GET" and "/values/" not in request.url.path:
+                return httpx.Response(
+                    200,
+                    json={
+                        "sheets": [
+                            {
+                                "properties": {
+                                    "sheetId": 0,
+                                    "title": "Sheet1",
+                                    "gridProperties": {"rowCount": 1000, "columnCount": 26},
+                                }
+                            }
+                        ]
+                    },
+                )
+            a1 = (
+                unquote(request.url.path.split("/values/", 1)[1]).removesuffix(":append")
+                if "/values/" in request.url.path
+                else ""
+            )
+            numbers = [int(n) for n in re.findall(r"\d+", a1.split("!")[-1])]
+            start, end = (
+                numbers if len(numbers) == 2 else (numbers[0], numbers[0]) if numbers else (1, 100)
+            )
+            if request.method == "GET":
+                return httpx.Response(
+                    200, json={"range": a1, "values": self.sheet_values[start - 1 : end]}
+                )
+            payload = json.loads(request.content)
+            self.writes.append(
+                {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "params": dict(request.url.params),
+                    "body": payload,
+                }
+            )
+            values = payload.get("values", [])
+            if request.url.path.endswith(":append"):
+                self.sheet_values.extend(values)
+            elif request.method == "PUT":
+                self.sheet_values[start - 1 : start - 1 + len(values)] = values
+            if self.lose_write_response:
+                raise httpx.ReadTimeout("Synthetic lost response", request=request)
+            receipt = {
+                "updatedRange": a1,
+                "updatedRows": len(values),
+                "updatedCells": sum(map(len, values)),
+            }
+            return httpx.Response(
+                200, json={"updates": receipt} if request.url.path.endswith(":append") else receipt
             )
         raise AssertionError(f"Unexpected fixture endpoint {request.method} {request.url.path}")
 
