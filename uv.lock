@@ -1482,6 +1482,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "sqlalchemy" },
     { name = "typesafe-sdk" },
+    { name = "tzdata" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1561,6 +1562,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'embedding'", specifier = ">=4.57,<5" },
     { name = "transformers", marker = "extra == 'ingestion'", specifier = ">=4.57,<5" },
     { name = "typesafe-sdk", specifier = "==0.7.5" },
+    { name = "tzdata", specifier = ">=2026.5,<2027" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.35,<1" },
 ]
 provides-extras = ["embedding", "ingestion", "dev"]

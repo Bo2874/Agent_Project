@@ -87,7 +87,8 @@ x-runtime-environment: &runtime-environment
   GOOGLE_CREDENTIAL_ENCRYPTION_KEYS: "${DEV_GOOGLE_CREDENTIAL_ENCRYPTION_KEYS:-}"
   GOOGLE_PICKER_API_KEY: "${DEV_GOOGLE_PICKER_API_KEY:-}"
   GOOGLE_CLOUD_PROJECT_NUMBER: "${DEV_GOOGLE_CLOUD_PROJECT_NUMBER:-}"
-  AUTOMATIONS_ENABLED: "false"
+  AUTOMATIONS_ENABLED: "${DEV_AUTOMATIONS_ENABLED:-false}"
+  AUTOMATION_SCHEDULE_GRACE_SECONDS: "${DEV_AUTOMATION_SCHEDULE_GRACE_SECONDS:-60}"
   ARTIFACT_STORAGE_PATH: /app/data/artifacts
   ARTIFACT_RUNNER_URL: http://artifact-runner:8080
   ARTIFACT_RUNNER_KEY: "${DEV_ARTIFACT_RUNNER_KEY:-}"
@@ -218,6 +219,31 @@ services:
       - document_model_cache:/app/data/models
       - artifact_data:/app/data/artifacts
     networks: [default, artifact_private]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  scheduler:
+    <<: *runtime
+    profiles: [automations]
+    image: "${DEV_IMAGE_PREFIX:-personal-agent}-scheduler:${DEV_IMAGE_TAG:-dev}"
+    build:
+      context: .
+      dockerfile: infra/docker/app/Dockerfile
+      target: migrate
+    command: [python, -m, scripts.run_automation_scheduler]
+    environment:
+      <<: *runtime-environment
+      AUTOMATION_SCHEDULER_HEARTBEAT_PATH: /tmp/automation-scheduler-health.json
+    healthcheck:
+      test: [CMD, python, -m, scripts.check_automation_scheduler_health]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 6
     depends_on:
       postgres:
         condition: service_healthy

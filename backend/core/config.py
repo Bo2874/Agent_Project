@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     google_picker_api_key: str = ""
     google_cloud_project_number: str = ""
     automations_enabled: bool = False
+    automation_schedule_grace_seconds: int = Field(default=60, ge=1, le=300)
+    automation_scheduler_heartbeat_path: Path | None = None
     v2_enabled: bool = False
     v2_plugins_enabled: bool = False
     v2_routing_enabled: bool = False
@@ -248,7 +250,9 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("background_worker_heartbeat_path", mode="before")
+    @field_validator(
+        "background_worker_heartbeat_path", "automation_scheduler_heartbeat_path", mode="before"
+    )
     @classmethod
     def normalize_heartbeat_path(cls, value: object) -> object:
         return None if isinstance(value, str) and not value.strip() else value
