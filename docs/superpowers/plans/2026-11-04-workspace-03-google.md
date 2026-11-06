@@ -88,9 +88,9 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 
 **Interfaces:** `read_google_doc(context, ref) -> GoogleDocumentSnapshot`; `prepare_doc_edit(context, ref, edit: DocumentEdit) -> GoogleWriteProposal`; hai DTO `GoogleDocumentSnapshot` và `DocumentEdit` định nghĩa trong `backend/schemas/google.py`, gồm revision ID, text blocks/indices và typed edit operations. Execute qua mutation journal chung. Tools `google_docs_read`, `google_docs_create`, `google_docs_edit` có schema đóng.
 
-- [ ] Red tests read/edit text, batch index đúng sau nhiều thay đổi, revision đổi → không ghi approval cũ, ảnh/bảng ngoài phạm vi không bị full-replace ngầm, owner/type mismatch 404/unsupported.
-- [ ] Implement Docs batchUpdate với writeControl revision được API hỗ trợ; giữ component không sửa, reject edit không biểu diễn được. File mới do ứng dụng tạo đăng ký owner/work-context trước cho Agent dùng; tạo mới cũng journal unknown outcome.
-- [ ] Green unit và live trên Doc thử được chọn; đọc lại nội dung so yêu cầu, URL trả về validated. Commit `feat: add selected google docs text tools`.
+- [x] Red tests read/edit text, batch index đúng sau nhiều thay đổi, revision đổi → không ghi approval cũ, ảnh/bảng ngoài phạm vi không bị full-replace ngầm, owner/type mismatch 404/unsupported.
+- [x] Implement Docs batchUpdate với writeControl revision được API hỗ trợ; giữ component không sửa, reject edit không biểu diễn được. File mới do ứng dụng tạo đăng ký owner/work-context trước cho Agent dùng; tạo mới cũng journal unknown outcome.
+- [x] Green unit và live trên Doc thử được chọn; đọc lại nội dung so yêu cầu, URL trả về validated. Commit `feat: add selected google docs text tools`.
 
 ### Task 6: G6 — Artifact lên Drive và gate Connectors
 

@@ -9,10 +9,18 @@ from agent_core.tools import ToolResult
 from agent_core.tools.types import ToolAuthorizationError
 from backend.core.config import get_settings
 from backend.database import SessionFactory
-from backend.models import AgentRun, Conversation, GoogleFileGrant, GoogleMutation, GoogleWorkFile
+from backend.models import (
+    AgentRun,
+    Conversation,
+    GoogleConnection,
+    GoogleFileGrant,
+    GoogleMutation,
+    GoogleWorkFile,
+)
 from backend.schemas.google import GoogleFileRef
 from backend.services.google.access import GoogleAccess, grant_view
 from backend.services.google.credentials import GoogleCredentials
+from backend.services.google.docs import GoogleDocs
 from backend.services.google.errors import GoogleServiceError
 from backend.services.google.sheets import GoogleSheets
 
@@ -22,6 +30,7 @@ class GoogleToolService:
         self.access = access or GoogleAccess(GoogleCredentials(get_settings()))
         self.sessions = sessions or SessionFactory
         self.sheets = GoogleSheets(self.access, self.sessions)
+        self.docs = GoogleDocs(self.access, self.sessions)
 
     async def check_run(self, session, context):
         run = await session.scalar(
@@ -66,6 +75,26 @@ class GoogleToolService:
                         }
                     )
         return replace(context, google_file_refs=tuple(refs))
+
+    async def connection_context(self, context):
+        async with self.sessions() as session:
+            await self.check_run(session, context)
+            rows = await session.scalars(
+                select(GoogleConnection).where(
+                    GoogleConnection.owner_id == context.user_id,
+                    GoogleConnection.status == "connected",
+                    GoogleConnection.offline_ready.is_(True),
+                )
+            )
+            return [
+                {
+                    "connection_id": str(row.id),
+                    "account_name": row.account_name,
+                    "account_email": row.account_email,
+                    "generation": row.generation,
+                }
+                for row in rows
+            ]
 
     async def guard(self, context, name):
         if not name.startswith("google_"):
@@ -130,13 +159,49 @@ class GoogleToolService:
             raise GoogleServiceError(404, "Google file is outside this run's pinned scope")
 
     async def invoke(self, context, name, arguments):
-        from agent_core.tools.google import SheetPrepareInput, SheetReadInput
+        from agent_core.tools.google import (
+            DocPrepareInput,
+            DocReadInput,
+            SheetPrepareInput,
+            SheetReadInput,
+        )
         from backend.schemas.google import GoogleCommitInput
 
         try:
             await self.guard(context, name)
             async with self.sessions() as session:
                 await self.check_run(session, context)
+            if name == "google_docs_read":
+                args = DocReadInput.model_validate(arguments)
+                async with self.sessions() as session:
+                    await self.require_ref(session, context, args.ref)
+                result = await self.docs.read(
+                    context, args.ref, offset=args.offset, limit=args.limit
+                )
+                return ToolResult.success(
+                    result.model_dump_json(), data={"snapshot": result.model_dump(mode="json")}
+                )
+            if name == "google_docs_prepare":
+                args = DocPrepareInput.model_validate(arguments)
+                if args.kind == "edit":
+                    async with self.sessions() as session:
+                        await self.require_ref(session, context, args.ref)
+                    proposal = await self.docs.prepare(context, args.ref, args.edit)
+                else:
+                    proposal = await self.docs.prepare_create(
+                        context, args.connection_id, title=args.title
+                    )
+                data = {
+                    "proposal": proposal.model_dump(mode="json"),
+                    "commit_arguments": proposal.commit_arguments(),
+                }
+                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
+            if name in {"google_docs_edit", "google_docs_create"}:
+                args = GoogleCommitInput.model_validate(arguments)
+                method = self.docs.execute if name == "google_docs_edit" else self.docs.create
+                receipt = await method(context, **args.model_dump())
+                data = receipt.model_dump(mode="json")
+                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
             if name == "google_sheets_read":
                 args = SheetReadInput.model_validate(arguments)
                 async with self.sessions() as session:

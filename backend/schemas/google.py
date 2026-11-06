@@ -144,3 +144,51 @@ class GoogleWriteReceipt(GoogleModel):
     updated_cells: int = Field(default=0, ge=0)
     url: str
     file_ref: GoogleFileRef | None = None
+
+
+class GoogleTextBlock(GoogleModel):
+    tab_id: str | None
+    start_index: int
+    end_index: int
+    text: str
+
+
+class GoogleDocumentSnapshot(GoogleModel):
+    file_id: GoogleFileId
+    revision_id: str | None
+    blocks: list[GoogleTextBlock]
+    next_offset: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DocumentTextOperation(GoogleModel):
+    kind: Literal["insert_text", "delete_text", "replace_text"]
+    start_index: int = Field(ge=1, le=2000000)
+    end_index: int | None = Field(default=None, ge=2, le=2000000)
+    text: str = Field(default="", max_length=50000)
+
+    @model_validator(mode="after")
+    def valid_operation(self):
+        if self.kind == "insert_text":
+            if not self.text or self.end_index is not None:
+                raise ValueError("Insert requires text and no end index")
+        elif self.end_index is None or self.end_index <= self.start_index:
+            raise ValueError("Delete/replace requires a nonempty explicit range")
+        if self.kind == "delete_text" and self.text:
+            raise ValueError("Delete does not accept replacement text")
+        self.text.encode("utf-16-le")
+        if any(ord(char) < 32 and char not in "\n\t" for char in self.text):
+            raise ValueError("Control characters are not supported")
+        return self
+
+
+class DocumentEdit(GoogleModel):
+    revision_id: str = Field(min_length=1, max_length=256)
+    tab_id: str | None = Field(default=None, min_length=1, max_length=128)
+    operations: list[DocumentTextOperation] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def bounded_edit(self):
+        if len(self.model_dump_json()) > 200000:
+            raise ValueError("Document edit exceeds limit")
+        return self

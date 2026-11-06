@@ -10,11 +10,11 @@ from agent_core.tools import ToolExecutor, ToolRegistry
 from backend.models import AgentRun
 
 
-async def tools(db):
+async def tools(db, file_id="sheet-a"):
     from agent_core.tools.google import register_google_tools
     from backend.services.google.tools import GoogleToolService
 
-    access, context, ref = await selected(db)
+    access, context, ref = await selected(db, file_id)
     run = AgentRun(id=uuid4(), conversation_id=db.conversation, status="running")
     async with db.sessions() as session:
         session.add(run)
@@ -108,6 +108,65 @@ def test_google_catalog_closed_and_bounded():
         entry = registry.get(name)
         assert entry.policy.requires_approval and not entry.policy.idempotent
         assert entry.policy.max_retries == 0
+
+
+def test_combined_workspace_catalog_fits_chat_schema_budget():
+    from agent_core.tools.artifacts import register_artifact_tools
+    from agent_core.tools.google import register_google_tools
+    from agent_core.tools.selector import ToolSelector
+    from backend.core.config import Settings
+    from backend.routes.chat import chat_tool_selection_config
+
+    registry = ToolRegistry()
+    register_artifact_tools(registry, None)
+    register_google_tools(registry, None)
+    settings = Settings(
+        _env_file=None,
+        db_password="fixture",
+        auth_secret_key="fixture" * 8,
+        workspace_artifacts_enabled=True,
+        google_connector_enabled=True,
+    )
+    names = tuple(entry.tool.name for entry in registry.list_accessible_tools("user"))
+    selection = ToolSelector(chat_tool_selection_config(settings)).fit(
+        registry, "user", names, mode="all", required=names, max_tools=len(names)
+    )
+    assert len(selection.tools) == len(names)
+
+
+@pytest.mark.parametrize(
+    "query,required",
+    [
+        (
+            "Search web AI repositories and append to Google Sheets",
+            {"search_web", "google_sheets_read", "google_sheets_prepare", "google_sheets_append"},
+        ),
+        (
+            "Read Google Sheets and update cell B2",
+            {"google_sheets_read", "google_sheets_prepare", "google_sheets_update"},
+        ),
+    ],
+)
+def test_routed_google_workflows_keep_prepare_and_research_tools(query, required):
+    from agent_core.tools.google import register_google_tools
+    from agent_core.tools.selector import ToolSelector
+    from agent_core.tools.web_search import WebSearchConfig, register_web_search_tool
+    from backend.core.config import Settings
+    from backend.routes.chat import chat_tool_selection_config
+
+    registry = ToolRegistry()
+    register_google_tools(registry, None)
+    register_web_search_tool(registry, WebSearchConfig(api_key="fixture"))
+    config = chat_tool_selection_config(
+        Settings(
+            _env_file=None,
+            db_password="fixture",
+            auth_secret_key="fixture" * 8,
+            google_connector_enabled=True,
+        )
+    )
+    selection = ToolSelector(config).select(registry, "user", query)
+    assert required <= selection.loaded_names
 
 
 @pytest.mark.parametrize("scenario", ["read", "research", "update"])

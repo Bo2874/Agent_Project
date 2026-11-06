@@ -52,9 +52,62 @@ class AuthorizedGoogleFile:
     token: str = field(repr=False)
 
 
+@dataclass(frozen=True)
+class AuthorizedGoogleConnection:
+    connection_id: object
+    connection_generation: int
+    token: str = field(repr=False)
+
+
 class GoogleAccess:
     def __init__(self, credentials):
         self.credentials = credentials
+
+    async def authorize_connection(self, session, context, connection_id):
+        await self.conversation(session, context.user_id, context.conversation_id)
+        row = await self.credentials.owned(session, context.user_id, connection_id)
+        generation = row.generation
+        token = await self.credentials.access_token(session, context.user_id, connection_id)
+        row = await self.credentials.owned(session, context.user_id, connection_id)
+        if row.status != "connected" or row.generation != generation:
+            raise GoogleServiceError(409, "Google connection changed; prepare again")
+        return AuthorizedGoogleConnection(connection_id, generation, token)
+
+    async def register_created(self, session, context, auth, metadata):
+        ref = GoogleFileRef(
+            connection_id=auth.connection_id,
+            file_id=metadata["id"],
+            context_id=context.conversation_id,
+        )
+        connection = await self.credentials.owned(
+            session, context.user_id, auth.connection_id, lock=True
+        )
+        await self.conversation(session, context.user_id, context.conversation_id)
+        if connection.status != "connected" or connection.generation != auth.connection_generation:
+            raise GoogleServiceError(409, "Google connection changed during creation")
+        grant = GoogleFileGrant(
+            owner_id=context.user_id,
+            connection_id=auth.connection_id,
+            file_id=ref.file_id,
+            name=metadata["name"],
+            mime_type=metadata["mimeType"],
+            can_edit=bool(metadata.get("capabilities", {}).get("canEdit")),
+            generation=1,
+            connection_generation=connection.generation,
+            revoked=False,
+        )
+        session.add(grant)
+        await session.flush()
+        session.add(
+            GoogleWorkFile(
+                context_id=context.conversation_id,
+                grant_id=grant.id,
+                owner_id=context.user_id,
+                connection_id=auth.connection_id,
+                grant_generation=1,
+            )
+        )
+        return ref
 
     async def conversation(self, session, owner, context_id):
         row = await session.scalar(

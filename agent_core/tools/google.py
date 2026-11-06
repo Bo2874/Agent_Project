@@ -1,10 +1,19 @@
 """Closed Google operations; credentials and authorization always belong to the host."""
 
-from pydantic import Field
+from typing import Literal
+from uuid import UUID
+
+from pydantic import Field, model_validator
 
 from agent_core.contracts import CapabilityDescriptor
 from agent_core.tools import ToolExecutionPolicy, ToolRoutingPolicy, create_context_tool
-from backend.schemas.google import GoogleCommitInput, GoogleFileRef, GoogleModel, SheetChange
+from backend.schemas.google import (
+    DocumentEdit,
+    GoogleCommitInput,
+    GoogleFileRef,
+    GoogleModel,
+    SheetChange,
+)
 
 
 class SheetReadInput(GoogleModel):
@@ -19,8 +28,66 @@ class SheetPrepareInput(GoogleModel):
     change: SheetChange
 
 
+class DocReadInput(GoogleModel):
+    ref: GoogleFileRef
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=100, ge=1, le=100)
+
+
+class DocPrepareInput(GoogleModel):
+    kind: Literal["edit", "create"]
+    ref: GoogleFileRef | None = None
+    edit: DocumentEdit | None = None
+    connection_id: UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def matching_kind(self):
+        if self.kind == "edit":
+            if (
+                self.ref is None
+                or self.edit is None
+                or self.connection_id is not None
+                or self.title is not None
+            ):
+                raise ValueError("Edit requires only ref and edit")
+        elif (
+            self.connection_id is None
+            or self.title is None
+            or self.ref is not None
+            or self.edit is not None
+        ):
+            raise ValueError("Create requires only connection_id and title")
+        return self
+
+
 def register_google_tools(registry, service):
     entries = [
+        (
+            "google_docs_read",
+            DocReadInput,
+            "Read selected native Google Docs text runs, tab IDs, revision and UTF-16 indices. "
+            "Paginate offset/limit. Non-text components are preserved, not editable.",
+        ),
+        (
+            "google_docs_prepare",
+            DocPrepareInput,
+            "LOCAL Docs proposal. kind=edit: ref plus edit with revision_id and exact tab_id "
+            "and nonoverlapping UTF-16 text operations within runs returned by read. "
+            "kind=create: connection_id/title for a blank native Doc. Returns commit_arguments.",
+        ),
+        (
+            "google_docs_create",
+            GoogleCommitInput,
+            "Create one blank Google Doc from EXACT google_docs_prepare commit_arguments after "
+            "approval; then prepare/edit text. Returns file_ref for this run. Never retry unknown.",
+        ),
+        (
+            "google_docs_edit",
+            GoogleCommitInput,
+            "Apply EXACT google_docs_prepare commit_arguments after approval. Preserves other "
+            "components, checks required revision. Unknown outcome requires reconciliation.",
+        ),
         (
             "google_sheets_read",
             SheetReadInput,

@@ -127,7 +127,9 @@ logger = logging.getLogger(__name__)
 def chat_tool_selection_config(settings):
     return ToolSelectionConfig(
         lazy_load_threshold=settings.tool_lazy_load_threshold,
-        max_loaded_tools=settings.tool_max_loaded,
+        max_loaded_tools=max(settings.tool_max_loaded, 12)
+        if settings.google_connector_enabled
+        else settings.tool_max_loaded,
         schema_token_budget=10000 if settings.workspace_artifacts_enabled else 6000,
     )
 
@@ -395,6 +397,12 @@ async def stream_assistant_response(
                     ContextBlock(
                         source="selected_google_files",
                         content=json.dumps(list(tool_context.google_file_refs), ensure_ascii=False),
+                    ),
+                    ContextBlock(
+                        source="google_connections",
+                        content=json.dumps(
+                            await google_tools.connection_context(tool_context), ensure_ascii=False
+                        ),
                     ),
                     *history_summary_context,
                 ),

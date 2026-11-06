@@ -248,7 +248,10 @@ def test_workspace_catalog_fits_chat_schema_allowance():
     from backend.routes.chat import chat_tool_selection_config
 
     settings = SimpleNamespace(
-        workspace_artifacts_enabled=True, tool_lazy_load_threshold=8, tool_max_loaded=4
+        workspace_artifacts_enabled=True,
+        tool_lazy_load_threshold=8,
+        tool_max_loaded=4,
+        google_connector_enabled=False,
     )
     registry = ToolRegistry()
     register_artifact_tools(registry, object())
