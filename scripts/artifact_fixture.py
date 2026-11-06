@@ -147,13 +147,26 @@ class OfflineArtifactModel:
 
 
 class OfflineArtifactRuntime:
-    def __init__(self, settings, sessions, service, *, runner_factory=None):
+    def __init__(
+        self,
+        settings,
+        sessions,
+        service,
+        *,
+        runner_factory=None,
+        model_factory=OfflineArtifactModel,
+        tool_registry=None,
+    ):
         self.settings, self.sessions, self.service = settings, sessions, service
-        self.registry = ToolRegistry()
-        register_artifact_tools(
-            self.registry,
-            ArtifactToolService(service=service, sessions=sessions, runner_factory=runner_factory),
-        )
+        self.model_factory = model_factory
+        self.registry = tool_registry if tool_registry is not None else ToolRegistry()
+        if tool_registry is None:
+            register_artifact_tools(
+                self.registry,
+                ArtifactToolService(
+                    service=service, sessions=sessions, runner_factory=runner_factory
+                ),
+            )
         self.patches, self.run_ids = ExitStack(), []
 
     async def start(self):
@@ -204,7 +217,7 @@ class OfflineArtifactRuntime:
                 patch.object(module, "get_langgraph_checkpointer", lambda: self.checkpoints.saver)
             )
         self.patches.enter_context(
-            patch.object(dependencies_llm, "create_chat_model", lambda **_: OfflineArtifactModel())
+            patch.object(dependencies_llm, "create_chat_model", lambda **_: self.model_factory())
         )
         self.patches.enter_context(
             patch.object(dependencies_tools, "get_tool_registry", lambda: self.registry)
@@ -259,14 +272,14 @@ class OfflineArtifactRuntime:
                 conversation_id=conversation_id,
                 user_message_id=message.id,
                 user_id=owner,
-                model=OfflineArtifactModel(),
+                model=self.model_factory(),
                 user_message_content=query,
                 user_message_observed_at=datetime.now(UTC),
                 model_messages=[{"role": "user", "content": query}],
                 limits=AgentLimits(max_total_tokens=20000),
                 context_budget=ContextTokenBudget(),
                 tool_selection_config=ToolSelectionConfig(
-                    lazy_load_threshold=100, max_loaded_tools=4, schema_token_budget=12000
+                    lazy_load_threshold=100, max_loaded_tools=16, schema_token_budget=12000
                 ),
                 skill_selection_config=SkillSelectionConfig(),
                 history_summary_context=(),

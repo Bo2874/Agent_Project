@@ -77,10 +77,10 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 
 **Interfaces:** `register_google_tools(registry: ToolRegistry, service: GoogleToolService) -> None`; tools `google_sheets_read`, `google_sheets_append`, `google_sheets_update`; mapping định dạng vào update schema. `GoogleToolService` lấy authority từ run DB, không tin authority model gửi. Proposal/approval nội bộ trả interrupt timeline hiện có; tool result chỉ summary/receipt/validated URL.
 
-- [ ] Red tests đọc/phân tích, research→append, read→update với model fixture; assert search tool thực sự được gọi, file ID đúng, approval ghi đè phải được duyệt; quyền bị revoke chặn lời gọi tiếp theo cả khi schema/cached result cũ còn.
-- [ ] Implement adapter vào registry, routing metadata và context selected files; không tool `google_workspace` nhận arbitrary HTTP. Chủ động giới hạn/nhóm schema theo catalog sẵn có.
-- [ ] Green offline fixtures; chạy `python -m scripts.check_google_connector --offline`. Sau đó OAuth thủ công và `--live --connection-id <id> --file-id <selected-test-sheet>` trên file thử user chọn; script hiện kế hoạch thay đổi, không chạm tài liệu khác. Chỉ dọn dữ liệu fixture đã xác định, không xóa Sheet.
-- [ ] Nghiệm thu đọc, thêm hàng, cập nhật vùng, revoke/reconnect và unknown outcome; ghi rõ live chưa chạy nếu thiếu account. Commit `feat: integrate google sheets tools with chat approvals`.
+- [x] Red tests đọc/phân tích, research→append, read→update với model fixture; assert search tool thực sự được gọi, file ID đúng, approval ghi đè phải được duyệt; quyền bị revoke chặn lời gọi tiếp theo cả khi schema/cached result cũ còn.
+- [x] Implement adapter vào registry, routing metadata và context selected files; không tool `google_workspace` nhận arbitrary HTTP. Chủ động giới hạn/nhóm schema theo catalog sẵn có.
+- [x] Green offline fixtures; chạy `python -m scripts.check_google_connector --offline`. Sau đó OAuth thủ công và `--live --connection-id <id> --file-id <selected-test-sheet>` trên file thử user chọn; script hiện kế hoạch thay đổi, không chạm tài liệu khác. Chỉ dọn dữ liệu fixture đã xác định, không xóa Sheet.
+- [x] Nghiệm thu đọc, thêm hàng, cập nhật vùng, revoke/reconnect và unknown outcome; ghi rõ live chưa chạy nếu thiếu account. Commit `feat: integrate google sheets tools with chat approvals`.
 
 ### Task 5: G5 — Google Docs văn bản
 

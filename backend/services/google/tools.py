@@ -1,0 +1,171 @@
+"""Owner/run bridge for chat and background workers. Model arguments grant no authority."""
+
+import json
+from dataclasses import replace
+
+from sqlalchemy import select
+
+from agent_core.tools import ToolResult
+from agent_core.tools.types import ToolAuthorizationError
+from backend.core.config import get_settings
+from backend.database import SessionFactory
+from backend.models import AgentRun, Conversation, GoogleFileGrant, GoogleMutation, GoogleWorkFile
+from backend.schemas.google import GoogleFileRef
+from backend.services.google.access import GoogleAccess, grant_view
+from backend.services.google.credentials import GoogleCredentials
+from backend.services.google.errors import GoogleServiceError
+from backend.services.google.sheets import GoogleSheets
+
+
+class GoogleToolService:
+    def __init__(self, *, access=None, sessions=None):
+        self.access = access or GoogleAccess(GoogleCredentials(get_settings()))
+        self.sessions = sessions or SessionFactory
+        self.sheets = GoogleSheets(self.access, self.sessions)
+
+    async def check_run(self, session, context):
+        run = await session.scalar(
+            select(AgentRun)
+            .join(Conversation, Conversation.id == AgentRun.conversation_id)
+            .where(
+                AgentRun.id == context.run_id,
+                AgentRun.conversation_id == context.conversation_id,
+                Conversation.user_id == context.user_id,
+            )
+        )
+        if run is None or run.status in {"cancelled", "failed"}:
+            raise GoogleServiceError(404, "Active owned Google run not found")
+
+    async def pin(self, context):
+        async with self.sessions() as session:
+            await self.check_run(session, context)
+            rows = await session.execute(
+                select(GoogleFileGrant)
+                .join(GoogleWorkFile, GoogleWorkFile.grant_id == GoogleFileGrant.id)
+                .where(
+                    GoogleWorkFile.owner_id == context.user_id,
+                    GoogleWorkFile.context_id == context.conversation_id,
+                    GoogleFileGrant.revoked.is_(False),
+                    GoogleWorkFile.grant_generation == GoogleFileGrant.generation,
+                )
+            )
+            refs = []
+            for grant in rows.scalars():
+                connection = await self.access.credentials.owned(
+                    session, context.user_id, grant.connection_id
+                )
+                if (
+                    connection.status == "connected"
+                    and grant.connection_generation == connection.generation
+                ):
+                    refs.append(
+                        {
+                            **grant_view(grant, context.conversation_id),
+                            "grant_generation": grant.generation,
+                            "connection_generation": connection.generation,
+                        }
+                    )
+        return replace(context, google_file_refs=tuple(refs))
+
+    async def guard(self, context, name):
+        if not name.startswith("google_"):
+            return
+        try:
+            async with self.sessions() as session:
+                await self.check_run(session, context)
+                for pinned in context.google_file_refs:
+                    ref = GoogleFileRef.model_validate(
+                        {key: pinned[key] for key in ("connection_id", "file_id", "context_id")}
+                    )
+                    action = (
+                        "read_sheet"
+                        if pinned["mime_type"] == "application/vnd.google-apps.spreadsheet"
+                        else "read_doc"
+                    )
+                    # Non-native uploaded files are export references, not Docs/Sheets tools.
+                    if pinned["mime_type"] not in {
+                        "application/vnd.google-apps.spreadsheet",
+                        "application/vnd.google-apps.document",
+                    }:
+                        connection = await self.access.credentials.owned(
+                            session, context.user_id, ref.connection_id
+                        )
+                        if (
+                            connection.status != "connected"
+                            or connection.generation != pinned["connection_generation"]
+                        ):
+                            raise GoogleServiceError(409, "Google connection changed")
+                        continue
+                    auth = await self.access.authorize(session, context, ref, action)
+                    if (
+                        auth.grant_generation != pinned["grant_generation"]
+                        or auth.connection_generation != pinned["connection_generation"]
+                    ):
+                        raise GoogleServiceError(409, "Google scope changed")
+        except GoogleServiceError:
+            raise ToolAuthorizationError("google_authorization_changed") from None
+
+    async def require_ref(self, session, context, ref):
+        if any(
+            str(item["connection_id"]) == str(ref.connection_id)
+            and item["file_id"] == ref.file_id
+            and str(item["context_id"]) == str(ref.context_id)
+            for item in context.google_file_refs
+        ):
+            return
+        # Only outputs created by this same run may extend its pinned input scope.
+        created = await session.scalars(
+            select(GoogleMutation).where(
+                GoogleMutation.owner_id == context.user_id,
+                GoogleMutation.run_id == context.run_id,
+                GoogleMutation.context_id == context.conversation_id,
+                GoogleMutation.status == "completed",
+                GoogleMutation.kind.in_(["create_doc", "upload_artifact"]),
+            )
+        )
+        if not any(
+            row.receipt and row.receipt.get("file_ref") == ref.model_dump(mode="json")
+            for row in created
+        ):
+            raise GoogleServiceError(404, "Google file is outside this run's pinned scope")
+
+    async def invoke(self, context, name, arguments):
+        from agent_core.tools.google import SheetPrepareInput, SheetReadInput
+        from backend.schemas.google import GoogleCommitInput
+
+        try:
+            await self.guard(context, name)
+            async with self.sessions() as session:
+                await self.check_run(session, context)
+            if name == "google_sheets_read":
+                args = SheetReadInput.model_validate(arguments)
+                async with self.sessions() as session:
+                    await self.require_ref(session, context, args.ref)
+                result = await self.sheets.read(
+                    context, args.ref, range_a1=args.range_a1, offset=args.offset, limit=args.limit
+                )
+                return ToolResult.success(
+                    result.model_dump_json(), data={"snapshot": result.model_dump(mode="json")}
+                )
+            if name == "google_sheets_prepare":
+                args = SheetPrepareInput.model_validate(arguments)
+                async with self.sessions() as session:
+                    await self.require_ref(session, context, args.ref)
+                proposal = await self.sheets.prepare(context, args.ref, args.change)
+                data = {
+                    "proposal": proposal.model_dump(mode="json"),
+                    "commit_arguments": proposal.commit_arguments(),
+                }
+                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
+            if name in {"google_sheets_append", "google_sheets_update"}:
+                args = GoogleCommitInput.model_validate(arguments)
+                if (args.preview.operation == "append_rows") != (name == "google_sheets_append"):
+                    raise GoogleServiceError(422, "Sheets commit tool does not match proposal")
+                receipt = await self.sheets.execute(context, **args.model_dump())
+                data = receipt.model_dump(mode="json")
+                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
+            raise GoogleServiceError(422, "Unsupported Google operation")
+        except ToolAuthorizationError as error:
+            return ToolResult.failure(str(error), error_code=error.code)
+        except GoogleServiceError as error:
+            return ToolResult.failure(error.detail, error_code=error.code)

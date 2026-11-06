@@ -100,6 +100,17 @@ async def selected_google_files(session, owner, conversation_id):
     )
 
 
+def google_tool_service():
+    from backend.core.config import get_settings
+    from backend.services.google.access import GoogleAccess
+    from backend.services.google.credentials import GoogleCredentials
+    from backend.services.google.tools import GoogleToolService
+
+    return GoogleToolService(
+        access=GoogleAccess(GoogleCredentials(get_settings())), sessions=SessionFactory
+    )
+
+
 async def load_artifact_context(*, owner: UUID, conversation_id: UUID, version_ids=()):
     from sqlalchemy import or_
 

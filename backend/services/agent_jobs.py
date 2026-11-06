@@ -54,6 +54,18 @@ async def enqueue_run(arguments):
                 selection_session, arguments["user_id"], arguments["conversation_id"]
             )
             payload["artifact_version_ids"] = [str(row.id) for row in selected]
+    if get_settings().google_connector_enabled:
+        from backend.services.agent_context import google_tool_service
+
+        pinned = await google_tool_service().pin(
+            ToolContext(
+                user_id=arguments["user_id"],
+                conversation_id=arguments["conversation_id"],
+                run_id=run_id,
+                user_role="user",
+            )
+        )
+        payload["google_file_refs"] = list(pinned.google_file_refs)
     async with SessionFactory() as session:
         conversation = await session.scalar(
             select(Conversation)
@@ -234,6 +246,7 @@ async def agent_run_handler(context, payload):
                 artifact_version_ids=tuple(
                     UUID(value) for value in data.get("artifact_version_ids", [])
                 ),
+                google_file_refs=tuple(data.get("google_file_refs", [])),
             ),
             limits=AgentLimits(**data["limits"]),
             context_budget=context_budget,

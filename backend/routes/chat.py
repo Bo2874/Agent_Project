@@ -383,6 +383,31 @@ async def stream_assistant_response(
 
     try:
         artifact_context = ()
+        if settings.google_connector_enabled:
+            from backend.services.agent_context import google_tool_service
+
+            google_tools = google_tool_service()
+            if operation_journal is None:
+                tool_context = await google_tools.pin(tool_context)
+            history_summary_context = fit_context_blocks(
+                "history_summary",
+                (
+                    ContextBlock(
+                        source="selected_google_files",
+                        content=json.dumps(list(tool_context.google_file_refs), ensure_ascii=False),
+                    ),
+                    *history_summary_context,
+                ),
+                context_budget.history_tokens,
+            )
+            google_context, upstream_guard = tool_context, tool_context.authorization_guard
+
+            async def google_guard(name):
+                if upstream_guard:
+                    await upstream_guard(name)
+                await google_tools.guard(google_context, name)
+
+            tool_context = replace(tool_context, authorization_guard=google_guard)
         if settings.workspace_artifacts_enabled:
             if operation_journal is None:
                 from backend.services.artifacts.selection import selected_versions

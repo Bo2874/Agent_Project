@@ -51,6 +51,23 @@ async def test_sent_but_lost_response_is_unknown_no_retry(google_db):  # noqa: F
     assert len(db.provider.writes) == 1
     async with db.sessions() as session:
         assert (await session.get(GoogleMutation, proposal.id)).status == "unknown"
+    # A new model tool-call ID must not turn an ambiguous append into a duplicate.
+    from backend.schemas.google import GoogleFileRef, SheetChange
+
+    async with db.sessions() as session:
+        row = await session.get(GoogleMutation, proposal.id)
+        ref = GoogleFileRef.model_validate(row.payload["request"]["ref"])
+    with pytest.raises(GoogleServiceError) as blocked:
+        await sheets.prepare(
+            replace(context, operation_key="new-key-after-unknown"),
+            ref,
+            SheetChange(
+                kind="append_rows",
+                range_a1="Sheet1!A1:B100",
+                rows=[["https://new.example/repo", "New"]],
+            ),
+        )
+    assert blocked.value.code == "google_outcome_unknown"
 
 
 async def test_replayed_completed_write_reuses_receipt(google_db):  # noqa: F811

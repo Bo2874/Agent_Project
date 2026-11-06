@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from agent_core.tools.approval import approval_fingerprint
 from agent_core.tools.registry import RegisteredTool, ToolNotFoundError, ToolRegistry
 from agent_core.tools.types import ToolAuthorizationError, ToolContext, ToolResult
 
@@ -103,6 +104,13 @@ class ToolExecutor:
                 error_code="tool_approval_required",
             )
 
+        # Only this host branch can attest that the exact arguments were approved.
+        context = replace(
+            context,
+            approved_call=(tool_name, approval_fingerprint(tool_name, arguments))
+            if approval_granted is True
+            else None,
+        )
         max_attempts = policy.max_retries + 1 if policy.idempotent else 1
         for attempt in range(1, max_attempts + 1):
             if tool_name not in registry or registry.get(tool_name) is not registered:

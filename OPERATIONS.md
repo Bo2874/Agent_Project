@@ -354,3 +354,13 @@ Dọn staging cũ bằng `python -m scripts.reconcile_artifacts` để xem trư�
 người vận hành chọn thực thi. Mặc định grace 24 giờ, chỉ xóa file không còn DB reference,
 giữ owner lock; DB không sẵn sàng thì không dọn. Giữ volume journal/tombstone khi restart.
 Rollback tính năng bằng flag; không xóa binary volume hoặc downgrade DB để ẩn UI.
+
+## Google Connectors — Plan03
+
+Flag `GOOGLE_CONNECTOR_ENABLED=false` mặc định. Migration 0033 thêm credential, file grants
+và journal; web/worker cần cùng cấu hình OAuth/keyring khi bật. Gate offline:
+`python -m scripts.check_google_connector --offline`, với `GOOGLE_TEST_DATABASE_URL` trỏ tới
+PostgreSQL riêng có tên kết thúc `_test`. Gate dùng model/Google HTTP fixture, worker,
+checkpoint và approval thật; không gọi Google hoặc model trả phí. Không coi mock pass là
+nghiệm thu Google thật. `--live --connection-id ... --file-id ...` chỉ in checklist trên file
+thử được chọn; thao tác ghi thật đi qua chat và preview/approval của người dùng.

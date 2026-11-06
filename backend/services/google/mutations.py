@@ -46,6 +46,21 @@ class GoogleMutations:
     def __init__(self, access, sessions):
         self.access, self.sessions = access, sessions
 
+    async def unresolved(self, session, owner, connection_id, file_id, *, exclude=None):
+        pending = await session.scalar(
+            select(GoogleMutation.id)
+            .where(
+                GoogleMutation.owner_id == owner,
+                GoogleMutation.connection_id == connection_id,
+                GoogleMutation.file_id == file_id,
+                GoogleMutation.status.in_(["sent", "unknown"]),
+                *([GoogleMutation.id != exclude] if exclude else []),
+            )
+            .limit(1)
+        )
+        if pending is not None:
+            raise unknown()
+
     async def prepare(
         self,
         context,
@@ -82,6 +97,7 @@ class GoogleMutations:
                 )
             )
             if existing is None:
+                await self.unresolved(session, context.user_id, connection_id, file_id)
                 row = GoogleMutation(
                     id=uuid4(),
                     owner_id=context.user_id,
@@ -143,6 +159,9 @@ class GoogleMutations:
         )
         if connection.status != "connected" or connection.generation != row.connection_generation:
             raise GoogleServiceError(409, "Google connection changed; prepare a new approval")
+        await self.unresolved(
+            session, context.user_id, row.connection_id, row.file_id, exclude=row.id
+        )
         await self.access.conversation(session, context.user_id, context.conversation_id)
         if row.file_id is not None:
             grant = await session.scalar(

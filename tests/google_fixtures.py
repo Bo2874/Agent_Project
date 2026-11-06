@@ -127,9 +127,23 @@ class FakeGoogle:
             start, end = (
                 numbers if len(numbers) == 2 else (numbers[0], numbers[0]) if numbers else (1, 100)
             )
+            columns = re.findall(r"([A-Z]+)\d+", a1.split("!")[-1])
+
+            def column_index(value):
+                result = 0
+                for letter in value:
+                    result = result * 26 + ord(letter) - 64
+                return result - 1
+
+            first = column_index(columns[0]) if columns else 0
+            last = column_index(columns[-1]) + 1 if columns else 50
             if request.method == "GET":
                 return httpx.Response(
-                    200, json={"range": a1, "values": self.sheet_values[start - 1 : end]}
+                    200,
+                    json={
+                        "range": a1,
+                        "values": [row[first:last] for row in self.sheet_values[start - 1 : end]],
+                    },
                 )
             payload = json.loads(request.content)
             self.writes.append(
@@ -144,7 +158,12 @@ class FakeGoogle:
             if request.url.path.endswith(":append"):
                 self.sheet_values.extend(values)
             elif request.method == "PUT":
-                self.sheet_values[start - 1 : start - 1 + len(values)] = values
+                for index, cells in enumerate(values, start - 1):
+                    while len(self.sheet_values) <= index:
+                        self.sheet_values.append([])
+                    row = self.sheet_values[index]
+                    row.extend([None] * max(0, first + len(cells) - len(row)))
+                    row[first : first + len(cells)] = cells
             if self.lose_write_response:
                 raise httpx.ReadTimeout("Synthetic lost response", request=request)
             receipt = {
