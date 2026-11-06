@@ -2078,3 +2078,14 @@
   chưa bật feature, chưa đổi `.env` hoặc migrate DB đang dùng. User đã chọn chưa setup OAuth thật:
   **live Google NOT RUN**, chưa đạt điều kiện chuyển Plan04.
 - [Hướng dẫn cấu hình, nghiệm thu và giới hạn](docs/manual-google-connectors.md).
+
+### 2026-11-06 — Plan03 đã gộp local main
+
+- Theo yêu cầu người dùng, fetch origin rồi fast-forward tám commit từ `11b9632` đến `b1c7aa2`;
+  không có conflict. Chưa push; Google thật vẫn NOT RUN, không bật feature hay migrate DB đang dùng.
+- Dependency đã sync theo lock với `--inexact` để giữ các gói sẵn có. Hậu kiểm toàn suite trên main
+  đạt **1.208 passed, 59 skipped** (142,38 giây); các gate Docker không bật trong lượt hậu kiểm.
+  Source giống hệt đã qua gate Docker đầy đủ 1.266 passed/1 skipped trước gộp.
+- Lượt đầu dùng basetemp tùy chỉnh có một lỗi test thu hồi scratch đường dẫn dài; ghi rõ kết quả,
+  chẩn đoán và phần chưa xác định trong [biên bản](docs/acceptance/2026-11-06-google-connectors-merge.md).
+  Bảy test scratch và full suite sau đó đạt với temp mặc định, không sửa code hoặc assertion.

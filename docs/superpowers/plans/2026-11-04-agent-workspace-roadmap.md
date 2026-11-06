@@ -80,7 +80,7 @@
 - Plan01 đã triển khai, nghiệm thu offline và gộp vào `main` tại máy ngày 2026-11-05.
   Plan02 hoàn tất Word/PDF/preview và đã gộp local vào `main` tại `22def91`;
   gate offline 34 passed, hồi quy sau gộp 1.194 passed/2 skipped (1.106,74 giây).
-  Chưa push hoặc bật runtime. Plan03 đã hoàn tất triển khai, review và kiểm thử offline trên nhánh riêng:
+  Chưa push hoặc bật runtime. Plan03 đã hoàn tất triển khai, review và kiểm thử offline, gộp local main tại `b1c7aa2`:
   OAuth/chọn từng file, Sheets, Docs text và Drive export; gate Connectors 71 passed,
   hồi quy Docker 1.266 passed/1 Windows symlink skip. Bảy Important đã sửa, một Minor UX hoãn.
   Live Google NOT RUN theo lựa chọn user, chưa đạt điều kiện chuyển Plan04. Plan04 chưa triển khai.

@@ -7,7 +7,7 @@ Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memor
 **Hướng mở rộng mới đã duyệt ngày 2026-11-04:** giao diện A theo phong cách Claude,
 Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Automations theo lịch.
 Plan01 và Plan02 đã triển khai, nghiệm thu offline. Plan03 Google Connectors đã hoàn tất triển khai,
-review và kiểm thử offline trên nhánh riêng; chưa nghiệm thu Google thật, chưa chuyển sang Automations.
+review và kiểm thử offline, đã gộp local vào main; chưa nghiệm thu Google thật, chưa chuyển sang Automations.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
 Plan01 đã gộp vào `main` tại máy (commit `4b92d31`):
@@ -28,7 +28,9 @@ Plan03 đã có OAuth/chọn từng file, Sheets → Docs → upload Artifact l�
 offline 71 passed; hồi quy Docker 1.266 passed/1 symlink skip. Bảy Important từ review đã sửa;
 một Minor UX được ghi trong hồ sơ nghiệm thu.
 Live Google NOT RUN vì user chọn setup sau;
-chưa bật feature hoặc gộp main. Tiếp theo là setup và nghiệm thu file Google thử trước Plan04.
+đã gộp local vào main tại source `b1c7aa2`, chưa push hoặc bật feature. Hậu kiểm sau gộp
+1.208 passed/59 environment skips; [biên bản](docs/acceptance/2026-11-06-google-connectors-merge.md).
+Tiếp theo là setup và nghiệm thu file Google thử trước Plan04.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần
