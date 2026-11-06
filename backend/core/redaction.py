@@ -20,7 +20,15 @@ _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _DATABASE_URL = re.compile(r"(?i)\b(postgresql|postgres|redis)://[^\s]+")
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?![\w.-])")
 _CARD = re.compile(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)")
-_OAUTH_FIELDS = {"code", "state", "code_verifier", "client_secret", "id_token", "error_description"}
+_OAUTH_FIELDS = {
+    "code",
+    "state",
+    "code_verifier",
+    "client_secret",
+    "id_token",
+    "error_description",
+    "upload_id",
+}
 _QUERY_VALUE = re.compile(r"([?&])([^=&#\s]+)=([^&#\s\"']+)")
 
 

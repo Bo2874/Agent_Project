@@ -17,6 +17,76 @@ class GoogleHTTP:
     def __init__(self, transport=None):
         self.transport = transport
 
+    async def upload_bytes(self, *, token, metadata, content, source_mime):
+        """One bounded resumable session; its bearer-like Location never leaves trusted code."""
+        if not isinstance(content, bytes) or not 1 <= len(content) <= 20971520:
+            raise GoogleServiceError(413, "Google upload exceeds the 20 MiB limit")
+        endpoint = "https://www.googleapis.com/upload/drive/v3/files"
+        headers = {"Authorization": "Bearer " + token}
+
+        async def consume(response, *, initial=False):
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > 2097152:
+                    raise GoogleServiceError(502, "Google upload response exceeds limit")
+            if response.status_code not in {200, 201}:
+                raise GoogleServiceError(502, "Google upload outcome unavailable")
+            if initial:
+                return response.headers.get("Location", "")
+            import json
+
+            try:
+                data = json.loads(body)
+            except (ValueError, UnicodeError):
+                raise GoogleServiceError(502, "Invalid Google upload response") from None
+            if not isinstance(data, dict):
+                raise GoogleServiceError(502, "Invalid Google upload response")
+            return data
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=60, trust_env=False, follow_redirects=False, transport=self.transport
+            ) as client:
+                async with client.stream(
+                    "POST",
+                    endpoint,
+                    params={"uploadType": "resumable", "fields": "id,name,mimeType"},
+                    headers={
+                        **headers,
+                        "X-Upload-Content-Type": source_mime,
+                        "X-Upload-Content-Length": str(len(content)),
+                    },
+                    json=metadata,
+                ) as response:
+                    location = await consume(response, initial=True)
+                target = httpx.URL(location)
+                if (
+                    len(location) > 8192
+                    or target.scheme != "https"
+                    or target.host != "www.googleapis.com"
+                    or target.port not in (None, 443)
+                    or target.userinfo
+                    or target.fragment
+                    or target.path != "/upload/drive/v3/files"
+                    or not target.params.get("upload_id")
+                ):
+                    raise GoogleServiceError(502, "Unsupported Google upload session endpoint")
+                async with client.stream(
+                    "PUT",
+                    location,
+                    headers={
+                        **headers,
+                        "Content-Type": source_mime,
+                        "Content-Length": str(len(content)),
+                        "Content-Range": f"bytes 0-{len(content) - 1}/{len(content)}",
+                    },
+                    content=content,
+                ) as response:
+                    return await consume(response)
+        except httpx.HTTPError:
+            raise GoogleServiceError(502, "Google upload network outcome unavailable") from None
+
     async def request(self, method, url, *, token=None, **kwargs):
         for attempt in range(3 if method == "GET" else 1):
             try:

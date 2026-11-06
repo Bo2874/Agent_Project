@@ -21,6 +21,7 @@ from backend.schemas.google import GoogleFileRef
 from backend.services.google.access import GoogleAccess, grant_view
 from backend.services.google.credentials import GoogleCredentials
 from backend.services.google.docs import GoogleDocs
+from backend.services.google.drive import GoogleDrive
 from backend.services.google.errors import GoogleServiceError
 from backend.services.google.sheets import GoogleSheets
 
@@ -31,6 +32,7 @@ class GoogleToolService:
         self.sessions = sessions or SessionFactory
         self.sheets = GoogleSheets(self.access, self.sessions)
         self.docs = GoogleDocs(self.access, self.sessions)
+        self.drive = GoogleDrive(self.access, self.sessions)
 
     async def check_run(self, session, context):
         run = await session.scalar(
@@ -110,25 +112,14 @@ class GoogleToolService:
                         "read_sheet"
                         if pinned["mime_type"] == "application/vnd.google-apps.spreadsheet"
                         else "read_doc"
+                        if pinned["mime_type"] == "application/vnd.google-apps.document"
+                        else "read_file"
                     )
-                    # Non-native uploaded files are export references, not Docs/Sheets tools.
-                    if pinned["mime_type"] not in {
-                        "application/vnd.google-apps.spreadsheet",
-                        "application/vnd.google-apps.document",
-                    }:
-                        connection = await self.access.credentials.owned(
-                            session, context.user_id, ref.connection_id
-                        )
-                        if (
-                            connection.status != "connected"
-                            or connection.generation != pinned["connection_generation"]
-                        ):
-                            raise GoogleServiceError(409, "Google connection changed")
-                        continue
                     auth = await self.access.authorize(session, context, ref, action)
                     if (
                         auth.grant_generation != pinned["grant_generation"]
                         or auth.connection_generation != pinned["connection_generation"]
+                        or auth.mime_type != pinned["mime_type"]
                     ):
                         raise GoogleServiceError(409, "Google scope changed")
         except GoogleServiceError:
@@ -162,6 +153,7 @@ class GoogleToolService:
         from agent_core.tools.google import (
             DocPrepareInput,
             DocReadInput,
+            DrivePrepareInput,
             SheetPrepareInput,
             SheetReadInput,
         )
@@ -171,6 +163,21 @@ class GoogleToolService:
             await self.guard(context, name)
             async with self.sessions() as session:
                 await self.check_run(session, context)
+            if name == "google_drive_prepare":
+                args = DrivePrepareInput.model_validate(arguments)
+                proposal = await self.drive.prepare(
+                    context, args.connection_id, args.version_id, mode=args.mode
+                )
+                data = {
+                    "proposal": proposal.model_dump(mode="json"),
+                    "commit_arguments": proposal.commit_arguments(),
+                }
+                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
+            if name == "google_drive_upload":
+                args = GoogleCommitInput.model_validate(arguments)
+                receipt = await self.drive.execute(context, **args.model_dump())
+                data = receipt.model_dump(mode="json")
+                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
             if name == "google_docs_read":
                 args = DocReadInput.model_validate(arguments)
                 async with self.sessions() as session:

@@ -1,0 +1,43 @@
+{
+  "date": "2026-11-06",
+  "branch": "feat/workspace-google",
+  "base": "11b9632",
+  "offline_google": {
+    "tests": 50,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 50
+  },
+  "full_docker_regression": {
+    "tests": 1246,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 1245
+  },
+  "full_seconds": 1006.81,
+  "skip_reason": "Windows symlink privilege unavailable; Linux Docker gate checks it",
+  "live_google": "NOT RUN: user requested offline implementation first",
+  "external_model_search": "Deterministic fixtures only; no paid model or live search",
+  "checks": [
+    "Ruff",
+    "JavaScript syntax",
+    "uv lock --check --offline",
+    "Compose config",
+    "alembic check"
+  ],
+  "browser": {
+    "template": "connectors.html",
+    "fonts": [
+      "Inter",
+      "Lora"
+    ],
+    "widths": [
+      1440,
+      390
+    ],
+    "data": "Synthetic offline account and files; screenshots visually inspected"
+  },
+  "review": "Pending independent whole-branch review"
+}

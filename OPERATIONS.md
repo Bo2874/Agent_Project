@@ -364,3 +364,7 @@ PostgreSQL riêng có tên kết thúc `_test`. Gate dùng model/Google HTTP fix
 checkpoint và approval thật; không gọi Google hoặc model trả phí. Không coi mock pass là
 nghiệm thu Google thật. `--live --connection-id ... --file-id ...` chỉ in checklist trên file
 thử được chọn; thao tác ghi thật đi qua chat và preview/approval của người dùng.
+
+Thiết lập OAuth/Picker, scopes, key rotation/reconnect, đối soát unknown và giới hạn Sheets/Docs/
+Drive: [manual Google Connectors](docs/manual-google-connectors.md). Không dùng token thật trong
+fixture hoặc sandbox. Chỉ bật Google sau khi cấu hình môi trường đích và nghiệm thu file thử riêng.

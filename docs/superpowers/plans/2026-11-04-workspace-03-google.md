@@ -10,6 +10,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-04-agent-workspace-design.md`; phụ thuộc plan 01–02; quy ước roadmap.
 
+**Nghiệm thu được user chọn (2026-11-06):** triển khai và kiểm thử offline trước, chưa có
+OAuth Web Client hoặc file Google thử. Live Google **NOT RUN** cho cả Sheets/Docs/upload;
+checkbox triển khai không thay thế gate live để chuyển Plan04. CLI `--live` in checklist,
+không tự ghi ngoài cơ chế chat/approval. [Hồ sơ](../../acceptance/2026-11-06-google-connectors.md).
+
 ## Global Constraints
 
 - “Người dùng chọn từng file; không tìm trên toàn Drive”.
@@ -98,10 +103,10 @@ DTO `GoogleFileRef(connection_id: UUID, file_id: str, context_id: UUID)`; `Googl
 
 **Interfaces:** `upload_artifact(context, version_id: UUID, *, mode: Literal['keep_format','google_native']) -> GoogleFileRef`; input lấy bytes từ owned immutable storage, không từ URL/path user gửi. Tool `google_drive_upload` chỉ nhận ArtifactVersion và explicit mode.
 
-- [ ] Red tests foreign version rejected, replay upload không tạo file thứ hai khi receipt đã có, sent/unknown không tự upload lại; conversion phải có proposal cảnh báo thành phần mất và user chọn rõ mode.
-- [ ] Implement Drive resumable upload có giới hạn kích thước, register file được tạo trong đúng work context; không tự chia sẻ công khai, chuyển owner hoặc xóa file. Mặc định tạo ở My Drive; chọn thư mục đích là bước riêng có grant, không suy ra quyền các file con.
-- [ ] Kiểm live `.xlsx`/`.docx` giữ định dạng và conversion Sheet/Doc bằng file fixture, đọc lại kết quả. Người dùng quyết định giữ/xóa file cloud thử; không tự permanently delete.
-- [ ] Chạy unit/regression/QA và record Google scopes, OAuth configuration, token reconnect/rotation, callback deployment requirements. Cập nhật notes/plan theo bằng chứng và commit `feat: export artifact versions to selected google workspace`.
+- [x] Red tests foreign version rejected, replay upload không tạo file thứ hai khi receipt đã có, sent/unknown không tự upload lại; conversion phải có proposal cảnh báo thành phần mất và user chọn rõ mode.
+- [x] Implement Drive resumable upload có giới hạn kích thước, register file được tạo trong đúng work context; không tự chia sẻ công khai, chuyển owner hoặc xóa file. Mặc định tạo ở My Drive; chọn thư mục đích là bước riêng có grant, không suy ra quyền các file con.
+- [x] Kiểm live `.xlsx`/`.docx` giữ định dạng và conversion Sheet/Doc bằng file fixture, đọc lại kết quả. Người dùng quyết định giữ/xóa file cloud thử; không tự permanently delete.
+- [x] Chạy unit/regression/QA và record Google scopes, OAuth configuration, token reconnect/rotation, callback deployment requirements. Cập nhật notes/plan theo bằng chứng và commit `feat: export artifact versions to selected google workspace`.
 
 ## Điều kiện chuyển plan 04
 

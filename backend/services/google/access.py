@@ -303,8 +303,11 @@ class GoogleAccess:
             "write_sheet": SHEET_MIME,
             "read_doc": DOC_MIME,
             "write_doc": DOC_MIME,
+            "read_file": "selected_metadata",
         }.get(action)
-        if expected is None or metadata["mimeType"] != expected:
+        if expected is None or (
+            expected != "selected_metadata" and metadata["mimeType"] != expected
+        ):
             raise GoogleServiceError(
                 422,
                 "Google file is not the required native type; "

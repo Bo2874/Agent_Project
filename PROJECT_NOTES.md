@@ -2059,3 +2059,21 @@
 - [Hồ sơ sau gộp](docs/acceptance/2026-11-05-workspace-documents-main-merge.md).
   Tiếp theo Plan03: OAuth/chọn từng file, Sheets → Docs → upload Artifact lên Drive.
   Khi triển khai cần cấp số migration mới sau `0032` hiện có, không dùng lại số trong bản kế hoạch cũ.
+
+### 2026-11-06 — Plan03: Google Connectors, triển khai và kiểm thử offline
+
+- Nhánh `feat/workspace-google`, base `11b9632`, worktree riêng. OAuth owner-scoped, keyring Google
+  riêng; migration `20261105_0033`, không sửa token/binding plugin cũ.
+- Picker chọn từng file, cấp quyền riêng cho chat; reconnect thu hồi grant cũ. Sheets đọc/phân trang,
+  append/update RAW, công thức/format chủ đích; Docs text theo UTF-16/tab/revision, giữ phần không sửa.
+- Google writes đi qua proposal cố định → duyệt → sent/receipt. Sent/unknown không retry hoặc đổi mã
+  để ghi lại; cùng đích bị chặn đến khi đối soát. Không hứa exactly-once hay transaction Google/DB.
+- Upload owned ArtifactVersion lên My Drive, giữ format hoặc chọn rõ conversion XLSX/DOCX;
+  hash/size ghim trước khi gửi, không truyền credentials hay đường dẫn máy chủ cho model/sandbox.
+- Gate Connectors offline: **50 passed**; queue/worker/checkpoint/approval chạy thật, Google/web/model
+  responses là fixture. Đã kiểm template, font, desktop/mobile bằng Chrome và sửa spacing mobile.
+- Hồi quy đầy đủ với Docker Artifacts: **1.245 passed, 1 skipped**, 1.006,81 giây; skip duy nhất
+  thiếu quyền symlink trên Windows. Review cuối đang được thực hiện; chưa gộp main/push,
+  chưa bật feature, chưa đổi `.env` hoặc migrate DB đang dùng. User đã chọn chưa setup OAuth thật:
+  **live Google NOT RUN**, chưa đạt điều kiện chuyển Plan04.
+- [Hướng dẫn cấu hình, nghiệm thu và giới hạn](docs/manual-google-connectors.md).

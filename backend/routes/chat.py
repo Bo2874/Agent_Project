@@ -130,7 +130,11 @@ def chat_tool_selection_config(settings):
         max_loaded_tools=max(settings.tool_max_loaded, 12)
         if settings.google_connector_enabled
         else settings.tool_max_loaded,
-        schema_token_budget=10000 if settings.workspace_artifacts_enabled else 6000,
+        schema_token_budget=16000
+        if settings.google_connector_enabled
+        else 10000
+        if settings.workspace_artifacts_enabled
+        else 6000,
     )
 
 

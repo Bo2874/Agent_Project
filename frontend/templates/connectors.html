@@ -1,7 +1,7 @@
 {% extends "workspace.html" %}
 {% block title %}Connectors · Personal Agent{% endblock %}
 {% block workspace_body %}
-<main class="artifact-library" data-google-connectors>
+<main class="shell google-connectors-page" data-google-connectors>
   <header><p class="eyebrow">KHÔNG GIAN LÀM VIỆC</p><h1>Connectors</h1>
     <p>Kết nối Google và chọn từng file. Mỗi cuộc trò chuyện có lựa chọn file riêng.</p></header>
   <section class="google-account-card" aria-labelledby="google-title">
@@ -14,7 +14,7 @@
       <button class="document-text-button" type="button" data-google-disconnect disabled>Ngắt kết nối</button>
     </div>
     <p class="document-hint">Chỉ dùng file bạn chọn hoặc file ứng dụng tạo. Ngắt kết nối chặn truy cập trong ứng dụng;
-      bạn cũng có thể thu hồi quyền tại tài khoản Google. Google Picker dùng access token tạm trong bộ nhớ trình duyệt.</p>
+      bạn cũng có thể thu hồi quyền tại tài khoản Google.</p>
   </section>
   <section aria-label="File Google đã cấp quyền"><h2>File đã chọn</h2>
     <div class="google-file-list" data-google-files></div>

@@ -61,8 +61,27 @@ class DocPrepareInput(GoogleModel):
         return self
 
 
+class DrivePrepareInput(GoogleModel):
+    connection_id: UUID
+    version_id: UUID
+    mode: Literal["keep_format", "google_native"]
+
+
 def register_google_tools(registry, service):
     entries = [
+        (
+            "google_drive_prepare",
+            DrivePrepareInput,
+            "LOCAL Artifact export preview. Choose owned selected/chat-created version_id and "
+            "connection_id. mode is REQUIRED: keep_format or google_native (XLSX/DOCX conversion, "
+            "possible loss). Returns exact commit_arguments. No URLs, paths, sharing or folders.",
+        ),
+        (
+            "google_drive_upload",
+            GoogleCommitInput,
+            "Upload the pinned ArtifactVersion from EXACT google_drive_prepare commit_arguments "
+            "after approval. New file in My Drive, registered for this chat. Never retry unknown.",
+        ),
         (
             "google_docs_read",
             DocReadInput,
