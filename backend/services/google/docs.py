@@ -31,7 +31,11 @@ def text_blocks(document):
                 continue
             for element in paragraph.get("elements", []):
                 run = element.get("textRun")
-                if run is None or any(key.startswith("suggested") for key in element):
+                if run is None or any(
+                    key.startswith("suggested") and value
+                    for source in (element, run)
+                    for key, value in source.items()
+                ):
                     warnings.append(
                         "Images, suggestions and non-text elements are preserved, not editable."
                     )
@@ -132,7 +136,7 @@ class GoogleDocs:
             "GET",
             DOCS_URL + "/" + quote(auth.ref.file_id, safe=""),
             token=auth.token,
-            params={"includeTabsContent": "true"},
+            params={"includeTabsContent": "true", "suggestionsViewMode": "SUGGESTIONS_INLINE"},
         )
         if data.get("documentId") != auth.ref.file_id:
             raise GoogleServiceError(422, "Google Docs identity mismatch")
@@ -199,7 +203,7 @@ class GoogleDocs:
             return fingerprint((await self.document(auth)).get("revisionId"))
 
         async def write(row, auth, session):
-            await self.access.credentials.http.request(
+            response = await self.access.credentials.http.request(
                 "POST",
                 DOCS_URL + "/" + quote(row.file_id, safe="") + ":batchUpdate",
                 token=auth.token,
@@ -208,6 +212,8 @@ class GoogleDocs:
                     "writeControl": {"requiredRevisionId": row.payload["data"]["revision_id"]},
                 },
             )
+            if response.get("documentId") != row.file_id:
+                raise GoogleServiceError(502, "Invalid Google Docs write receipt")
             return {"url": google_url(row.file_id, DOC_MIME)}
 
         return await self.journal.execute(

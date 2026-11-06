@@ -3,20 +3,20 @@
   "branch": "feat/workspace-google",
   "base": "11b9632",
   "offline_google": {
-    "tests": 50,
+    "tests": 71,
     "failures": 0,
     "errors": 0,
     "skipped": 0,
-    "passed": 50
+    "passed": 71
   },
   "full_docker_regression": {
-    "tests": 1246,
+    "tests": 1267,
     "failures": 0,
     "errors": 0,
     "skipped": 1,
-    "passed": 1245
+    "passed": 1266
   },
-  "full_seconds": 1006.81,
+  "full_seconds": 1161.318,
   "skip_reason": "Windows symlink privilege unavailable; Linux Docker gate checks it",
   "live_google": "NOT RUN: user requested offline implementation first",
   "external_model_search": "Deterministic fixtures only; no paid model or live search",
@@ -39,5 +39,18 @@
     ],
     "data": "Synthetic offline account and files; screenshots visually inspected"
   },
-  "review": "Pending independent whole-branch review"
+  "review": {
+    "range": "11b9632..1473f6b",
+    "model": "gpt-6-astra",
+    "critical": 0,
+    "important": 7,
+    "important_fixed": 7,
+    "fix_verification": "One author TDD fix pass, then full regression; no second review",
+    "minor_deferred": [
+      "New-file approval destination account label"
+    ],
+    "regression_cases_added": 21,
+    "chronological_rulings_preserved": 20
+  },
+  "offline_seconds": 91.791
 }

@@ -1,13 +1,13 @@
 # Kế hoạch phát triển Personal AI Agent
 
-Cập nhật: 2026-11-05
+Cập nhật: 2026-11-06
 
 Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memory, Skills, sandbox và trang quản trị đủ tốt để học và trình bày khi phỏng vấn.
 
 **Hướng mở rộng mới đã duyệt ngày 2026-11-04:** giao diện A theo phong cách Claude,
 Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Automations theo lịch.
-Plan01 và Plan02 đã triển khai, nghiệm thu offline. Plan03 Google Connectors đang chốt gate/review
-offline trên nhánh riêng; chưa nghiệm thu Google thật, chưa chuyển sang Automations.
+Plan01 và Plan02 đã triển khai, nghiệm thu offline. Plan03 Google Connectors đã hoàn tất triển khai,
+review và kiểm thử offline trên nhánh riêng; chưa nghiệm thu Google thật, chưa chuyển sang Automations.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
 Plan01 đã gộp vào `main` tại máy (commit `4b92d31`):
@@ -17,7 +17,7 @@ Lượt sửa review cuối: 1.141 tests đạt, 2 skips được ghi rõ; tươ
 race preview, rich-text refusal và thu hồi scratch sau hard-kill đã có regression.
 Chưa bật runtime hoặc áp dụng migration vào DB đang dùng. [Review và kết quả cuối](docs/acceptance/2026-11-05-workspace-review.md).
 [Hướng dẫn](docs/manual-artifacts.md), [số đo](docs/acceptance/2026-11-04-artifact-excel.json).
-Live model chưa chạy; Connectors/Automations chưa triển khai. Các kết quả/điểm chưa nghiệm thu
+Live model chưa chạy; Automations chưa triển khai. Connectors có trạng thái cập nhật bên dưới. Các kết quả/điểm chưa nghiệm thu
 trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.
 Đã hoàn tất [Plan02 — Word rồi PDF văn bản](docs/superpowers/plans/2026-11-04-workspace-02-documents.md)
 và gộp local vào `main` tại `22def91`; runtime, preview/render và browser đã qua; full suite sau sửa review
@@ -25,7 +25,8 @@ và gộp local vào `main` tại `22def91`; runtime, preview/render và browser
 (1.106,74 giây); chưa push hoặc bật runtime.
 [Nghiệm thu Plan02](docs/acceptance/2026-11-05-workspace-documents.md).
 Plan03 đã có OAuth/chọn từng file, Sheets → Docs → upload Artifact lên Drive; gate Connectors
-offline 50 passed; hồi quy Docker 1.245 passed/1 symlink skip, đang review cuối.
+offline 71 passed; hồi quy Docker 1.266 passed/1 symlink skip. Bảy Important từ review đã sửa;
+một Minor UX được ghi trong hồ sơ nghiệm thu.
 Live Google NOT RUN vì user chọn setup sau;
 chưa bật feature hoặc gộp main. Tiếp theo là setup và nghiệm thu file Google thử trước Plan04.
 

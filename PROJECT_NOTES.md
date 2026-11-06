@@ -2070,10 +2070,11 @@
   để ghi lại; cùng đích bị chặn đến khi đối soát. Không hứa exactly-once hay transaction Google/DB.
 - Upload owned ArtifactVersion lên My Drive, giữ format hoặc chọn rõ conversion XLSX/DOCX;
   hash/size ghim trước khi gửi, không truyền credentials hay đường dẫn máy chủ cho model/sandbox.
-- Gate Connectors offline: **50 passed**; queue/worker/checkpoint/approval chạy thật, Google/web/model
+- Gate Connectors offline: **71 passed**; queue/worker/checkpoint/approval chạy thật, Google/web/model
   responses là fixture. Đã kiểm template, font, desktop/mobile bằng Chrome và sửa spacing mobile.
-- Hồi quy đầy đủ với Docker Artifacts: **1.245 passed, 1 skipped**, 1.006,81 giây; skip duy nhất
-  thiếu quyền symlink trên Windows. Review cuối đang được thực hiện; chưa gộp main/push,
+- Hồi quy đầy đủ với Docker Artifacts: **1.266 passed, 1 skipped**, 1.161,32 giây; skip duy nhất
+  thiếu quyền symlink trên Windows. Review đã kết thúc: sửa cả bảy Important, một Minor UX hoãn;
+  đã có regression RED → GREEN và lưu toàn bộ quyết định. Chưa gộp main/push,
   chưa bật feature, chưa đổi `.env` hoặc migrate DB đang dùng. User đã chọn chưa setup OAuth thật:
   **live Google NOT RUN**, chưa đạt điều kiện chuyển Plan04.
 - [Hướng dẫn cấu hình, nghiệm thu và giới hạn](docs/manual-google-connectors.md).

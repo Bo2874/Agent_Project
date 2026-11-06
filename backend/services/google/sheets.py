@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from urllib.parse import quote
 
 from backend.schemas.google import GoogleFileRef, GoogleWritePreview, SheetChange, SheetSnapshot
@@ -19,6 +20,124 @@ class GoogleSheets:
         self.access, self.sessions = access, sessions
         self.journal = GoogleMutations(access, sessions)
 
+    async def resolve_tab(self, auth, bounds, pinned=None):
+        response = await self.access.credentials.http.request(
+            "GET",
+            SHEETS_URL + "/" + quote(auth.ref.file_id, safe=""),
+            token=auth.token,
+            params={"fields": "sheets(properties(sheetId,title,index,hidden))"},
+        )
+        tabs = [item.get("properties", {}) for item in response.get("sheets", [])]
+        if not tabs or any(
+            type(tab.get("sheetId")) is not int or not isinstance(tab.get("title"), str)
+            for tab in tabs
+        ):
+            raise GoogleServiceError(502, "Invalid Google sheet tab metadata")
+        title = bounds.tab[1:-1].replace("''", "'") if bounds.tab.startswith("'") else bounds.tab
+        if pinned is not None:
+            tab = next((tab for tab in tabs if tab["sheetId"] == pinned["sheet_id"]), None)
+            if tab is None or tab["title"] != pinned["title"]:
+                raise GoogleServiceError(409, "Google sheet tab changed; prepare a new approval")
+        elif title:
+            tab = next((tab for tab in tabs if tab["title"] == title), None)
+        else:
+            tab = next(
+                (
+                    tab
+                    for tab in sorted(tabs, key=lambda item: item.get("index", 0))
+                    if not tab.get("hidden", False)
+                ),
+                None,
+            )
+        if tab is None:
+            raise GoogleServiceError(422, "Google sheet tab not found")
+        return {"sheet_id": tab["sheetId"], "title": tab["title"]}
+
+    @staticmethod
+    def format_request(bounds, tab, fmt):
+        style, fields = {}, []
+        for key in ("bold", "italic"):
+            if fmt.get(key) is not None:
+                style.setdefault("textFormat", {})[key] = fmt[key]
+                fields.append("userEnteredFormat.textFormat." + key)
+        if fmt.get("background"):
+            value = fmt["background"]
+            style["backgroundColorStyle"] = {
+                "rgbColor": {
+                    key: int(value[1 + i * 2 : 3 + i * 2], 16) / 255
+                    for i, key in enumerate(("red", "green", "blue"))
+                }
+            }
+            fields.append("userEnteredFormat.backgroundColorStyle")
+        if fmt.get("number_format"):
+            style["numberFormat"] = {"type": fmt["number_format"]}
+            fields.append("userEnteredFormat.numberFormat")
+        if not fields:
+            raise GoogleServiceError(422, "Choose a formatting change")
+        return {
+            "repeatCell": {
+                "range": {
+                    "sheetId": tab["sheet_id"],
+                    "startRowIndex": bounds.start - 1,
+                    "endRowIndex": bounds.end,
+                    "startColumnIndex": column(bounds.first_column),
+                    "endColumnIndex": column(bounds.last_column) + 1,
+                },
+                "cell": {"userEnteredFormat": style},
+                "fields": ",".join(fields),
+            }
+        }
+
+    async def formatting(self, auth, bounds, tab, fmt):
+        response = await self.access.credentials.http.request(
+            "GET",
+            SHEETS_URL + "/" + quote(auth.ref.file_id, safe=""),
+            token=auth.token,
+            params={
+                "ranges": bounds.a1(),
+                "fields": "sheets(properties(sheetId,title),"
+                "data(startRow,startColumn,rowData(values(userEnteredFormat))))",
+            },
+        )
+        sheets = response.get("sheets", [])
+        if (
+            len(sheets) != 1
+            or sheets[0].get("properties", {}).get("sheetId") != tab["sheet_id"]
+            or sheets[0]["properties"].get("title") != tab["title"]
+        ):
+            raise GoogleServiceError(
+                409, "Google formatting target changed; prepare a new approval"
+            )
+        cells = {}
+        for grid in sheets[0].get("data", []):
+            rows = grid.get("rowData", [])
+            if len(rows) > 1000:
+                raise GoogleServiceError(502, "Google formatting response exceeds bounds")
+            for row_index, row in enumerate(rows, grid.get("startRow", 0)):
+                values = row.get("values", [])
+                if len(values) > 50:
+                    raise GoogleServiceError(502, "Google formatting response exceeds bounds")
+                for col_index, cell in enumerate(values, grid.get("startColumn", 0)):
+                    if not (
+                        bounds.start - 1 <= row_index < bounds.end
+                        and column(bounds.first_column) <= col_index <= column(bounds.last_column)
+                    ):
+                        raise GoogleServiceError(502, "Google formatting response outside target")
+                    source = cell.get("userEnteredFormat", {})
+                    selected = {}
+                    for key in ("bold", "italic"):
+                        if fmt.get(key) is not None:
+                            selected[key] = source.get("textFormat", {}).get(key, False)
+                    if fmt.get("background"):
+                        selected["background"] = {
+                            key: source.get(key)
+                            for key in ("backgroundColor", "backgroundColorStyle")
+                        }
+                    if fmt.get("number_format"):
+                        selected["number_format"] = source.get("numberFormat")
+                    cells[f"{row_index}:{col_index}"] = selected
+        return cells
+
     async def values(self, auth, target, *, render="FORMULA"):
         response = await self.access.credentials.http.request(
             "GET",
@@ -32,6 +151,8 @@ class GoogleSheets:
         )
         values = response.get("values", [])
         bounds = parse_range(target)
+        if not isinstance(response.get("range"), str) or not response["range"]:
+            raise GoogleServiceError(502, "Invalid Google ValueRange response")
         if (
             not isinstance(values, list)
             or len(values) > bounds.end - bounds.start + 1
@@ -73,9 +194,18 @@ class GoogleSheets:
             raise GoogleServiceError(422, "Write matrix exceeds the selected range")
         async with self.sessions() as session:
             auth = await self.access.authorize(session, context, ref, "write_sheet")
-        before = await self.values(auth, bounds.a1())
+        tab = await self.resolve_tab(auth, bounds)
+        bounds = replace(bounds, tab="'" + tab["title"].replace("'", "''") + "'")
+        before = (
+            await self.formatting(auth, bounds, tab, change.format.model_dump())
+            if change.kind == "format_range"
+            else await self.values(auth, bounds.a1())
+        )
         request = {"ref": ref.model_dump(mode="json"), "change": change.model_dump(mode="json")}
         data = change.model_dump(mode="json")
+        data["range_a1"], data["tab"] = bounds.a1(), tab
+        if change.kind == "format_range":
+            data["compiled_request"] = self.format_request(bounds, tab, data["format"])
         if change.dedup_column is not None:
             index = change.dedup_column
             seen = {str(row[index]).strip() for row in before if len(row) > index}
@@ -107,7 +237,7 @@ class GoogleSheets:
             kind=change.kind,
             request=request,
             data=data,
-            snapshot_hash=fingerprint(before),
+            snapshot_hash=fingerprint({"tab": tab, "before": before}),
             preview=preview,
         )
 
@@ -130,77 +260,29 @@ class GoogleSheets:
             )
 
         async def snapshot(row, auth):
-            return fingerprint(
-                await self.values(auth, parse_range(row.payload["data"]["range_a1"]).a1())
-            )
+            data = row.payload["data"]
+            bounds = parse_range(data["range_a1"])
+            tab = await self.resolve_tab(auth, bounds, data["tab"])
+            if row.kind == "format_range":
+                self.format_request(bounds, tab, data["format"])
+                before = await self.formatting(auth, bounds, tab, data["format"])
+            else:
+                before = await self.values(auth, bounds.a1())
+            return fingerprint({"tab": tab, "before": before})
 
         async def write(row, auth, session):
             change = row.payload["data"]
             bounds = parse_range(change["range_a1"])
             base = SHEETS_URL + "/" + quote(auth.ref.file_id, safe="")
             if row.kind == "format_range":
-                metadata = await self.access.credentials.http.request(
-                    "GET",
-                    base,
-                    token=auth.token,
-                    params={"fields": "sheets(properties(sheetId,title))"},
-                )
-                title = (
-                    bounds.tab[1:-1].replace("''", "'")
-                    if bounds.tab.startswith("'")
-                    else bounds.tab
-                )
-                tabs = metadata.get("sheets", [])
-                tab = next(
-                    (
-                        item["properties"]
-                        for item in tabs
-                        if not title or item["properties"]["title"] == title
-                    ),
-                    None,
-                )
-                if tab is None:
-                    raise GoogleServiceError(422, "Google sheet tab not found")
-                style, fields = {}, []
-                fmt = change["format"]
-                for key in ("bold", "italic"):
-                    if fmt.get(key) is not None:
-                        style.setdefault("textFormat", {})[key] = fmt[key]
-                        fields.append("userEnteredFormat.textFormat." + key)
-                if fmt.get("background"):
-                    value = fmt["background"]
-                    style["backgroundColor"] = {
-                        key: int(value[1 + i * 2 : 3 + i * 2], 16) / 255
-                        for i, key in enumerate(("red", "green", "blue"))
-                    }
-                    fields.append("userEnteredFormat.backgroundColor")
-                if fmt.get("number_format"):
-                    style["numberFormat"] = {"type": fmt["number_format"]}
-                    fields.append("userEnteredFormat.numberFormat")
-                if not fields:
-                    raise GoogleServiceError(422, "Choose a formatting change")
-                await self.access.credentials.http.request(
+                response = await self.access.credentials.http.request(
                     "POST",
                     base + ":batchUpdate",
                     token=auth.token,
-                    json={
-                        "requests": [
-                            {
-                                "repeatCell": {
-                                    "range": {
-                                        "sheetId": tab["sheetId"],
-                                        "startRowIndex": bounds.start - 1,
-                                        "endRowIndex": bounds.end,
-                                        "startColumnIndex": column(bounds.first_column),
-                                        "endColumnIndex": column(bounds.last_column) + 1,
-                                    },
-                                    "cell": {"userEnteredFormat": style},
-                                    "fields": ",".join(fields),
-                                }
-                            }
-                        ]
-                    },
+                    json={"requests": [change["compiled_request"]]},
                 )
+                if response.get("spreadsheetId") != auth.ref.file_id:
+                    raise GoogleServiceError(502, "Invalid Google formatting receipt")
                 result = {"updatedRange": bounds.a1(), "updatedRows": bounds.end - bounds.start + 1}
             elif not change["rows"]:
                 result = {"updatedRange": "", "updatedRows": 0, "updatedCells": 0}
@@ -217,6 +299,16 @@ class GoogleSheets:
                     json={"majorDimension": "ROWS", "values": change["rows"]},
                 )
                 result = response.get("updates", {}) if append else response
+                if (
+                    not isinstance(result, dict)
+                    or not isinstance(result.get("updatedRange"), str)
+                    or not result["updatedRange"]
+                    or any(
+                        type(result.get(key, 0)) is not int or result.get(key, 0) < 0
+                        for key in ("updatedRows", "updatedCells")
+                    )
+                ):
+                    raise GoogleServiceError(502, "Invalid Google Sheets write receipt")
             return {
                 "updated_range": str(result.get("updatedRange", ""))[:200],
                 "updated_rows": max(0, int(result.get("updatedRows", 0))),

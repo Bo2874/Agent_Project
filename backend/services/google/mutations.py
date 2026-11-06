@@ -261,6 +261,22 @@ class GoogleMutations:
             identity = row.id  # Rollback expires ORM attributes even with expire_on_commit=False.
             try:
                 data = await write(row, auth, session)
+                if data.get("file_ref"):
+                    ref = data["file_ref"]
+                    grant = await session.scalar(
+                        select(GoogleFileGrant).where(
+                            GoogleFileGrant.owner_id == context.user_id,
+                            GoogleFileGrant.connection_id == row.connection_id,
+                            GoogleFileGrant.file_id == ref["file_id"],
+                        )
+                    )
+                    if grant is None or grant.revoked:
+                        raise GoogleServiceError(409, "Created Google file authority unavailable")
+                    data["file_authority"] = {
+                        "grant_generation": grant.generation,
+                        "connection_generation": grant.connection_generation,
+                        "mime_type": grant.mime_type,
+                    }
                 receipt = GoogleWriteReceipt(operation_id=row.id, **data)
                 await session.execute(
                     update(GoogleMutation)

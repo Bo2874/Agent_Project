@@ -52,12 +52,19 @@ Tool ghi chỉ nhận nguyên `commit_arguments` từ proposal, không nhận `a
 Preview ghim đích, dữ liệu, fingerprint, generation, snapshot và hạn 10 phút; thay đổi thì phải chuẩn bị lại.
 Tất cả ghi Google hiện cần duyệt, kể cả append. Receipt có operation ID, URL đã kiểm tra và số ô/hàng khi phù hợp.
 File mới được đăng ký owner/chat trong cùng transaction lưu receipt và dùng tiếp được ngay trong run đó.
+Receipt ghim cả generation của file mới; thu hồi rồi cấp lại không làm sống lại quyền của run cũ.
+Kết quả đã lưu trước sự cố và kết quả đọc đang chạy cũng bị chặn nếu quyền đã bị thu hồi.
 
 Sheets chỉ nhận native Google Sheet. `.xlsx` trên Drive chưa phải Sheet; không tự chuyển đổi.
 Range A1 phải có hàng cụ thể, tối đa 1.000 hàng/50 cột; đọc từng trang tối đa 100 hàng,
 ghi tối đa 100 hàng/lần. Append/update dùng RAW để chuỗi từ web bắt đầu `=` vẫn là text.
 Chỉ `set_formulas` chủ đích mới dùng công thức. Dedup theo cột được chỉ định, không thêm marker/cột ẩn.
 Không hứa exactly-once hoặc transaction xuyên Google/DB; vẫn còn race sau lần kiểm snapshot cuối.
+Đề xuất ghi ghim tab bằng sheetId và tên tab có quote. Range không ghi tên tab được giải quyết
+thành tab hiển thị đầu tiên ngay khi chuẩn bị; đổi thứ tự tab không đổi đích, đổi tên phải duyệt lại.
+Formatting phải có ít nhất một thuộc tính; bản xem trước và snapshot gồm đúng định dạng sẽ thay đổi,
+để phát hiện người khác sửa định dạng trước lúc ghi. Phản hồi Google hỏng không được coi là bảng rỗng
+hay receipt thành công; phản hồi ghi không hợp lệ giữ trạng thái unknown để đối soát.
 
 Docs đọc text runs và tab ID, sửa bằng chỉ số UTF-16 trên revision vừa đọc. Các thao tác không được
 chồng lấn hoặc cắt đôi ký tự Unicode; phải nằm trong một text run, giữ dấu kết thúc đoạn.
@@ -126,4 +133,7 @@ xóa ciphertext/journal để ẩn UI. Giữ backup keyring an toàn cùng DB ba
 - [Sheets append](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets.values/append)
 - [Docs batchUpdate và revision control](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents/batchUpdate)
 - [Docs tabs](https://developers.google.com/workspace/docs/api/how-tos/tabs)
+- [Docs TextRun và suggestions](https://developers.google.com/workspace/docs/api/reference/rest/v1/documents#TextRun)
+- [Sheets A1, sheetId và tab hiển thị](https://developers.google.com/workspace/sheets/api/guides/concepts)
+- [Sheets bounded grid data](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get)
 - [Drive resumable upload/import](https://developers.google.com/workspace/drive/api/guides/manage-uploads)

@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from sqlalchemy import delete, select
 
-from backend.models import Conversation, GoogleFileGrant, GoogleWorkFile
+from backend.models import Conversation, GoogleConnection, GoogleFileGrant, GoogleWorkFile, User
 from backend.schemas.google import DOC_MIME, SHEET_MIME, GoogleFileRef
 from backend.services.google.client import DRIVE_URL
 from backend.services.google.errors import GoogleServiceError
@@ -62,6 +62,62 @@ class AuthorizedGoogleConnection:
 class GoogleAccess:
     def __init__(self, credentials):
         self.credentials = credentials
+
+    async def validate_pins(self, session, context, pins):
+        """Bulk local authority checks before and after one provider check per file."""
+        if not self.credentials.settings.google_connector_enabled:
+            raise GoogleServiceError(404, "Google connection not found")
+
+        async def local():
+            rows = await session.execute(
+                select(GoogleWorkFile, GoogleFileGrant, GoogleConnection)
+                .join(GoogleFileGrant, GoogleWorkFile.grant_id == GoogleFileGrant.id)
+                .join(GoogleConnection, GoogleFileGrant.connection_id == GoogleConnection.id)
+                .join(Conversation, GoogleWorkFile.context_id == Conversation.id)
+                .join(User, Conversation.user_id == User.id)
+                .where(
+                    GoogleWorkFile.context_id == context.conversation_id,
+                    GoogleWorkFile.owner_id == context.user_id,
+                    GoogleFileGrant.owner_id == context.user_id,
+                    GoogleConnection.owner_id == context.user_id,
+                    Conversation.user_id == context.user_id,
+                    User.is_active.is_(True),
+                )
+                .execution_options(populate_existing=True)
+            )
+            available = {
+                (str(grant.connection_id), grant.file_id): (selection, grant, connection)
+                for selection, grant, connection in rows
+            }
+            for pin in pins:
+                pair = available.get((str(pin["connection_id"]), pin["file_id"]))
+                if not pair or str(pin["context_id"]) != str(context.conversation_id):
+                    raise GoogleServiceError(409, "Google selection changed")
+                selection, grant, connection = pair
+                if (
+                    grant.revoked
+                    or connection.status != "connected"
+                    or not connection.offline_ready
+                    or grant.generation != pin["grant_generation"]
+                    or selection.grant_generation != pin["grant_generation"]
+                    or grant.connection_generation != pin["connection_generation"]
+                    or connection.generation != pin["connection_generation"]
+                    or grant.mime_type != pin["mime_type"]
+                ):
+                    raise GoogleServiceError(409, "Google scope changed")
+
+        await local()
+        tokens = {}
+        for pin in pins:
+            identity = str(pin["connection_id"])
+            if identity not in tokens:
+                tokens[identity] = await self.credentials.access_token(
+                    session, context.user_id, pin["connection_id"]
+                )
+            metadata = await self.metadata(pin["file_id"], tokens[identity])
+            if metadata["mimeType"] != pin["mime_type"]:
+                raise GoogleServiceError(409, "Google file type changed")
+        await local()
 
     async def authorize_connection(self, session, context, connection_id):
         await self.conversation(session, context.user_id, context.conversation_id)

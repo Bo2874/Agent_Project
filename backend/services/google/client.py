@@ -133,6 +133,8 @@ class GoogleHTTP:
                     try:
                         data = json.loads(body)
                     except (ValueError, UnicodeError):
+                        if response.status_code < 300:
+                            raise GoogleServiceError(502, "Invalid Google response") from None
                         data = {}
                     if not isinstance(data, dict):
                         raise GoogleServiceError(502, "Invalid Google response")

@@ -15,6 +15,10 @@ OAuth Web Client hoặc file Google thử. Live Google **NOT RUN** cho cả Shee
 checkbox triển khai không thay thế gate live để chuyển Plan04. CLI `--live` in checklist,
 không tự ghi ngoài cơ chế chat/approval. [Hồ sơ](../../acceptance/2026-11-06-google-connectors.md).
 
+**Chốt offline 2026-11-06:** G1–G6 hoàn tất; review độc lập phát hiện bảy Important đã sửa bằng
+regression RED → GREEN trong một lượt. Gate Google 71 passed; full Docker 1.266 passed/1 Windows
+symlink skip. Một Minor UX hoãn, toàn bộ quyết định/đánh đổi đã lưu trong hồ sơ; chưa gộp main/push.
+
 ## Global Constraints
 
 - “Người dùng chọn từng file; không tìm trên toàn Drive”.

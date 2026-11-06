@@ -166,6 +166,8 @@ class FakeGoogle:
                     row[first : first + len(cells)] = cells
             if self.lose_write_response:
                 raise httpx.ReadTimeout("Synthetic lost response", request=request)
+            if request.url.path.endswith(":batchUpdate"):
+                return httpx.Response(200, json={"spreadsheetId": "sheet-a", "replies": [{}]})
             receipt = {
                 "updatedRange": a1,
                 "updatedRows": len(values),

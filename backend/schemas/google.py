@@ -75,7 +75,12 @@ class SheetChange(GoogleModel):
         if len(self.model_dump_json()) > 200000:
             raise ValueError("Sheet write payload exceeds limit")
         if self.kind == "format_range":
-            if self.format is None or self.rows or self.dedup_column is not None:
+            if (
+                self.format is None
+                or self.rows
+                or self.dedup_column is not None
+                or not any(value is not None for value in self.format.model_dump().values())
+            ):
                 raise ValueError("Formatting requires only an explicit format")
         elif (
             not self.rows
@@ -136,6 +141,12 @@ class GoogleWriteProposal(GoogleModel):
         }
 
 
+class GoogleFileAuthority(GoogleModel):
+    grant_generation: int = Field(ge=1)
+    connection_generation: int = Field(ge=1)
+    mime_type: str
+
+
 class GoogleWriteReceipt(GoogleModel):
     operation_id: UUID
     status: Literal["completed"] = "completed"
@@ -144,6 +155,7 @@ class GoogleWriteReceipt(GoogleModel):
     updated_cells: int = Field(default=0, ge=0)
     url: str
     file_ref: GoogleFileRef | None = None
+    file_authority: GoogleFileAuthority | None = None
 
 
 class GoogleTextBlock(GoogleModel):

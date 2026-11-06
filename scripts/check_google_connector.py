@@ -54,6 +54,7 @@ def main():
         "tests/test_google_mutations.py",
         "tests/test_google_tools.py",
         "tests/test_google_ui.py",
+        "tests/test_google_review.py",
     ]
     root = Path(__file__).resolve().parents[1]
     for optional in ("tests/test_google_docs.py", "tests/test_google_drive_artifacts.py"):

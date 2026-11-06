@@ -118,6 +118,7 @@ from agent_core.tools import (
     ToolResult,
     ToolSelectionConfig,
 )
+from agent_core.tools.authorization import authorization_boundary
 from agent_core.tools.selector import ToolSelector
 from agent_core.tools.types import ToolAuthorizationError
 from agent_core.tracing import AgentTraceConfig
@@ -1144,8 +1145,9 @@ async def run_agent_graph_stream(
             if selected_skill is not None and skill_registry is not None:
                 await skill_registry.validate(selected_skill.name)
             if original_authorization:
-                for tool in selection.tools:
-                    await original_authorization(tool.name)
+                with authorization_boundary():
+                    for tool in selection.tools:
+                        await original_authorization(tool.name)
         except ToolAuthorizationError as exc:
             raise AgentNodeExecutionError(str(exc), code=exc.code) from exc
 

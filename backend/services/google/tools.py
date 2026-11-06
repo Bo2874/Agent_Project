@@ -6,6 +6,7 @@ from dataclasses import replace
 from sqlalchemy import select
 
 from agent_core.tools import ToolResult
+from agent_core.tools.authorization import check_authorization_once
 from agent_core.tools.types import ToolAuthorizationError
 from backend.core.config import get_settings
 from backend.database import SessionFactory
@@ -17,7 +18,6 @@ from backend.models import (
     GoogleMutation,
     GoogleWorkFile,
 )
-from backend.schemas.google import GoogleFileRef
 from backend.services.google.access import GoogleAccess, grant_view
 from backend.services.google.credentials import GoogleCredentials
 from backend.services.google.docs import GoogleDocs
@@ -101,27 +101,38 @@ class GoogleToolService:
     async def guard(self, context, name):
         if not name.startswith("google_"):
             return
+        await check_authorization_once(
+            (
+                id(self),
+                context.user_id,
+                context.run_id,
+                context.conversation_id,
+                json.dumps(list(context.google_file_refs), sort_keys=True, default=str),
+            ),
+            lambda: self.validate_authority(context),
+        )
+
+    async def validate_authority(self, context):
         try:
             async with self.sessions() as session:
                 await self.check_run(session, context)
-                for pinned in context.google_file_refs:
-                    ref = GoogleFileRef.model_validate(
-                        {key: pinned[key] for key in ("connection_id", "file_id", "context_id")}
+                created = await session.scalars(
+                    select(GoogleMutation).where(
+                        GoogleMutation.owner_id == context.user_id,
+                        GoogleMutation.run_id == context.run_id,
+                        GoogleMutation.context_id == context.conversation_id,
+                        GoogleMutation.status == "completed",
+                        GoogleMutation.kind.in_(["create_doc", "upload_artifact"]),
                     )
-                    action = (
-                        "read_sheet"
-                        if pinned["mime_type"] == "application/vnd.google-apps.spreadsheet"
-                        else "read_doc"
-                        if pinned["mime_type"] == "application/vnd.google-apps.document"
-                        else "read_file"
-                    )
-                    auth = await self.access.authorize(session, context, ref, action)
-                    if (
-                        auth.grant_generation != pinned["grant_generation"]
-                        or auth.connection_generation != pinned["connection_generation"]
-                        or auth.mime_type != pinned["mime_type"]
-                    ):
-                        raise GoogleServiceError(409, "Google scope changed")
+                )
+                pins = list(context.google_file_refs)
+                for row in created:
+                    receipt = row.receipt or {}
+                    if not receipt.get("file_ref") or not receipt.get("file_authority"):
+                        raise GoogleServiceError(409, "Created Google file authority unavailable")
+                    pins.append({**receipt["file_ref"], **receipt["file_authority"]})
+                unique = {(str(pin["connection_id"]), pin["file_id"]): pin for pin in pins}
+                await self.access.validate_pins(session, context, list(unique.values()))
         except GoogleServiceError:
             raise ToolAuthorizationError("google_authorization_changed") from None
 
