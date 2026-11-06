@@ -128,7 +128,7 @@ class ToolApprovalManager:
         from sqlalchemy import select
 
         from backend.database import SessionFactory
-        from backend.models import AgentApproval, AgentRun, Conversation
+        from backend.models import AgentApproval, AgentRun, BackgroundJob, Conversation
 
         async with SessionFactory() as session:
             row = await session.scalar(
@@ -141,6 +141,13 @@ class ToolApprovalManager:
                     Conversation.id == conversation_id,
                     Conversation.user_id == user_id,
                     AgentRun.status.in_(["running", "waiting_approval"]),
+                    ~select(BackgroundJob.id)
+                    .where(
+                        BackgroundJob.agent_run_id == AgentRun.id,
+                        BackgroundJob.cancel_requested_at.is_not(None),
+                    )
+                    .correlate(AgentRun)
+                    .exists(),
                 )
                 .with_for_update(of=AgentApproval)
             )

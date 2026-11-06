@@ -333,6 +333,18 @@ async def cancel_run(owner, conversation_id, run_id):
         )
         if run is None:
             return False
+        from backend.models.automation import AutomationRun
+
+        automation = await session.scalar(
+            select(AutomationRun.id).where(
+                AutomationRun.agent_run_id == run_id, AutomationRun.owner_id == owner
+            )
+        )
+        if automation is not None:
+            from backend.services.automations.service import request_run_stop
+
+            await request_run_stop(session, owner, automation)
+            return True
         if run.status not in {"queued", "running", "waiting_approval"}:
             return True
         jobs = (

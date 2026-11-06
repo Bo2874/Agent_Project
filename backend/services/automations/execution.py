@@ -272,17 +272,38 @@ async def sync_automation_run(session, run_id, *, drained=False, claimed=None):
                 )
             )
         row.finished_at = datetime.now(UTC)
-    row.stop_reason = agent.stop_reason
+    row.stop_reason = "user_cancelled" if row.status == "cancelled" else agent.stop_reason
     from backend.services.agent_runs import list_agent_run_timelines
 
     timelines = await list_agent_run_timelines(session, row.conversation_id)
     timeline = next((item for item in timelines if item.id == agent.id), None)
+    completed = (
+        await session.scalars(
+            select(GoogleMutation)
+            .where(
+                GoogleMutation.run_id == agent.id,
+                GoogleMutation.owner_id == row.owner_id,
+                GoogleMutation.context_id == row.conversation_id,
+                GoogleMutation.status == "completed",
+            )
+            .order_by(GoogleMutation.id)
+            .limit(100)
+        )
+    ).all()
     row.result = {
         **row.result,
         "total_tokens": timeline.total_tokens if timeline else 0,
         "usage_unknown": bool(unknown or remote_unknown or unknown_reason),
         "conversation_id": str(row.conversation_id),
         "agent_run_id": str(agent.id),
+        "google_results": [
+            {
+                key: value
+                for key, value in (operation.receipt or {}).items()
+                if key in {"operation_id", "url", "updated_range", "updated_rows", "updated_cells"}
+            }
+            for operation in completed
+        ],
     }
     await session.commit()
     return row

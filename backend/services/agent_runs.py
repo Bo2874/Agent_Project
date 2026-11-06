@@ -453,6 +453,9 @@ async def prepare_agent_run_resume(
     )
     if agent_run is None:
         raise AgentRunResumeError("Không tìm thấy agent run")
+    source = await session.get(Conversation, conversation_id)
+    if source is not None and source.source_kind == "automation":
+        raise AgentRunResumeError("Automation phải tạo lượt mới từ Run now; không resume qua chat.")
     if agent_run.status != "failed":
         raise AgentRunResumeError("Chỉ có thể resume agent run đang ở trạng thái failed")
     from backend.models import AgentOperation

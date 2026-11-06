@@ -7,7 +7,13 @@ from sqlalchemy import select
 from backend.core.config import get_settings
 from backend.dependencies import CurrentUser, DbSession
 from backend.models.automation import Automation, AutomationRun
-from backend.schemas.automation import AutomationDraft, AutomationRunView
+from backend.schemas.automation import (
+    AutomationDraft,
+    AutomationRunView,
+    CloseUnknownInput,
+    EnabledInput,
+    RunNowInput,
+)
 from backend.services.automations import service
 
 
@@ -56,6 +62,28 @@ async def list_automations(session: DbSession, user: CurrentUser):
 @router.get("/runs/{run_id}")
 async def get_run(run_id: UUID, session: DbSession, user: CurrentUser):
     return await service.get_owned_automation_run(session, user.id, run_id)
+
+
+@router.post("/runs/{run_id}/stop")
+async def stop(run_id: UUID, session: DbSession, user: CurrentUser):
+    return await service.request_run_stop(session, user.id, run_id)
+
+
+@router.post("/runs/{run_id}/close-unknown")
+async def close_unknown(
+    run_id: UUID, body: CloseUnknownInput, session: DbSession, user: CurrentUser
+):
+    return await service.close_unknown_run(session, user.id, run_id)
+
+
+@router.post("/{identity}/enabled")
+async def toggle(identity: UUID, body: EnabledInput, session: DbSession, user: CurrentUser):
+    return await service.set_schedule_enabled(session, user.id, identity, **body.model_dump())
+
+
+@router.post("/{identity}/run-now")
+async def manual_run(identity: UUID, body: RunNowInput, session: DbSession, user: CurrentUser):
+    return await service.run_now(session, user.id, identity, idempotency_key=body.idempotency_key)
 
 
 @router.get("/{identity}")

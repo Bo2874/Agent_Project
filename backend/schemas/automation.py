@@ -161,3 +161,18 @@ class AutomationRunView(AutomationModel):
     result: dict
     created_at: datetime
     finished_at: datetime | None
+
+
+class EnabledInput(AutomationModel):
+    enabled: bool = Field(strict=True)
+    stop_active: bool = Field(default=False, strict=True)
+
+
+class RunNowInput(AutomationModel):
+    idempotency_key: str = Field(
+        min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+    )
+
+
+class CloseUnknownInput(AutomationModel):
+    confirmed: Literal[True]

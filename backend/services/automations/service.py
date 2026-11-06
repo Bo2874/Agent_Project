@@ -1,12 +1,20 @@
 """Owner-scoped configuration and immutable execution snapshots."""
 
+import re
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from backend.models import ArtifactVersion, GoogleConnection, GoogleFileGrant
-from backend.models.automation import Automation, AutomationGrant, AutomationRevision, AutomationRun
+from backend.models import ArtifactVersion, BackgroundJob, GoogleConnection, GoogleFileGrant
+from backend.models.automation import (
+    ACTIVE_STATUSES,
+    Automation,
+    AutomationGrant,
+    AutomationRevision,
+    AutomationRun,
+)
 from backend.schemas.automation import AutomationRunView, AutomationView, GrantDraft
 
 
@@ -182,4 +190,141 @@ async def get_owned_automation_run(session, owner, run_id):
     )
     if row is None:
         raise HTTPException(404, "Automation run not found")
+    return AutomationRunView.model_validate(row)
+
+
+def utcnow():
+    return datetime.now(UTC)
+
+
+async def lock_run(session, owner, run_id):
+    hint = await session.scalar(
+        select(AutomationRun).where(AutomationRun.id == run_id, AutomationRun.owner_id == owner)
+    )
+    if hint is None:
+        raise HTTPException(404, "Automation run not found")
+    auto = await owned_automation(session, owner, hint.automation_id, lock=True)
+    row = await session.scalar(
+        select(AutomationRun)
+        .where(AutomationRun.id == run_id, AutomationRun.owner_id == owner)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return auto, row
+
+
+async def stop_locked(session, row):
+    if row.status not in ACTIVE_STATUSES:
+        return
+    job = await session.scalar(
+        select(BackgroundJob)
+        .where(BackgroundJob.id == row.job_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    now = utcnow()
+    if job and job.status in {"queued", "running"}:
+        job.cancel_requested_at = job.cancel_requested_at or now
+        if job.status == "queued":
+            job.status, job.cancelled_at, job.finished_at = "cancelled", now, now
+    if row.status == "queued" and row.agent_run_id is None:
+        row.status, row.stop_reason, row.finished_at = "cancelled", "user_cancelled", now
+    elif row.status != "needs_reconciliation":
+        row.status = "cancelling"
+
+
+async def request_run_stop(session, owner, run_id):
+    _, row = await lock_run(session, owner, run_id)
+    await stop_locked(session, row)
+    audit(session, owner, "stop_requested", row.id)
+    await session.commit()
+    job = await session.get(BackgroundJob, row.job_id) if row.job_id else None
+    if row.status == "cancelling" and (
+        job is None or job.status in {"failed", "cancelled", "succeeded"}
+    ):
+        from backend.services.automations.execution import sync_automation_run
+
+        await sync_automation_run(session, row.id, drained=True)
+    return AutomationRunView.model_validate(row)
+
+
+async def set_schedule_enabled(session, owner, automation_id, *, enabled, stop_active=False):
+    auto = await owned_automation(session, owner, automation_id, lock=True)
+    if enabled and not auto.enabled:
+        from backend.schemas.automation import ScheduleSpec
+        from backend.services.automations.schedules import next_occurrence
+
+        rev = await current_revision(session, auto)
+        auto.next_run_at = next_occurrence(
+            ScheduleSpec.model_validate(rev.schedule), after=utcnow()
+        )
+    elif not enabled:
+        auto.next_run_at = None
+        runs = (
+            await session.scalars(
+                select(AutomationRun)
+                .where(
+                    AutomationRun.automation_id == auto.id,
+                    AutomationRun.owner_id == owner,
+                    AutomationRun.status.in_(ACTIVE_STATUSES),
+                )
+                .order_by(AutomationRun.id)
+                .with_for_update()
+            )
+        ).all()
+        for row in runs:
+            if stop_active or (row.trigger == "scheduled" and row.status == "queued"):
+                await stop_locked(session, row)
+    auto.enabled = enabled
+    audit(session, owner, "schedule_changed", auto.id, enabled=enabled, stop_active=stop_active)
+    await session.commit()
+    return await view(session, auto)
+
+
+async def run_now(session, owner, automation_id, *, idempotency_key):
+    if not isinstance(idempotency_key, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", idempotency_key
+    ):
+        raise HTTPException(422, "Use an idempotency key of 1-100 safe characters")
+    auto = await owned_automation(session, owner, automation_id, lock=True)
+    existing = await session.scalar(
+        select(AutomationRun).where(
+            AutomationRun.automation_id == auto.id, AutomationRun.idempotency_key == idempotency_key
+        )
+    )
+    if existing is not None:
+        return AutomationRunView.model_validate(existing)
+    if (
+        await session.scalar(
+            select(AutomationRun.id)
+            .where(
+                AutomationRun.automation_id == auto.id, AutomationRun.status.in_(ACTIVE_STATUSES)
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        raise HTTPException(409, "Automation already has an active run")
+    from backend.services.automations.dispatch import enqueue_automation_run
+
+    row = await enqueue_automation_run(
+        session,
+        auto,
+        await current_revision(session, auto),
+        trigger="manual",
+        idempotency_key=idempotency_key,
+    )
+    audit(session, owner, "run_now", row.id)
+    await session.commit()
+    return AutomationRunView.model_validate(row)
+
+
+async def close_unknown_run(session, owner, run_id):
+    _, row = await lock_run(session, owner, run_id)
+    if row.status != "needs_reconciliation":
+        raise HTTPException(409, "Only an unknown-outcome run can be closed manually")
+    row.status, row.stop_reason, row.finished_at = "failed", "closed_without_replay", utcnow()
+    row.result = {**row.result, "manually_closed": True, "usage_unknown": True}
+    audit(session, owner, "closed_without_replay", row.id)
+    await session.commit()
     return AutomationRunView.model_validate(row)
