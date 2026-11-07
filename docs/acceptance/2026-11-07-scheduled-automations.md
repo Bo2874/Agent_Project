@@ -1,7 +1,8 @@
 # Plan04 — Scheduled Automations
 
-Branch `feat/workspace-automations`, base `df49358`. Chưa gộp main, chưa push, chưa
-đổi `.env`, chưa migrate database người dùng hoặc bật tính năng trên dữ liệu thật.
+Source triển khai `4af8135` từ branch `feat/workspace-automations`, base `df49358`.
+Đã gộp local vào main; xem [biên bản gộp và hậu kiểm](2026-11-07-automations-main-merge.md).
+Chưa push, đổi `.env`, migrate database người dùng hoặc bật tính năng trên dữ liệu thật.
 
 ## Phạm vi
 

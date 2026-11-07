@@ -8,7 +8,7 @@ Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memor
 Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Automations theo lịch.
 Plan01 và Plan02 đã triển khai, nghiệm thu offline. Plan03 Google Connectors đã hoàn tất triển khai,
 review và kiểm thử offline, đã gộp local vào main; chưa nghiệm thu Google thật. Plan04 đã
-hoàn tất triển khai và kiểm thử offline theo lựa chọn người dùng, còn trên nhánh riêng.
+hoàn tất triển khai và kiểm thử offline theo lựa chọn người dùng, đã gộp local vào main.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
 Plan01 đã gộp vào `main` tại máy (commit `4b92d31`):
@@ -37,7 +37,10 @@ Automations/Inbox, stop/pause, khôi phục và tài liệu vận hành trên `f
 Bảy Important từ review đã sửa; gate cuối **1.304 passed/59 conditional skips** (373,30 giây).
 Nhóm scratch/timing 9 passed; hai ca Docker benchmark/browser chạy lại 2 passed. Các đợt Docker
 có lỗi và giới hạn tải được ghi đầy đủ trong [biên bản](docs/acceptance/2026-11-07-automations-review.md).
-Một Minor phân trang lịch sử/Inbox hoãn; chưa gộp main, push, bật feature hoặc migrate DB người dùng.
+Một Minor phân trang lịch sử/Inbox hoãn. Đã gộp local vào main tại source `4af8135`;
+hậu kiểm mới 1.304 passed/59 conditional skips (404,83 giây), migration/check trên QA sạch.
+[Biên bản gộp và thứ tự bắt đầu nghiệm thu](docs/acceptance/2026-11-07-automations-main-merge.md).
+Chưa push, bật feature hoặc migrate DB người dùng; Google/model thật vẫn chờ nghiệm thu chung.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần

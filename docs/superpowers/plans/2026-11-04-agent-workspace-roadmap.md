@@ -87,7 +87,9 @@
   nghiệm thu Google thật và toàn luồng được gom ở cuối, trước khi bật automation dùng Google thật.
   Plan04 đã hoàn tất triển khai/kiểm thử offline trên `feat/workspace-automations`: bảy Important
   đã sửa, suite cuối 1.304 passed/59 conditional skips; nhóm scratch/timing 9 passed và hai ca
-  Docker benchmark/browser chạy lại đạt. Một Minor phân trang lịch sử hoãn; chưa gộp main/push.
+  Docker benchmark/browser chạy lại đạt. Một Minor phân trang lịch sử hoãn. Đã gộp local main
+  tại source `4af8135`; hậu kiểm mới 1.304 passed/59 conditional skips (404,83 giây), chưa push.
+  [Biên bản gộp Plan04](../../acceptance/2026-11-07-automations-main-merge.md).
   [Nghiệm thu Plan04](../../acceptance/2026-11-07-scheduled-automations.md) ghi riêng các lượt lỗi,
   bằng chứng khôi phục/usage, các quyết định và phần Google/model thật chưa chạy.
   Bật runner/flag và áp dụng migration trên môi trường người dùng là bước vận hành riêng.

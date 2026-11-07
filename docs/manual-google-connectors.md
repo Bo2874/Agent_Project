@@ -2,7 +2,8 @@
 
 Plan03 có OAuth, chọn từng file theo chat, Sheets, Docs text và upload Artifact. Bằng chứng
 offline không chứng minh quyền/API Google thật. Chưa có OAuth client của người dùng nên **live NOT RUN**.
-Không mở Plan04 trước khi ba luồng Sheets được nghiệm thu trên file thử đã chọn.
+Theo lựa chọn người dùng ngày 2026-11-07, Plan04 đã được triển khai và kiểm thử offline trước.
+Vẫn cần nghiệm thu ba luồng Sheets trên file thử đã chọn trước khi bật automation ghi Google thật.
 
 ## Cấu hình
 

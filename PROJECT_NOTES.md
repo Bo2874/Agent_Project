@@ -2111,3 +2111,15 @@
   Một Minor phân trang lịch sử/Inbox hoãn, lượt active luôn hiện để thao tác.
   Triển khai/kiểm thử offline Plan04 đã xong; chưa gộp main hoặc push, chưa bật feature/migrate DB thật.
   [Hướng dẫn](docs/manual-automations.md), [hồ sơ nghiệm thu](docs/acceptance/2026-11-07-scheduled-automations.md).
+
+### 2026-11-07 — Plan04 gộp local vào main
+
+- Theo yêu cầu user, fetch origin rồi fast-forward chín commit Plan04 từ `df49358` tới source
+  `4af8135`, không conflict. Không tự push.
+- Hậu kiểm mới trên checkout có cùng Git tree với main, không có `.env`: **1.304 passed,
+  59 conditional skips** (404,83 giây). QA PostgreSQL riêng cổng 65407 nâng đến 0036/check sạch;
+  Ruff, toàn bộ JS syntax và Compose profile validation đạt.
+- Hai hướng dẫn đã sửa phần trạng thái cũ: có thể bắt đầu Excel rồi Word/PDF trước Google;
+  Plan04 offline đã triển khai nhưng automation ghi Google thật vẫn cần nghiệm thu connector thật.
+- Không sửa `.env`, không migrate DB đang dùng hoặc bật feature. Google/model thật chưa chạy.
+  [Biên bản và thứ tự nghiệm thu](docs/acceptance/2026-11-07-automations-main-merge.md).

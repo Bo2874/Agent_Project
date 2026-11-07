@@ -1,7 +1,8 @@
 # File làm việc: Excel, Word và PDF văn bản
 
-Giao diện A hỗ trợ file Excel, Word và PDF có văn bản. Google Workspace và lịch tự động
-thuộc các kế hoạch tiếp theo. `.env` thật không được thay đổi trong quá trình triển khai.
+Giao diện A hỗ trợ file Excel, Word và PDF có văn bản. Bắt đầu nghiệm thu theo thứ tự
+Excel → Word/PDF → Google Connectors → Automations; hai phần đầu không cần tài khoản Google.
+Google và lịch tự động có hướng dẫn riêng. `.env` thật không được thay đổi trong quá trình triển khai.
 
 ## Sử dụng
 
