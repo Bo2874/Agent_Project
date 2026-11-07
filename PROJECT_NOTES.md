@@ -2089,3 +2089,17 @@
 - Lượt đầu dùng basetemp tùy chỉnh có một lỗi test thu hồi scratch đường dẫn dài; ghi rõ kết quả,
   chẩn đoán và phần chưa xác định trong [biên bản](docs/acceptance/2026-11-06-google-connectors-merge.md).
   Bảy test scratch và full suite sau đó đạt với temp mặc định, không sửa code hoặc assertion.
+
+### 2026-11-07 — Plan04 Scheduled Automations
+
+- Theo lựa chọn user, triển khai offline trước và gom Google thật/model thật ở nghiệm thu cuối.
+  Quyết định này thay gate cũ “Google thật trước Plan04”; chưa tự bật feature hoặc đổi `.env`.
+- Nhánh `feat/workspace-automations` có scheduler riêng, revision/quyền từng file, queue/Agent
+  dùng chung, token tổng nullable, Run now, stop/pause và Automations/Inbox desktop/mobile.
+- Gate automation offline đạt **109 passed**; test bổ sung stop trong RPC đã ghi remote đạt.
+  Hai scheduler/worker thật, PostgreSQL checkpoint và hard-kill child worker xác nhận receipt
+  completed không append lại; response mất giữ unknown và active slot để đối soát.
+- Nghiệm thu tìm ra và sửa timeout duyệt 5 phút, Agent tiếp tục sau Google unknown, và recorder
+  mất ID tool sau restart. Chat giữ timeout hữu hạn; migration 0036 cho approval automation chờ lâu.
+- Hồi quy đầy đủ với Docker và review cuối nhánh đang thực hiện; chưa gộp main hoặc push.
+  [Hướng dẫn](docs/manual-automations.md), [hồ sơ nghiệm thu](docs/acceptance/2026-11-07-scheduled-automations.md).

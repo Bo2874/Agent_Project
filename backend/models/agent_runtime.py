@@ -47,5 +47,5 @@ class AgentApproval(Base):
     )
     fingerprint: Mapped[str] = mapped_column(String(64))
     decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -2153,7 +2153,12 @@ async def run_agent_graph_stream(
                             operation_journal
                             and cached_result is None
                             and not (estimate and result.usage is None)
-                            and result.error_code not in {"tool_timeout", "tool_outcome_unknown"}
+                            and result.error_code
+                            not in {
+                                "tool_timeout",
+                                "tool_outcome_unknown",
+                                "google_outcome_unknown",
+                            }
                         ):
                             await operation_journal.finish(
                                 op_key,
@@ -2206,7 +2211,11 @@ async def run_agent_graph_stream(
                 tool_usage += result.usage
             elif react_enabled and estimate and result.is_error and budget_stop is None:
                 budget_stop = "unknown_billing"
-            if operation_journal and result.error_code in {"tool_timeout", "tool_outcome_unknown"}:
+            if result.error_code in {
+                "tool_timeout",
+                "tool_outcome_unknown",
+                "google_outcome_unknown",
+            }:
                 budget_stop = "unknown_tool_outcome"
             if react_enabled and estimate:
                 await budget_progress(

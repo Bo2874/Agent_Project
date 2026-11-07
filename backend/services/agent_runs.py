@@ -336,6 +336,23 @@ class AgentRunRecorder:
     async def _record_tool_started(self, event: AgentLoopEvent) -> None:
         if event.tool_call is None:
             raise RuntimeError("Event tool_started thiếu tool_call")
+        if event.step_number not in self._steps:
+            if await self._tool_identity(event, required=False) is not None:
+                return  # Existing call belongs to the checkpoint, not a new attempt.
+            async with SessionFactory() as session:
+                await fence(session)
+                step = await session.scalar(
+                    select(RunStep)
+                    .where(
+                        RunStep.agent_run_id == self.agent_run_id,
+                        RunStep.step_number == event.step_number,
+                    )
+                    .order_by(RunStep.attempt_number.desc())
+                    .limit(1)
+                )
+                if step is None:
+                    raise RuntimeError("Persisted model step not found for resumed tool")
+                self._steps[event.step_number] = (step.id, step.model_call_id)
         step_id, _ = self._steps[event.step_number]
         tool_call_id = uuid.uuid4()
         async with SessionFactory() as session:
@@ -356,7 +373,7 @@ class AgentRunRecorder:
     async def _record_tool_completed(self, event: AgentLoopEvent) -> None:
         if event.tool_call is None or event.tool_result is None:
             raise RuntimeError("Event tool_completed thiếu dữ liệu")
-        tool_call_id = self._tool_calls[(event.step_number, event.tool_call.id)]
+        tool_call_id = await self._tool_identity(event)
         async with SessionFactory() as session:
             await fence(session)
             tool_call = await session.get(ToolCall, tool_call_id)
@@ -405,7 +422,7 @@ class AgentRunRecorder:
     async def _record_tool_approval_required(self, event: AgentLoopEvent) -> None:
         if event.tool_call is None or event.approval_id is None:
             raise RuntimeError("Event approval thiếu dữ liệu")
-        tool_call_id = self._tool_calls[(event.step_number, event.tool_call.id)]
+        tool_call_id = await self._tool_identity(event)
         async with SessionFactory() as session:
             await fence(session)
             tool_call = await session.get(ToolCall, tool_call_id)
@@ -422,7 +439,7 @@ class AgentRunRecorder:
     async def _record_tool_approval_resolved(self, event: AgentLoopEvent) -> None:
         if event.tool_call is None or event.approved is None:
             raise RuntimeError("Event approval resolved thiếu dữ liệu")
-        tool_call_id = self._tool_calls[(event.step_number, event.tool_call.id)]
+        tool_call_id = await self._tool_identity(event)
         async with SessionFactory() as session:
             await fence(session)
             tool_call = await session.get(ToolCall, tool_call_id)
@@ -434,6 +451,33 @@ class AgentRunRecorder:
             tool_call.status = "running" if event.approved else "denied"
             agent_run.status = "running"
             await session.commit()
+
+    async def _tool_identity(self, event: AgentLoopEvent, *, required=True) -> UUID | None:
+        key = (event.step_number, event.tool_call.id)
+        if key not in self._tool_calls:
+            async with SessionFactory() as session:
+                await fence(session)
+                call = await session.scalar(
+                    select(ToolCall)
+                    .join(RunStep, RunStep.id == ToolCall.run_step_id)
+                    .join(AgentRun, AgentRun.id == RunStep.agent_run_id)
+                    .where(
+                        AgentRun.id == self.agent_run_id,
+                        AgentRun.conversation_id == self.conversation_id,
+                        RunStep.step_number == event.step_number,
+                        ToolCall.provider_call_id == event.tool_call.id,
+                        ToolCall.tool_name == event.tool_call.name,
+                        ToolCall.arguments == dict(event.tool_call.arguments),
+                    )
+                    .order_by(RunStep.attempt_number.desc())
+                    .limit(1)
+                )
+                if call is None:
+                    if not required:
+                        return None
+                    raise RuntimeError("Persisted tool call not found for resumed event")
+                self._tool_calls[key] = call.id
+        return self._tool_calls[key]
 
 
 async def prepare_agent_run_resume(

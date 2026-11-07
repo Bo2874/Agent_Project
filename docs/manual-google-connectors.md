@@ -27,7 +27,9 @@ backend hoặc tests. Google auth SDK là dependency ứng dụng; không cài c
    Migration `20261105_0033` nối sau `0032`; thêm năm bảng Google, không sửa plugin credential.
 6. Bật `GOOGLE_CONNECTOR_ENABLED=true`, restart cả web và worker với cùng cấu hình/keyring.
    Compose dùng các biến `DEV_GOOGLE_*` trong `.env.docker.example`; mặc định vẫn tắt.
-   Nếu dùng allowlist riêng, thêm đúng những tool cần dùng từ bảng dưới.
+   Thêm những tool Google cần dùng từ bảng dưới vào `TOOL_ALLOWLIST`, đồng thời giữ
+   các tool hiện có. Danh sách mặc định chưa chứa tool Google, kể cả khi đã bật connector.
+   Với Compose, đặt `DEV_TOOL_ALLOWLIST` rồi tạo lại cả web và worker.
 
 Ứng dụng chỉ xin `https://www.googleapis.com/auth/drive.file`. Không xin quyền tìm toàn bộ Drive.
 OAuth có state dùng một lần, TTL 10 phút, PKCE S256 và offline access; thiếu refresh token thì

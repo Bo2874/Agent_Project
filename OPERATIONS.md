@@ -368,3 +368,14 @@ thử được chọn; thao tác ghi thật đi qua chat và preview/approval c�
 Thiết lập OAuth/Picker, scopes, key rotation/reconnect, đối soát unknown và giới hạn Sheets/Docs/
 Drive: [manual Google Connectors](docs/manual-google-connectors.md). Không dùng token thật trong
 fixture hoặc sandbox. Chỉ bật Google sau khi cấu hình môi trường đích và nghiệm thu file thử riêng.
+# Scheduled Automations (Plan04)
+
+Vận hành scheduler độc lập với web, dùng queue/worker/checkpoint PostgreSQL hiện có.
+Mặc định `AUTOMATIONS_ENABLED=false`; Compose nhận `DEV_AUTOMATIONS_ENABLED` và profile
+`automations` (service `scheduler`). Web/worker/scheduler phải dùng cùng DB, flags và khóa
+mã hóa Google; migrate qua 0036 trước khi chạy. `DEV_TOOL_ALLOWLIST` giữ danh sách tool
+cũ và cho phép bổ sung tool Google có chủ đích, mặc định không mở thêm quyền.
+
+[Hướng dẫn tạo lịch, stop/pause, approval, reconnect, reconciliation và rollback](docs/manual-automations.md).
+Tắt lịch và drain run trước khi rollback cấu hình; giữ journal/file/schema để đối soát.
+Google thật và model trả phí vẫn là gate nghiệm thu riêng, không suy từ fixture offline.

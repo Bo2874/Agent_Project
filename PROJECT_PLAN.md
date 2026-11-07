@@ -30,7 +30,9 @@ một Minor UX được ghi trong hồ sơ nghiệm thu.
 Live Google NOT RUN vì user chọn setup sau;
 đã gộp local vào main tại source `b1c7aa2`, chưa push hoặc bật feature. Hậu kiểm sau gộp
 1.208 passed/59 environment skips; [biên bản](docs/acceptance/2026-11-06-google-connectors-merge.md).
-Tiếp theo là setup và nghiệm thu file Google thử trước Plan04.
+Ngày 2026-11-07 user chọn triển khai Plan04 offline trước, gom nghiệm thu Google thật và
+toàn luồng ở cuối trước khi bật automation trên dữ liệu thật. Plan04 đang hoàn tất gate khôi phục
+worker, giao diện Automations/Inbox và tài liệu vận hành; chưa gộp main hoặc bật feature.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần

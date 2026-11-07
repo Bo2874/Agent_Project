@@ -224,7 +224,7 @@ async def get_owned_automation_run(session, owner, run_id):
                     AgentApproval.agent_run_id == row.agent_run_id,
                     RunStep.agent_run_id == row.agent_run_id,
                     AgentApproval.decision.is_(None),
-                    AgentApproval.expires_at > utcnow(),
+                    (AgentApproval.expires_at.is_(None)) | (AgentApproval.expires_at > utcnow()),
                     ToolCall.status == "waiting_approval",
                     ToolCall.approval_decision.is_(None),
                 )
@@ -236,7 +236,7 @@ async def get_owned_automation_run(session, owner, run_id):
                 "id": str(approval.id),
                 "tool_name": call.tool_name,
                 "arguments": call.arguments,
-                "expires_at": approval.expires_at.isoformat(),
+                "expires_at": approval.expires_at.isoformat() if approval.expires_at else None,
             }
             for approval, call in pending
         ]

@@ -183,6 +183,18 @@ async def test_time_limit_unknown_tool_outcome_is_not_retried():
     assert len(events) == 1 and events[0].tool_result.error_code == "tool_outcome_unknown"
 
 
+@pytest.mark.parametrize("code", ["google_outcome_unknown", "tool_outcome_unknown"])
+async def test_unknown_write_stops_before_another_model_or_tool_call(code):
+    handler = AsyncMock(
+        return_value=ToolResult.failure("Response lost", error_code=code, usage=TokenUsage())
+    )
+    model = Model([actions("search_web"), actions("search_web"), [LLMChunk(content="Done")]])
+    items = await run(model, handler=handler, limits=AgentLimits(max_total_tokens=None))
+    assert model.calls == 1
+    assert handler.await_count == 1
+    assert "Done" not in text(items)
+
+
 async def test_usage_receipt_records_actual_once_including_overrun(monkeypatch):
     consume, add = AsyncMock(), AsyncMock()
     monkeypatch.setattr(usage_limits, "consume_usage_limits", consume)

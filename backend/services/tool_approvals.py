@@ -89,6 +89,7 @@ class ToolApprovalManager:
         from sqlalchemy import select
 
         from backend.models import AgentApproval
+        from backend.models.automation import AutomationRun
         from backend.services.run_events import fingerprint, runtime_session
 
         digest = fingerprint(
@@ -101,12 +102,22 @@ class ToolApprovalManager:
         async with runtime_session() as session:
             row = await session.get(AgentApproval, UUID(approval_id))
             if row is None:
+                unattended = await session.scalar(
+                    select(AutomationRun.id).where(
+                        AutomationRun.agent_run_id == context.run_id,
+                        AutomationRun.conversation_id == context.conversation_id,
+                        AutomationRun.owner_id == context.user_id,
+                        AutomationRun.status.in_(["running", "waiting_approval"]),
+                    )
+                )
                 session.add(
                     AgentApproval(
                         id=UUID(approval_id),
                         agent_run_id=context.run_id,
                         fingerprint=digest,
-                        expires_at=datetime.now(UTC) + timedelta(seconds=self.timeout_seconds),
+                        expires_at=None
+                        if unattended
+                        else datetime.now(UTC) + timedelta(seconds=self.timeout_seconds),
                     )
                 )
                 await session.commit()
@@ -118,7 +129,11 @@ class ToolApprovalManager:
                         AgentApproval.agent_run_id == context.run_id,
                     )
                 )
-                if row is None or row.fingerprint != digest or row.expires_at <= datetime.now(UTC):
+                if (
+                    row is None
+                    or row.fingerprint != digest
+                    or (row.expires_at is not None and row.expires_at <= datetime.now(UTC))
+                ):
                     return False
                 if row.decision:
                     return row.decision == "approved"
@@ -153,7 +168,9 @@ class ToolApprovalManager:
             )
             if row is None:
                 return False
-            if row.decision is not None or row.expires_at <= datetime.now(UTC):
+            if row.decision is not None or (
+                row.expires_at is not None and row.expires_at <= datetime.now(UTC)
+            ):
                 raise ToolApprovalNotFoundError("Yêu cầu phê duyệt đã hết hạn hoặc đã xử lý")
             row.decision = "approved" if approved else "denied"
             await session.commit()

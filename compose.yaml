@@ -65,6 +65,7 @@ x-runtime-environment: &runtime-environment
   V2_PLUGINS_ENABLED: "${DEV_V2_PLUGINS_ENABLED:-false}"
   V2_ROUTING_ENABLED: "${DEV_V2_ROUTING_ENABLED:-false}"
   AGENT_REACT_ENABLED: "${DEV_AGENT_REACT_ENABLED:-false}"
+  TOOL_ALLOWLIST: "${DEV_TOOL_ALLOWLIST:-demo__get_server_time,demo__calculate,demo__count_text,demo__convert_temperature,demo__simulate_sensitive_action,demo__get_admin_runtime_info,run_python_code,send_email,search_web,search_documents,summarize_documents,artifact_inspect,artifact_create,artifact_edit,run_artifact_python}"
   AGENT_MAX_STEPS: "${DEV_AGENT_MAX_STEPS:-}"
   AGENT_MAX_DURATION_SECONDS: "${DEV_AGENT_MAX_DURATION_SECONDS:-}"
   AGENT_MAX_IDENTICAL_TOOL_CALLS: "${DEV_AGENT_MAX_IDENTICAL_TOOL_CALLS:-}"
