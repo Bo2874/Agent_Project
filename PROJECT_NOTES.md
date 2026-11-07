@@ -2101,5 +2101,7 @@
   completed không append lại; response mất giữ unknown và active slot để đối soát.
 - Nghiệm thu tìm ra và sửa timeout duyệt 5 phút, Agent tiếp tục sau Google unknown, và recorder
   mất ID tool sau restart. Chat giữ timeout hữu hạn; migration 0036 cho approval automation chờ lâu.
-- Hồi quy đầy đủ với Docker và review cuối nhánh đang thực hiện; chưa gộp main hoặc push.
+- Hồi quy Docker: 1.336 passed/8 lỗi harness/1 symlink skip; nhóm lỗi môi trường chạy lại
+  10 passed. Toàn suite chuẩn đạt 1.286 passed/59 environment skips. Review cuối đang thực hiện;
+  chưa gộp main hoặc push.
   [Hướng dẫn](docs/manual-automations.md), [hồ sơ nghiệm thu](docs/acceptance/2026-11-07-scheduled-automations.md).

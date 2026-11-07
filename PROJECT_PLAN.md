@@ -32,7 +32,9 @@ Live Google NOT RUN vì user chọn setup sau;
 1.208 passed/59 environment skips; [biên bản](docs/acceptance/2026-11-06-google-connectors-merge.md).
 Ngày 2026-11-07 user chọn triển khai Plan04 offline trước, gom nghiệm thu Google thật và
 toàn luồng ở cuối trước khi bật automation trên dữ liệu thật. Plan04 đang hoàn tất gate khôi phục
-worker, giao diện Automations/Inbox và tài liệu vận hành; chưa gộp main hoặc bật feature.
+worker, giao diện Automations/Inbox và tài liệu vận hành. Hồi quy chuẩn 1.286 passed/59 skipped;
+gate Docker và 8 lỗi môi trường đã được ghi riêng trong biên bản. Đang chốt review cuối,
+chưa gộp main hoặc bật feature.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần

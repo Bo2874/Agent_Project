@@ -37,7 +37,16 @@ chính nó; không dùng database người dùng. HTTP Google, web và model đ�
 - Migration 0035→0036 trên QA: upgrade thành công, `alembic check` không có drift.
 - Ruff, Node syntax và Compose profile validation đã chạy; gate cuối sẽ ghi bên dưới.
 
-Hồi quy đầy đủ với Docker Artifacts đang chạy; review toàn nhánh sẽ thực hiện sau gate.
+Hồi quy toàn bộ khi bật Docker Artifacts: **1.336 passed, 8 failed, 1 skipped**,
+1.079,27 giây. Tất cả ca Artifact/Docker đạt; skip là quyền symlink Windows.
+Tám lỗi đến từ harness mở rộng gate Artifact ra toàn suite: sáu lỗi console cp1252
+khi in tiếng Việt với `-s`, hai lỗi vì gate ép `MCP_DEMO_ENABLED=false` trong khi test
+đang kiểm tra default cũ. Bật UTF-8 và giữ default MCP cho toàn suite, chạy lại nhóm
+liên quan đạt **10 passed / 50 deselected**, không đổi code ứng dụng để làm test xanh.
+Toàn suite tiêu chuẩn với môi trường đúng: **1.286 passed / 59 skipped**, 283,14 giây;
+59 skip là các gate tùy điều kiện không bật trong lượt chuẩn, đã có bằng chứng Docker phía trên.
+Cảnh báo pytest `cache_dir` do chủ động tắt cache provider; không phải lỗi ứng dụng.
+Review toàn nhánh sẽ thực hiện sau gate A7 cuối.
 
 ## Các lỗi được phát hiện qua nghiệm thu
 
