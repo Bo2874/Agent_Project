@@ -89,6 +89,9 @@ async def admit_automation_run(session, context, identity):
             "disabled_before_start",
             datetime.now(UTC),
         )
+        from backend.services.automations.notifications import queue_result_notification
+
+        await queue_result_notification(session, row.id)
         await session.commit()
         return row
     if row.agent_run_id is None:
@@ -305,6 +308,62 @@ async def sync_automation_run(session, run_id, *, drained=False, claimed=None):
             for operation in completed
         ],
     }
+    uncertain = (
+        await session.scalars(
+            select(GoogleMutation)
+            .where(
+                GoogleMutation.run_id == agent.id,
+                GoogleMutation.owner_id == row.owner_id,
+                GoogleMutation.context_id == row.conversation_id,
+                GoogleMutation.status.in_(["sent", "unknown"]),
+            )
+            .order_by(GoogleMutation.id)
+            .limit(100)
+        )
+    ).all()
+    from backend.schemas.google import DOC_MIME, SHEET_MIME
+    from backend.services.google.access import google_url
+
+    row.result = {
+        **row.result,
+        "uncertain_actions": [
+            {
+                "operation_id": str(operation.id),
+                "operation": operation.kind,
+                "url": google_url(
+                    operation.file_id,
+                    SHEET_MIME
+                    if operation.kind
+                    in {"append_rows", "update_range", "set_formulas", "format_range"}
+                    else DOC_MIME,
+                )
+                if operation.file_id
+                else None,
+            }
+            for operation in uncertain
+        ],
+    }
+    from backend.models import ArtifactVersion
+    from backend.services.artifacts.service import published
+
+    versions = (
+        await session.scalars(
+            select(ArtifactVersion)
+            .where(
+                ArtifactVersion.source_run_id == agent.id,
+                ArtifactVersion.owner_user_id == row.owner_id,
+            )
+            .order_by(ArtifactVersion.created_at, ArtifactVersion.id)
+            .limit(100)
+        )
+    ).all()
+    row.result = {
+        **row.result,
+        "artifact_results": [published(version).model_dump(mode="json") for version in versions],
+    }
+    from backend.services.automations.notifications import queue_result_notification
+
+    await queue_result_notification(session, row.id)
     await session.commit()
     return row
 
@@ -351,6 +410,9 @@ async def start_automation_run(context, automation_run_id):
             row.result = {
                 "message": "Selected input or configuration changed; review before running again."
             }
+            from backend.services.automations.notifications import queue_result_notification
+
+            await queue_result_notification(session, row.id)
             await session.commit()
             return {"automation_run_id": str(row.id), "status": "failed"}
     try:

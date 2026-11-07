@@ -22,6 +22,7 @@ from backend.routes import (
     connections,
     documents,
     memory,
+    notifications,
     pages,
     plugins,
 )
@@ -74,6 +75,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "frontend" / "static"), name="static")
 app.include_router(auth.router)
 app.include_router(automations.router)
+app.include_router(notifications.router)
 connections.install(app)
 app.include_router(chat.router)
 app.include_router(documents.router)

@@ -34,3 +34,18 @@ def missed_occurrences(schedule: ScheduleSpec, first: datetime, now: datetime) -
         count += 1
         at = next_occurrence(schedule, after=at)
     return count
+
+
+def from_local_input(data):
+    payload = data.model_dump(exclude={"at_local"}, mode="json")
+    if data.kind == "once":
+        if data.at_local is None or data.at_local.utcoffset() is not None:
+            raise ValueError("Choose a local date and time in the selected timezone")
+        zone = ZoneInfo(data.timezone)
+        candidate = data.at_local.replace(tzinfo=zone, fold=0).astimezone(UTC)
+        if candidate.astimezone(zone).replace(tzinfo=None) != data.at_local:
+            raise ValueError("That local time does not exist during the DST transition")
+        payload["at"] = candidate
+    elif data.at_local is not None:
+        raise ValueError("Recurring schedules do not use a one-time date")
+    return ScheduleSpec.model_validate(payload)

@@ -13,6 +13,7 @@ from backend.schemas.automation import (
     CloseUnknownInput,
     EnabledInput,
     RunNowInput,
+    SchedulePreviewInput,
 )
 from backend.services.automations import service
 
@@ -39,6 +40,49 @@ async def enabled(request: Request, response: Response):
 
 
 router = APIRouter(prefix="/api/automations", tags=["automations"], dependencies=[Depends(enabled)])
+
+
+def google_access():
+    from backend.services.google.access import GoogleAccess
+    from backend.services.google.credentials import GoogleCredentials
+
+    return GoogleAccess(GoogleCredentials(get_settings()))
+
+
+@router.get("/inputs")
+async def list_inputs(session: DbSession, user: CurrentUser):
+    from backend.services.automations.inputs import available_inputs
+
+    return await available_inputs(session, user.id, get_settings())
+
+
+@router.post("/schedules/preview")
+async def preview_schedule(body: SchedulePreviewInput, user: CurrentUser):
+    from zoneinfo import ZoneInfoNotFoundError
+
+    from backend.services.automations.schedules import from_local_input, next_occurrence
+
+    try:
+        schedule = from_local_input(body)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {
+        "schedule": schedule.model_dump(mode="json"),
+        "next_run_at": next_occurrence(schedule, after=service.utcnow()),
+    }
+
+
+@router.get("/inputs/google/{connection_id}/{file_id}/tabs")
+async def tabs(connection_id: UUID, file_id: str, session: DbSession, user: CurrentUser):
+    from backend.services.automations.inputs import selected_tabs
+    from backend.services.google.errors import GoogleServiceError
+
+    if not get_settings().google_connector_enabled:
+        raise HTTPException(404, "Google connector is disabled")
+    try:
+        return await selected_tabs(session, user.id, connection_id, file_id, google_access())
+    except GoogleServiceError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
 
 
 @router.post("")

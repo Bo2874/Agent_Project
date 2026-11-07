@@ -21,7 +21,8 @@ async def setup(db, monkeypatch, *, create_doc=False):
     from backend.services.google.tools import GoogleToolService
 
     access, _, ref = await selected(db)
-    runtime(db, monkeypatch, Model())
+    settings, _ = runtime(db, monkeypatch, Model())
+    settings.google_connector_enabled = True
     body = draft(
         grants=[
             {
@@ -202,3 +203,16 @@ async def test_create_document_grant_can_fill_only_this_runs_new_document(google
         assert not await authorize_automation_call(
             session, context, replace(request, arguments=forged), google_service=service
         )
+
+
+async def test_disabled_connector_blocks_automation_at_next_boundary(google_db, monkeypatch):  # noqa: F811
+    from agent_core.tools.types import ToolAuthorizationError
+    from backend.services.automations import authority
+    from backend.services.automations.authority import resolve_run_authority
+
+    db = google_db
+    _, context, _ = await setup(db, monkeypatch)
+    authority.get_settings().google_connector_enabled = False
+    async with db.sessions() as session:
+        with pytest.raises(ToolAuthorizationError):
+            await resolve_run_authority(session, agent_run_id=context.run_id)

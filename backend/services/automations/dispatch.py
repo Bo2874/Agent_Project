@@ -68,6 +68,7 @@ async def dispatch_due(session, *, now: datetime, limit: int = 100) -> DispatchR
             .with_for_update(of=Automation, skip_locked=True)
         )
     ).all()
+    notices = []
     for auto in rows:
         revision = await current_revision(session, auto)
         spec = ScheduleSpec.model_validate(revision.schedule)
@@ -81,7 +82,7 @@ async def dispatch_due(session, *, now: datetime, limit: int = 100) -> DispatchR
         )
         if (now - first).total_seconds() > settings.automation_schedule_grace_seconds:
             count = missed_occurrences(spec, first, now)
-            session.add(
+            notices.append(
                 AutomationRun(
                     owner_id=auto.owner_id,
                     automation_id=auto.id,
@@ -95,7 +96,7 @@ async def dispatch_due(session, *, now: datetime, limit: int = 100) -> DispatchR
             )
             report.missed += count
         elif active is not None:
-            session.add(
+            notices.append(
                 AutomationRun(
                     owner_id=auto.owner_id,
                     automation_id=auto.id,
@@ -113,5 +114,11 @@ async def dispatch_due(session, *, now: datetime, limit: int = 100) -> DispatchR
             )
             report.queued += 1
         auto.next_run_at = next_occurrence(spec, after=now)
+    session.add_all(notices)
+    await session.flush()
+    from backend.services.automations.notifications import queue_result_notification
+
+    for notice in notices:
+        await queue_result_notification(session, notice.id)
     await session.commit()
     return report

@@ -1,0 +1,6 @@
+{% extends "workspace.html" %}
+{% block title %}Automations · Personal Agent{% endblock %}
+{% block workspace_body %}
+<main class="artifacts-page automations-page" data-artifacts-layout data-automations-app></main>
+<script src="{{ url_for('static', path='/automations.js') }}" defer></script>
+{% endblock %}

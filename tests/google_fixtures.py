@@ -224,6 +224,8 @@ async def google_db():
     )
     try:
         yield SimpleNamespace(
+            schema=schema,
+            database_url=url,
             sessions=sessions,
             owner=owner,
             other=other,

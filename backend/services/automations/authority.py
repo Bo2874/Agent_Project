@@ -66,6 +66,12 @@ async def resolve_run_authority(session, *, agent_run_id):
     grants = (
         await session.scalars(select(AutomationGrant).where(AutomationGrant.revision_id == rev.id))
     ).all()
+    settings = get_settings()
+    if (grants and not settings.google_connector_enabled) or (
+        (rev.artifact_version_ids or rev.artifact_actions)
+        and not settings.workspace_artifacts_enabled
+    ):
+        raise ToolAuthorizationError("automation_authority_changed")
     for grant in grants:
         conn = await session.scalar(
             select(GoogleConnection)

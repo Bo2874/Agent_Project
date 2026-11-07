@@ -130,6 +130,7 @@ class AutomationView(AutomationModel):
     grants: list[GrantDraft]
     artifact_version_ids: list[UUID]
     artifact_actions: list[str]
+    artifact_inputs: list[dict] = Field(default_factory=list)
     next_run_at: datetime | None
 
 
@@ -161,6 +162,9 @@ class AutomationRunView(AutomationModel):
     result: dict
     created_at: datetime
     finished_at: datetime | None
+    revision_number: int | None = None
+    instruction: str | None = None
+    pending_approvals: list[dict] = Field(default_factory=list)
 
 
 class EnabledInput(AutomationModel):
@@ -176,3 +180,11 @@ class RunNowInput(AutomationModel):
 
 class CloseUnknownInput(AutomationModel):
     confirmed: Literal[True]
+
+
+class SchedulePreviewInput(AutomationModel):
+    kind: Literal["once", "daily", "weekly"]
+    timezone: str = Field(min_length=1, max_length=100)
+    local_time: time | None = None
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    at_local: datetime | None = None

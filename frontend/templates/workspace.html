@@ -20,6 +20,10 @@
             <a href="/documents" {% if request.url.path == '/documents' %}aria-current="page"{% endif %}><span aria-hidden="true">▤</span> Thư viện</a>
             <a href="/plugins" {% if request.url.path.startswith('/plugins') %}aria-current="page"{% endif %}><span aria-hidden="true">⌘</span> Plugins & kết nối</a>
             {% if features.google %}<a href="/connectors" {% if request.url.path == '/connectors' %}aria-current="page"{% endif %}><span aria-hidden="true">↗</span> Google Connectors</a>{% endif %}
+            {% if features.automations %}
+            <a href="/automations" {% if request.url.path == '/automations' %}aria-current="page"{% endif %}><span aria-hidden="true">◷</span> Automations</a>
+            <a href="/inbox" {% if request.url.path == '/inbox' %}aria-current="page"{% endif %}><span aria-hidden="true">▱</span> Hộp thư <span class="automation-badge" data-inbox-count hidden></span></a>
+            {% endif %}
             <a href="/memories" {% if request.url.path == '/memories' %}aria-current="page"{% endif %}><span aria-hidden="true">◇</span> Bộ nhớ</a>
             {% if user.role == 'admin' %}<a href="/admin" {% if request.url.path == '/admin' %}aria-current="page"{% endif %}><span aria-hidden="true">⚙</span> Quản trị</a>{% endif %}
         </nav>

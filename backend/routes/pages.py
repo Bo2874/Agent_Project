@@ -123,6 +123,23 @@ async def artifacts_page(request: Request, user: OptionalUser) -> Response:
     )
 
 
+@router.get("/automations", response_class=HTMLResponse)
+@router.get("/inbox", response_class=HTMLResponse)
+async def automations_page(request: Request, user: OptionalUser) -> Response:
+    if user is None:
+        return RedirectResponse("/login", status_code=303)
+    if not get_settings().automations_enabled:
+        from fastapi import HTTPException
+
+        raise HTTPException(404, "Automations are disabled")
+    return templates.TemplateResponse(
+        request=request,
+        name="inbox.html" if request.url.path == "/inbox" else "automations.html",
+        context={"user": user},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request, user: OptionalUser) -> Response:
     if user is None:

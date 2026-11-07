@@ -66,6 +66,22 @@ async def view(session, auto):
             .order_by(AutomationGrant.id)
         )
     ).all()
+    from backend.services.artifacts.service import published
+
+    versions = (
+        (
+            await session.scalars(
+                select(ArtifactVersion)
+                .where(
+                    ArtifactVersion.owner_user_id == auto.owner_id,
+                    ArtifactVersion.id.in_([UUID(value) for value in rev.artifact_version_ids]),
+                )
+                .order_by(ArtifactVersion.id)
+            )
+        ).all()
+        if rev.artifact_version_ids
+        else []
+    )
     return AutomationView(
         id=auto.id,
         name=auto.name,
@@ -77,6 +93,10 @@ async def view(session, auto):
         grants=[GrantDraft.model_validate(g) for g in grants],
         artifact_version_ids=rev.artifact_version_ids,
         artifact_actions=rev.artifact_actions,
+        artifact_inputs=[
+            {**published(version).model_dump(mode="json"), "version_number": version.version_number}
+            for version in versions
+        ],
         next_run_at=auto.next_run_at,
     )
 
@@ -190,7 +210,43 @@ async def get_owned_automation_run(session, owner, run_id):
     )
     if row is None:
         raise HTTPException(404, "Automation run not found")
-    return AutomationRunView.model_validate(row)
+    rev = await session.get(AutomationRevision, row.revision_id)
+    approvals = []
+    if row.status == "waiting_approval" and row.agent_run_id:
+        from backend.models import AgentApproval, RunStep, ToolCall
+
+        pending = (
+            await session.execute(
+                select(AgentApproval, ToolCall)
+                .join(ToolCall, ToolCall.approval_id == AgentApproval.id)
+                .join(RunStep, RunStep.id == ToolCall.run_step_id)
+                .where(
+                    AgentApproval.agent_run_id == row.agent_run_id,
+                    RunStep.agent_run_id == row.agent_run_id,
+                    AgentApproval.decision.is_(None),
+                    AgentApproval.expires_at > utcnow(),
+                    ToolCall.status == "waiting_approval",
+                    ToolCall.approval_decision.is_(None),
+                )
+                .limit(20)
+            )
+        ).all()
+        approvals = [
+            {
+                "id": str(approval.id),
+                "tool_name": call.tool_name,
+                "arguments": call.arguments,
+                "expires_at": approval.expires_at.isoformat(),
+            }
+            for approval, call in pending
+        ]
+    return AutomationRunView.model_validate(row).model_copy(
+        update={
+            "revision_number": rev.number,
+            "instruction": rev.instruction,
+            "pending_approvals": approvals,
+        }
+    )
 
 
 def utcnow():
@@ -229,6 +285,9 @@ async def stop_locked(session, row):
             job.status, job.cancelled_at, job.finished_at = "cancelled", now, now
     if row.status == "queued" and row.agent_run_id is None:
         row.status, row.stop_reason, row.finished_at = "cancelled", "user_cancelled", now
+        from backend.services.automations.notifications import queue_result_notification
+
+        await queue_result_notification(session, row.id)
     elif row.status != "needs_reconciliation":
         row.status = "cancelling"
 
@@ -326,5 +385,8 @@ async def close_unknown_run(session, owner, run_id):
     row.status, row.stop_reason, row.finished_at = "failed", "closed_without_replay", utcnow()
     row.result = {**row.result, "manually_closed": True, "usage_unknown": True}
     audit(session, owner, "closed_without_replay", row.id)
+    from backend.services.automations.notifications import queue_result_notification
+
+    await queue_result_notification(session, row.id)
     await session.commit()
     return AutomationRunView.model_validate(row)
