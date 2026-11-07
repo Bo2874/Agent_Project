@@ -466,5 +466,8 @@ async def selected(conversation_id: UUID, session: DbSession, user: CurrentUser)
 async def select_artifacts(
     conversation_id: UUID, data: ArtifactSelection, session: DbSession, user: CurrentUser
 ):
+    from backend.services.chat import require_writable_conversation
+
+    await require_writable_conversation(session, user.id, conversation_id)
     refs = await set_conversation_artifacts(session, user.id, conversation_id, data.version_ids)
     return {"items": [item.model_dump(mode="json") for item in refs]}

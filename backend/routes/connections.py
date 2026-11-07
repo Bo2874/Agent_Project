@@ -105,6 +105,9 @@ async def work_google_files(conversation_id: UUID, session: DbSession, user: Cur
 async def choose_work_google_files(
     conversation_id: UUID, body: GoogleWorkSelection, session: DbSession, user: CurrentUser
 ):
+    from backend.services.chat import require_writable_conversation
+
+    await require_writable_conversation(session, user.id, conversation_id)
     return {
         "items": await GoogleAccess(oauth_service()).set_work_files(
             session, user.id, conversation_id, body.file_refs

@@ -46,6 +46,112 @@ def execution_limits_for_source(source, settings):
     )
 
 
+async def sync_waiting_automation_approval(approval_id):
+    """Project only after both sides of the durable approval handshake exist."""
+    from backend.models import AgentApproval, RunStep, ToolCall
+    from backend.services.run_events import current_job
+
+    async with SessionFactory() as session:
+        identity = await session.scalar(
+            select(AutomationRun.id)
+            .join(AgentRun, AgentRun.id == AutomationRun.agent_run_id)
+            .join(AgentApproval, AgentApproval.agent_run_id == AgentRun.id)
+            .join(RunStep, RunStep.agent_run_id == AgentRun.id)
+            .join(ToolCall, ToolCall.run_step_id == RunStep.id)
+            .where(
+                AgentApproval.id == UUID(str(approval_id)),
+                AgentApproval.decision.is_(None),
+                ToolCall.approval_id == AgentApproval.id,
+                ToolCall.status == "waiting_approval",
+                ToolCall.approval_decision.is_(None),
+                AgentRun.status == "waiting_approval",
+                AutomationRun.status.in_(["running", "waiting_approval"]),
+            )
+            .limit(1)
+        )
+        if identity:
+            await sync_automation_run(session, identity, claimed=current_job.get())
+
+
+async def reconcile_terminal_automation_jobs(session, *, queue_name, limit=100):
+    """Repair projections after a dead worker, including a crash after queue commit.
+
+    Called after queue lease recovery releases job locks, and before scheduler dispatch.
+    Scan durable terminal jobs every tick so interruption of this repair is harmless.
+    """
+    from backend.models import RunEvent
+    from backend.models.automation import Automation
+    from backend.services.automations.notifications import queue_result_notification
+
+    recoverable = ("queued", "running", "waiting_approval", "cancelling")
+    hints = (
+        await session.execute(
+            select(AutomationRun.id, AutomationRun.automation_id)
+            .join(BackgroundJob, BackgroundJob.id == AutomationRun.job_id)
+            .where(
+                AutomationRun.status.in_(recoverable),
+                BackgroundJob.status.in_(["failed", "cancelled", "succeeded"]),
+                BackgroundJob.queue_name == queue_name,
+            )
+            .order_by(AutomationRun.automation_id, AutomationRun.id)
+            .limit(limit)
+        )
+    ).all()
+    count = 0
+    for identity, auto_id in hints:
+        auto = await session.scalar(
+            select(Automation)
+            .where(Automation.id == auto_id)
+            .with_for_update(skip_locked=True)
+            .execution_options(populate_existing=True)
+        )
+        if auto is None:
+            continue
+        row = await session.scalar(
+            select(AutomationRun)
+            .where(AutomationRun.id == identity)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        job = await session.scalar(
+            select(BackgroundJob)
+            .where(BackgroundJob.id == row.job_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if row.status not in recoverable or job.status not in {"failed", "cancelled", "succeeded"}:
+            await session.commit()
+            continue
+        now = datetime.now(UTC)
+        reason = "user_cancelled" if job.status == "cancelled" else job.error_code or "job_ended"
+        if row.agent_run_id:
+            agent = await session.get(AgentRun, row.agent_run_id, populate_existing=True)
+            if agent.status in {"queued", "running", "waiting_approval"}:
+                agent.status = "cancelled" if job.status == "cancelled" else "failed"
+                agent.stop_reason, agent.finished_at = reason, now
+                agent.event_sequence += 1
+                session.add(
+                    RunEvent(
+                        agent_run_id=agent.id,
+                        sequence=agent.event_sequence,
+                        kind="cancelled" if agent.status == "cancelled" else "error",
+                        data={
+                            "message": "Automation worker ended; state recovered.",
+                            "resumable": False,
+                        },
+                    )
+                )
+            # This retains completed outputs, and keeps uncertain operations active.
+            await sync_automation_run(session, row.id, drained=True)
+        else:
+            row.status = "cancelled" if job.status == "cancelled" else "failed"
+            row.stop_reason, row.finished_at = reason, now
+            await queue_result_notification(session, row.id)
+            await session.commit()
+        count += 1
+    return count
+
+
 async def admit_automation_run(session, context, identity):
     hint = await session.get(AutomationRun, identity)
     if hint is None:

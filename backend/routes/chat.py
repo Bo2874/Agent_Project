@@ -316,6 +316,10 @@ async def stream_assistant_response(
             partial_reason = event.progress.get("stop_reason")
         await quota_guard.record_event(event)
         await recorder(event)
+        if execution_source == "automation" and event.kind == "tool_approval_required":
+            from backend.services.automations.execution import sync_waiting_automation_approval
+
+            await sync_waiting_automation_approval(event.approval_id)
         if execution_source == "automation" and event.kind == "tool_approval_resolved":
             from backend.models.automation import AutomationRun
             from backend.services.automations.execution import sync_automation_run
@@ -338,7 +342,7 @@ async def stream_assistant_response(
             await document_tools.restore_references(event.tool_result)
 
     async def extract_memories() -> None:
-        if not resume and settings.memory_extraction_enabled:
+        if execution_source == "chat" and not resume and settings.memory_extraction_enabled:
             try:
                 await quota_guard.before_execution("model")
                 extraction_summary = await extract_and_store_user_message_memories(
@@ -647,18 +651,11 @@ async def stream_assistant_response(
 
         async def approve_call(context, approval_id, request):
             if execution_source == "automation":
-                from backend.models.automation import AutomationRun
                 from backend.services.automations.authority import authorize_automation_call
-                from backend.services.automations.execution import sync_automation_run
 
                 async with SessionFactory() as session:
                     if await authorize_automation_call(session, context, request):
                         return True
-                    identity = await session.scalar(
-                        select(AutomationRun.id).where(AutomationRun.agent_run_id == agent_run_id)
-                    )
-                    if identity:
-                        await sync_automation_run(session, identity)
             return await tool_approval_manager.wait_for_decision(context, approval_id, request)
 
         async for item in stream_agent_graph(
@@ -1058,6 +1055,9 @@ async def put_selected_documents(
     session: DbSession,
     user: CurrentUser,
 ) -> ConversationDocumentsResponse:
+    from backend.services.chat import require_writable_conversation
+
+    await require_writable_conversation(session, user.id, conversation_id)
     return await set_conversation_documents(session, user.id, conversation_id, data.document_ids)
 
 
@@ -1252,6 +1252,14 @@ async def post_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Không tìm thấy hội thoại",
         )
+
+    from backend.services.chat import ensure_chat_writable
+
+    try:
+        ensure_chat_writable(conversation)
+    except HTTPException:
+        await model.aclose()
+        raise
 
     settings = get_settings()
     try:

@@ -85,6 +85,11 @@
   hồi quy Docker 1.266 passed/1 Windows symlink skip. Bảy Important đã sửa, một Minor UX hoãn.
   Live Google NOT RUN theo lựa chọn user. Ngày 2026-11-07 user cho phép làm Plan04 offline;
   nghiệm thu Google thật và toàn luồng được gom ở cuối, trước khi bật automation dùng Google thật.
+  Plan04 đã hoàn tất triển khai/kiểm thử offline trên `feat/workspace-automations`: bảy Important
+  đã sửa, suite cuối 1.304 passed/59 conditional skips; nhóm scratch/timing 9 passed và hai ca
+  Docker benchmark/browser chạy lại đạt. Một Minor phân trang lịch sử hoãn; chưa gộp main/push.
+  [Nghiệm thu Plan04](../../acceptance/2026-11-07-scheduled-automations.md) ghi riêng các lượt lỗi,
+  bằng chứng khôi phục/usage, các quyết định và phần Google/model thật chưa chạy.
   Bật runner/flag và áp dụng migration trên môi trường người dùng là bước vận hành riêng.
 
 ## Tài liệu kỹ thuật dùng để chốt kế hoạch

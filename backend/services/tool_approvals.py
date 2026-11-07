@@ -101,15 +101,15 @@ class ToolApprovalManager:
         )
         async with runtime_session() as session:
             row = await session.get(AgentApproval, UUID(approval_id))
-            if row is None:
-                unattended = await session.scalar(
-                    select(AutomationRun.id).where(
-                        AutomationRun.agent_run_id == context.run_id,
-                        AutomationRun.conversation_id == context.conversation_id,
-                        AutomationRun.owner_id == context.user_id,
-                        AutomationRun.status.in_(["running", "waiting_approval"]),
-                    )
+            unattended = await session.scalar(
+                select(AutomationRun.id).where(
+                    AutomationRun.agent_run_id == context.run_id,
+                    AutomationRun.conversation_id == context.conversation_id,
+                    AutomationRun.owner_id == context.user_id,
+                    AutomationRun.status.in_(["running", "waiting_approval"]),
                 )
+            )
+            if row is None:
                 session.add(
                     AgentApproval(
                         id=UUID(approval_id),
@@ -121,6 +121,10 @@ class ToolApprovalManager:
                     )
                 )
                 await session.commit()
+        if unattended:
+            from backend.services.automations.execution import sync_waiting_automation_approval
+
+            await sync_waiting_automation_approval(approval_id)
         while True:
             async with runtime_session() as session:
                 row = await session.scalar(

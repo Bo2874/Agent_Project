@@ -53,6 +53,10 @@ async def dispatch_due(session, *, now: datetime, limit: int = 100) -> DispatchR
         raise ValueError("Use an aware clock and a batch size from 1 to 100")
     now = now.astimezone(UTC)
     settings = get_settings()
+    if settings.automations_enabled:
+        from backend.services.automations.execution import reconcile_terminal_automation_jobs
+
+        await reconcile_terminal_automation_jobs(session, queue_name=settings.background_queue_name)
     report = DispatchReport()
     rows = (
         await session.scalars(

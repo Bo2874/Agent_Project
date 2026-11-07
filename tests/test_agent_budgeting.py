@@ -172,12 +172,17 @@ async def test_step_limit_keeps_observation_instead_of_resume_error():
 
 
 async def test_time_limit_unknown_tool_outcome_is_not_retried():
+    entered = asyncio.Event()
+
     async def slow(*args):
-        await asyncio.sleep(1)
-        pytest.fail("Must be cancelled")
+        entered.set()
+        await asyncio.Event().wait()
 
     model = Model([actions("search_web")])
-    items = await run(model, handler=slow, limits=AgentLimits(max_duration_seconds=0.1))
+    # Leave time for graph setup on a cold host; this case must expire *after*
+    # tool admission, rather than test the separate budget-skipped path.
+    items = await run(model, handler=slow, limits=AgentLimits(max_duration_seconds=5))
+    assert entered.is_set()
     assert model.calls == 1 and "chưa hoàn tất" in text(items)
     events = [i for i in items if isinstance(i, AgentLoopEvent) and i.kind == "tool_completed"]
     assert len(events) == 1 and events[0].tool_result.error_code == "tool_outcome_unknown"

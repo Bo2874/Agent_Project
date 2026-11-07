@@ -2101,7 +2101,13 @@
   completed không append lại; response mất giữ unknown và active slot để đối soát.
 - Nghiệm thu tìm ra và sửa timeout duyệt 5 phút, Agent tiếp tục sau Google unknown, và recorder
   mất ID tool sau restart. Chat giữ timeout hữu hạn; migration 0036 cho approval automation chờ lâu.
-- Hồi quy Docker: 1.336 passed/8 lỗi harness/1 symlink skip; nhóm lỗi môi trường chạy lại
-  10 passed. Toàn suite chuẩn đạt 1.286 passed/59 environment skips. Review cuối đang thực hiện;
-  chưa gộp main hoặc push.
+- Review độc lập tìm bảy Important: khôi phục terminal job, race phê duyệt, thông báo duyệt lần sau,
+  khả năng tìm lượt active cũ, usage trùng khi replay, ghi vào execution conversation và memory từ
+  chỉ dẫn lịch. Đã sửa một lượt, mỗi lỗi RED→GREEN; không re-review. 17 ca hồi quy đạt.
+- Gate cuối **1.304 passed/59 conditional skips** (373,30 giây); ba ca process restart/mất response
+  đối chiếu token đúng journal và provider chỉ append một lần. Nhóm scratch/timing 9 passed;
+  benchmark 10.000×12 và browser Document chạy lại 2 passed, không đổi giới hạn sandbox.
+- Các đợt Docker có lỗi được giữ đầy đủ trong biên bản; không gọi toàn Docker đã xanh.
+  Một Minor phân trang lịch sử/Inbox hoãn, lượt active luôn hiện để thao tác.
+  Triển khai/kiểm thử offline Plan04 đã xong; chưa gộp main hoặc push, chưa bật feature/migrate DB thật.
   [Hướng dẫn](docs/manual-automations.md), [hồ sơ nghiệm thu](docs/acceptance/2026-11-07-scheduled-automations.md).

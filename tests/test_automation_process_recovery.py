@@ -28,7 +28,7 @@ async def child(mode, env, *, expected=0):
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     try:
-        output, _ = await asyncio.wait_for(process.communicate(), 60)
+        output, _ = await asyncio.wait_for(process.communicate(), 180)
         Path(env["AUTOMATION_QA_STATE"]).with_name(f"{mode}-{process.pid}.log").write_bytes(output)
         assert process.returncode == expected, output.decode(errors="replace")[-6000:]
         return output.decode(errors="replace")
@@ -38,12 +38,15 @@ async def child(mode, env, *, expected=0):
             await process.communicate()
 
 
-@pytest.mark.parametrize("lost_response", [False, True])
+@pytest.mark.parametrize(
+    "lost_response,crash_stage", [(False, "1"), (False, "search-record"), (True, None)]
+)
 async def test_scheduled_process_recovery_preserves_single_google_write(
     google_db,  # noqa: F811
     monkeypatch,
     tmp_path,
     lost_response,  # noqa: F811
+    crash_stage,
 ):
     from backend.models import AgentOperation, BackgroundJob, GoogleMutation
     from backend.models.automation import Automation, AutomationRun
@@ -71,8 +74,6 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
         initial = await session.get(AutomationRun, unused)
         job = await session.get(BackgroundJob, initial.job_id)
         initial.status, job.status = "cancelled", "cancelled"
-        auto = await session.get(Automation, view.id)
-        auto.enabled, auto.next_run_at = True, datetime.now(UTC) + timedelta(milliseconds=100)
         await session.commit()
     path = tmp_path / "provider.json"
     path.write_text(json.dumps({"lose_response": lost_response}), encoding="utf-8")
@@ -84,6 +85,12 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
         "GOOGLE_TEST_DATABASE_URL": db.database_url,
     }
     await child("setup", env)
+    # Setup may take longer than the scheduler grace on a cold Windows host.
+    # Publish the due tick only after the real checkpoint schema is ready.
+    async with db.sessions() as session:
+        auto = await session.get(Automation, view.id)
+        auto.enabled, auto.next_run_at = True, datetime.now(UTC)
+        await session.commit()
     await asyncio.gather(child("scheduler", env), child("scheduler", env))
     async with db.sessions() as session:
         runs = (
@@ -92,15 +99,27 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
         assert len(runs) == 1 and runs[0].status == "queued"
         identity = runs[0].id
     if not lost_response:
-        await child("worker", {**env, "AUTOMATION_QA_CRASH": "1"}, expected=91)
+        await child(
+            "worker",
+            {**env, "AUTOMATION_QA_CRASH": crash_stage},
+            expected=91 if crash_stage == "1" else 92,
+        )
         async with db.sessions() as session:
             run = await session.get(AutomationRun, identity)
             mutation = await session.scalar(
                 select(GoogleMutation).where(GoogleMutation.run_id == run.agent_run_id)
             )
-            assert run.status == "running" and mutation.status == "completed"
-        assert len(json.loads(path.read_text())["writes"]) == 1
-        await asyncio.sleep(2.1)  # Only this killed test child's lease.
+            assert run.status == "running"
+            assert mutation.status == "completed" if crash_stage == "1" else mutation is None
+        assert len(json.loads(path.read_text())["writes"]) == (1 if crash_stage == "1" else 0)
+        # The child is confirmed dead. Expire only its isolated job; keep a
+        # production-sized lease for replacement workers on slow Windows hosts.
+        async with db.sessions() as session:
+            run = await session.get(AutomationRun, identity)
+            job = await session.get(BackgroundJob, run.job_id)
+            assert job.status == "running"
+            job.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
     output = await asyncio.gather(child("worker", env), child("worker", env))
     state = json.loads(path.read_text())
     assert len(state["writes"]) == 1
@@ -119,7 +138,13 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
             "google_sheets_prepare",
             "google_sheets_append",
         ] + ([] if lost_response else ["final"])
-        assert run.result["total_tokens"] >= 30_000  # Exceeds configured old cap 128.
+        assert run.result["total_tokens"] == (40_000 if lost_response else 50_000)
+        spent = await session.scalar(
+            select(func.sum(AgentOperation.actual_tokens)).where(
+                AgentOperation.agent_run_id == run.agent_run_id
+            )
+        )
+        assert run.result["total_tokens"] == spent
         assert (
             await session.scalar(
                 select(func.count(Notification.id)).where(

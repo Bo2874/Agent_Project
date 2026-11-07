@@ -99,7 +99,10 @@ def main():
         async def search(context, arguments):
             return ToolResult.success(
                 "Fixture repository",
-                data={"rows": [["https://new.example/repo", "Fixture"]]},
+                data={
+                    "rows": [["https://new.example/repo", "Fixture"]],
+                    "usage": {"total_tokens": 10_000},
+                },
                 usage=TokenUsage(total_tokens=10_000),
             )
 
@@ -232,6 +235,19 @@ def main():
                     os._exit(91)  # Deliberate death of this test child after committed receipt.
 
             OperationJournal.finish = finish
+            from backend.services.agent_runs import AgentRunRecorder
+
+            record_tool = AgentRunRecorder._record_tool_completed
+
+            async def crash_after_record(recorder, event):
+                await record_tool(recorder, event)
+                if (
+                    event.tool_call.name == "search_web"
+                    and os.environ.get("AUTOMATION_QA_CRASH") == "search-record"
+                ):
+                    os._exit(92)  # Completed paid tool, checkpoint not advanced yet.
+
+            AgentRunRecorder._record_tool_completed = crash_after_record
             from backend.background.handlers import build_background_job_registry
             from backend.background.queue import PostgresJobQueue
             from backend.background.worker import BackgroundWorker
@@ -247,7 +263,7 @@ def main():
                     registry=build_background_job_registry(),
                     queue_name="default",
                     worker_id=f"process-{os.getpid()}",
-                    lease_seconds=2,
+                    lease_seconds=30,
                     control_poll_seconds=0.1,
                 )
                 await worker.run_once()

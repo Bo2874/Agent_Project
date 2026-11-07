@@ -45,7 +45,8 @@ profile `automations` để chạy service `scheduler`. Kiểm tra tên service 
 3. Xem bản rà soát rồi lưu. Bản nháp luôn tắt lịch. **Chạy ngay** thử đúng revision
    đã lưu; chạy thử được cả khi lịch đang tắt. Sửa tạo revision mới, không đổi lượt cũ.
 4. Xem kết quả, usage, file/link ở lịch sử và Inbox; preview file chỉ mở khi bấm.
-   Inbox lưu DB, cập nhật badge khoảng 10 giây. Giao diện hiển thị 100 bản ghi gần nhất.
+   Inbox lưu DB, cập nhật badge khoảng 10 giây. Lịch sử ghim lượt active trước các bản ghi gần nhất;
+   danh sách lịch sử/Inbox còn giới hạn 100 mục, chưa có phân trang lịch sử cũ.
 5. Bật lịch khi đã kiểm tra nhiệm vụ và phạm vi được phép.
 
 **Dừng lượt chạy** hủy lượt hiện tại, giữ lịch. Việc đã ghi ra Google không được hoàn tác.
@@ -63,6 +64,9 @@ Python tùy ý và tool chưa có quyền tự động vẫn cần duyệt từn
 automation không tự hết hạn sau 5 phút; người dùng có thể quay lại lịch sử để duyệt/từ chối
 hoặc dừng. Nó chiếm active slot và một worker trong khi chờ. Chat giữ timeout hữu hạn cũ.
 Proposal Google vẫn có TTL riêng: proposal quá hạn phải chuẩn bị và duyệt lại, không nới TTL.
+Mỗi lần chờ duyệt có thông báo riêng; phát lại cùng yêu cầu không nhân đôi thông báo.
+Hội thoại thực thi chỉ để xem kết quả: muốn làm tiếp qua chat, hãy tạo một chat thường mới.
+Chỉ dẫn lịch chạy không được tự trích xuất thành thông tin cá nhân mới trong memory.
 
 Khi revoke/reconnect/chọn lại file làm generation thay đổi, lượt cũ không tự dùng quyền mới.
 Kết nối lại trong Connectors, kiểm tra/chọn lại file, sửa và rà soát revision rồi chạy mới.
@@ -71,6 +75,8 @@ Kết nối lại trong Connectors, kiểm tra/chọn lại file, sửa và rà 
 Mở file đích và kiểm tra hàng/nội dung; kiểm tra usage/provider nếu là model mất phản hồi.
 Chỉ dùng **Kết thúc, không phát lại** sau đối soát. Thao tác này giải phóng slot, giữ journal
 và receipt chưa xác định; không append lại, không sửa receipt thành thành công.
+Đóng lượt không tự gỡ chốt ghi của file Google đang có mutation unknown; phần đối soát
+connector vẫn cần quy trình tin cậy trong hướng dẫn Google, trước khi ghi tiếp vào cùng file.
 Các kết quả đã hoàn tất vẫn được giữ khi dừng hoặc lỗi ở bước sau.
 
 ## Kiểm thử offline và nghiệm thu thật
@@ -107,6 +113,8 @@ Scheduler ghi heartbeat khi đặt `AUTOMATION_SCHEDULER_HEARTBEAT_PATH`; Compos
 trong cùng môi trường/path. Health worker theo cơ chế hiện có. Heartbeat chỉ chứng minh
 dispatcher sống, không bảo đảm OAuth hay model đang dùng được. Kiểm tra queue tuổi cao,
 run `waiting_approval`/`needs_reconciliation`, missed/overlap và log trước khi retry.
+Worker và scheduler đều đối chiếu job terminal để khôi phục trạng thái nếu worker chết
+trước khi cập nhật run; kết quả chưa xác định vẫn giữ slot đối soát thay vì báo đã hủy an toàn.
 
 Rollback an toàn: tắt các lịch và dừng/drain lượt đang chạy qua UI; dừng scheduler, đặt
 `AUTOMATIONS_ENABLED=false` trên web/worker rồi restart. Giữ database, file, khóa mã hóa và

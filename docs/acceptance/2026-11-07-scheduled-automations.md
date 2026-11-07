@@ -46,7 +46,21 @@ liên quan đạt **10 passed / 50 deselected**, không đổi code ứng dụng
 Toàn suite tiêu chuẩn với môi trường đúng: **1.286 passed / 59 skipped**, 283,14 giây;
 59 skip là các gate tùy điều kiện không bật trong lượt chuẩn, đã có bằng chứng Docker phía trên.
 Cảnh báo pytest `cache_dir` do chủ động tắt cache provider; không phải lỗi ứng dụng.
-Review toàn nhánh sẽ thực hiện sau gate A7 cuối.
+Review độc lập toàn nhánh đã hoàn tất trên `df49358..a966dff`: bảy Important,
+không có Critical được xác lập. Lượt sửa và gate cuối được ghi tại
+[biên bản review](2026-11-07-automations-review.md); không thực hiện re-review.
+
+Sau lượt sửa review, đợt mở rộng toàn bộ với Docker kết thúc **1.357 passed / 5 failed /
+1 Windows symlink skip** (2.535,27 giây), không được ghi là toàn Docker đã xanh.
+Ba lỗi đồng bộ/thời gian trong test được kiểm tra lại với readiness rõ ràng: nhóm scratch,
+timeout và duyệt qua đêm đạt **9 passed** (30,07 giây), giữ nguyên policy sản phẩm.
+Benchmark workbook 10.000×12 và browser Document chạy lại riêng đạt **2 passed**
+(350,84 giây), không thay giới hạn sandbox; chi tiết lỗi và kết quả được giữ trong biên bản review.
+Gate cuối toàn suite tiêu chuẩn trên source hiện tại: **1.304 passed / 59 conditional skips**,
+373,30 giây, exit 0. Bao gồm cả 17 ca hồi quy review và ba biến thể ngắt/khôi phục tiến trình thật.
+Usage đối chiếu đúng journal: hai ca thành công 50.000 token, ca mất response 40.000 token
+đã biết cùng cờ unknown; mỗi ca đúng một append. Cả bảy Important đã sửa, không re-review.
+Một Minor phân trang lịch sử/Inbox trên 100 mục còn hoãn; lượt active vẫn được ghim để thao tác.
 
 ## Các lỗi được phát hiện qua nghiệm thu
 
@@ -78,7 +92,8 @@ kiểm tra nội dung đích thật trước khi bật lịch thường xuyên.
 
 ## Rulings và review
 
-Các quyết định và chi phí được giữ theo thứ tự trong phần sau. Final review chưa chạy.
+Các quyết định và chi phí được giữ theo thứ tự trong phần sau. Các mục reviewer
+không đánh giá và quyết định cuối được giữ tại [biên bản review](2026-11-07-automations-review.md).
 
 1. Làm Plan04 offline trước, dời Google thật đến nghiệm thu chung theo lựa chọn user;
    chi phí: hành vi cloud chưa được xác minh trước gate đó.

@@ -47,10 +47,13 @@ async def test_fresh_recorder_restores_persisted_tool_identity(google_db, monkey
 
 
 async def test_unattended_approval_remains_actionable_after_two_days(google_db, monkeypatch):  # noqa: F811
+    from sqlalchemy import select
+
     from agent_core.graph.runtime import ToolCallRequest
     from agent_core.tools import ToolContext
     from backend.models import AgentApproval, AgentRun, RunStep, ToolCall
     from backend.models.automation import Automation, AutomationRun
+    from backend.models.notification import UserNotification
     from backend.services import tool_approvals
     from backend.services.automations.dispatch import dispatch_due
     from backend.services.automations.service import get_owned_automation_run
@@ -101,6 +104,21 @@ async def test_unattended_approval_remains_actionable_after_two_days(google_db, 
                 break
             await asyncio.sleep(0.01)
         assert approval is not None and approval.expires_at is None
+        # Approval persistence precedes the projection handshake. Let that commit
+        # release its Automation lock before asserting a single scheduler tick;
+        # SKIP LOCKED is intentionally allowed to skip a concurrently locked row.
+        async with asyncio.timeout(30):
+            while True:
+                async with db.sessions() as session:
+                    notice = await session.scalar(
+                        select(UserNotification.id).where(
+                            UserNotification.event_key
+                            == f"automation:{identity}:waiting_approval:{approval_id}"
+                        )
+                    )
+                if notice:
+                    break
+                await asyncio.sleep(0.01)
         future = datetime.now(UTC) + timedelta(days=2)
 
         class Clock:
@@ -195,9 +213,7 @@ async def test_stop_during_accepted_google_rpc_keeps_unknown_fence(google_db, mo
     )
     # Approval is an exact host receipt; stop does not invent permission or retry.
     task = asyncio.create_task(
-        service.sheets.execute(
-            approved(context, proposal), **proposal.commit_arguments()
-        )
+        service.sheets.execute(approved(context, proposal), **proposal.commit_arguments())
     )
     try:
         await asyncio.wait_for(entered.wait(), 5)

@@ -43,6 +43,22 @@ with temporary_workspace(Path(sys.argv[1]), sys.argv[2]) as folder:
         process.wait(timeout=10)
         process.stdout.close()
         process.stderr.close()
+    # A dead Windows child can retain a filesystem lease briefly after wait().
+    # Establish the fixture's inactive state before testing crash reclamation;
+    # production recovery must continue refusing a lease that is still held.
+    from artifact_runtime.temporary import _lock, _unlock
+
+    deadline = time.monotonic() + 10
+    with (folder / ".lease").open("r+b") as lease:
+        while True:
+            try:
+                _lock(lease)
+                _unlock(lease)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.01)
     return folder
 
 

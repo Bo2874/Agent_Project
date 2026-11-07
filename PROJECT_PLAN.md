@@ -1,13 +1,14 @@
 # Kế hoạch phát triển Personal AI Agent
 
-Cập nhật: 2026-11-06
+Cập nhật: 2026-11-07
 
 Mục tiêu: xây một web agent đa người dùng, có công cụ, RAG, memory, Skills, sandbox và trang quản trị đủ tốt để học và trình bày khi phỏng vấn.
 
 **Hướng mở rộng mới đã duyệt ngày 2026-11-04:** giao diện A theo phong cách Claude,
 Artifacts (Excel → Word → PDF) → Google Connectors theo từng file → Automations theo lịch.
 Plan01 và Plan02 đã triển khai, nghiệm thu offline. Plan03 Google Connectors đã hoàn tất triển khai,
-review và kiểm thử offline, đã gộp local vào main; chưa nghiệm thu Google thật, chưa chuyển sang Automations.
+review và kiểm thử offline, đã gộp local vào main; chưa nghiệm thu Google thật. Plan04 đã
+hoàn tất triển khai và kiểm thử offline theo lựa chọn người dùng, còn trên nhánh riêng.
 Xem [thiết kế](docs/superpowers/specs/2026-11-04-agent-workspace-design.md) và
 [roadmap bốn phần](docs/superpowers/plans/2026-11-04-agent-workspace-roadmap.md).
 Plan01 đã gộp vào `main` tại máy (commit `4b92d31`):
@@ -17,7 +18,7 @@ Lượt sửa review cuối: 1.141 tests đạt, 2 skips được ghi rõ; tươ
 race preview, rich-text refusal và thu hồi scratch sau hard-kill đã có regression.
 Chưa bật runtime hoặc áp dụng migration vào DB đang dùng. [Review và kết quả cuối](docs/acceptance/2026-11-05-workspace-review.md).
 [Hướng dẫn](docs/manual-artifacts.md), [số đo](docs/acceptance/2026-11-04-artifact-excel.json).
-Live model chưa chạy; Automations chưa triển khai. Connectors có trạng thái cập nhật bên dưới. Các kết quả/điểm chưa nghiệm thu
+Live model chưa chạy; Automations có trạng thái cập nhật bên dưới, chưa bật trên dữ liệu thật. Các kết quả/điểm chưa nghiệm thu
 trong lộ trình V2 bên dưới tiếp tục được giữ làm lịch sử và checklist vận hành.
 Đã hoàn tất [Plan02 — Word rồi PDF văn bản](docs/superpowers/plans/2026-11-04-workspace-02-documents.md)
 và gộp local vào `main` tại `22def91`; runtime, preview/render và browser đã qua; full suite sau sửa review
@@ -31,10 +32,12 @@ Live Google NOT RUN vì user chọn setup sau;
 đã gộp local vào main tại source `b1c7aa2`, chưa push hoặc bật feature. Hậu kiểm sau gộp
 1.208 passed/59 environment skips; [biên bản](docs/acceptance/2026-11-06-google-connectors-merge.md).
 Ngày 2026-11-07 user chọn triển khai Plan04 offline trước, gom nghiệm thu Google thật và
-toàn luồng ở cuối trước khi bật automation trên dữ liệu thật. Plan04 đang hoàn tất gate khôi phục
-worker, giao diện Automations/Inbox và tài liệu vận hành. Hồi quy chuẩn 1.286 passed/59 skipped;
-gate Docker và 8 lỗi môi trường đã được ghi riêng trong biên bản. Đang chốt review cuối,
-chưa gộp main hoặc bật feature.
+toàn luồng ở cuối trước khi bật automation trên dữ liệu thật. Plan04 đã hoàn tất scheduler/worker,
+Automations/Inbox, stop/pause, khôi phục và tài liệu vận hành trên `feat/workspace-automations`.
+Bảy Important từ review đã sửa; gate cuối **1.304 passed/59 conditional skips** (373,30 giây).
+Nhóm scratch/timing 9 passed; hai ca Docker benchmark/browser chạy lại 2 passed. Các đợt Docker
+có lỗi và giới hạn tải được ghi đầy đủ trong [biên bản](docs/acceptance/2026-11-07-automations-review.md).
+Một Minor phân trang lịch sử/Inbox hoãn; chưa gộp main, push, bật feature hoặc migrate DB người dùng.
 
 Hướng mở rộng đã lập kế hoạch: plugin/MCP có thể cấu hình, Jev routing, thư viện tài liệu cá nhân,
 planner và sub-agent chạy theo graph, Redis cache, Docker và CI/CD. Chi tiết ở phần

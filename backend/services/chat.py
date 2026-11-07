@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from fastapi import HTTPException
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,19 @@ async def get_owned_conversation(
         )
     )
     return result.scalar_one_or_none()
+
+
+def ensure_chat_writable(conversation):
+    if getattr(conversation, "source_kind", "chat") != "chat":
+        raise HTTPException(409, "Automation execution records are read-only; start a new chat.")
+
+
+async def require_writable_conversation(session, user_id, conversation_id):
+    conversation = await get_owned_conversation(session, conversation_id, user_id)
+    if conversation is None:
+        raise HTTPException(404, "Conversation not found")
+    ensure_chat_writable(conversation)
+    return conversation
 
 
 async def create_conversation(

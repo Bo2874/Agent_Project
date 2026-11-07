@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from backend.core.config import get_settings
 from backend.dependencies import CurrentUser, DbSession
-from backend.models.automation import Automation, AutomationRun
+from backend.models.automation import ACTIVE_STATUSES, Automation, AutomationRun
 from backend.schemas.automation import (
     AutomationDraft,
     AutomationRunView,
@@ -147,7 +147,11 @@ async def list_runs(identity: UUID, session: DbSession, user: CurrentUser):
         await session.scalars(
             select(AutomationRun)
             .where(AutomationRun.automation_id == identity, AutomationRun.owner_id == user.id)
-            .order_by(AutomationRun.created_at.desc())
+            .order_by(
+                AutomationRun.status.in_(ACTIVE_STATUSES).desc(),
+                AutomationRun.created_at.desc(),
+                AutomationRun.id.desc(),
+            )
             .limit(100)
         )
     ).all()

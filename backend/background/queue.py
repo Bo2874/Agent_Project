@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
+from backend.core.config import get_settings
 from backend.core.redaction import redact_text
 from backend.database import SessionFactory
 from backend.models import BackgroundJob
@@ -433,6 +434,12 @@ class PostgresJobQueue:
                             )
                         )
             await session.commit()
+            if get_settings().automations_enabled:
+                from backend.services.automations.execution import (
+                    reconcile_terminal_automation_jobs,
+                )
+
+                await reconcile_terminal_automation_jobs(session, queue_name=queue_name)
             return len(jobs)
 
     @staticmethod

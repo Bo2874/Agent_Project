@@ -336,9 +336,9 @@ class AgentRunRecorder:
     async def _record_tool_started(self, event: AgentLoopEvent) -> None:
         if event.tool_call is None:
             raise RuntimeError("Event tool_started thiếu tool_call")
+        if await self._tool_identity(event, required=False) is not None:
+            return  # Restore even after a synthetic model_started replay populated _steps.
         if event.step_number not in self._steps:
-            if await self._tool_identity(event, required=False) is not None:
-                return  # Existing call belongs to the checkpoint, not a new attempt.
             async with SessionFactory() as session:
                 await fence(session)
                 step = await session.scalar(
