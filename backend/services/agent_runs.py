@@ -792,12 +792,12 @@ async def list_agent_run_timelines(
                     ArtifactVersion.source_run_id.in_(run_ids),
                     ArtifactVersion.owner_user_id == owner,
                 )
-                .order_by(ArtifactVersion.created_at, ArtifactVersion.version_number)
+                .order_by(
+                    ArtifactVersion.created_at, ArtifactVersion.version_number, ArtifactVersion.id
+                )
             )
         ).all():
-            artifact_refs.setdefault(row.source_run_id, []).append(
-                published(row).model_dump(mode="json")
-            )
+            artifact_refs[row.source_run_id] = [published(row).model_dump(mode="json")]
     steps = list(
         (
             await session.scalars(

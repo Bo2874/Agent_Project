@@ -770,10 +770,20 @@ async def stream_assistant_response(
             document_result=document_result if used_document_qa else None,
             document_owner=user_id if used_document_qa else None,
         )
+        final_artifacts = []
+        if settings.workspace_artifacts_enabled:
+            from backend.services.artifacts.publication import message_artifacts
+
+            async with SessionFactory() as artifact_session:
+                bound = await message_artifacts(
+                    artifact_session, user_id, conversation_id, [message.id]
+                )
+                final_artifacts = [ref.model_dump(mode="json") for ref in bound.get(message.id, [])]
         yield sse_event(
             "done",
             {
                 "message_id": str(message.id),
+                "artifact_refs": final_artifacts,
                 "partial": partial_reason is not None,
                 "stop_reason": "partial_" + str(partial_reason)
                 if partial_reason

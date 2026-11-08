@@ -16,6 +16,11 @@ Google và lịch tự động có hướng dẫn riêng. `.env` thật không �
    Có thể chọn sheet, trang dữ liệu, phiên bản và tải xuống. Màn hình hẹp có nút quay lại;
    Escape đóng panel và trả focus. Đóng preview không dừng Agent.
 
+Trong chat, nội dung trả lời được stream trước; sau khi trả lời hoàn tất mới hiện một
+thẻ file kết quả cuối cùng. Nếu Agent tạo hoặc sửa qua nhiều bước trong cùng lượt,
+chat dùng output được công bố sau cùng. Các phiên bản trung gian vẫn còn trong kho và
+lịch sử phiên bản. Lượt bị dừng hoặc lỗi không hiện output trung gian như file cuối.
+
 Agent có thể sửa tiếp output của chính hội thoại, không cần thay input đã ghim.
 Chỉnh sửa tạo phiên bản mới và giữ bản gốc. Hai sửa từ cùng parent giữ hai nhánh.
 Tên file/công thức hiển thị như văn bản; download luôn dùng ID phiên bản bất biến.

@@ -683,7 +683,7 @@ if (chatApp) {
   }
 
   function renderStoredTimeline(assistantBubble, run) {
-    window.renderArtifactCards?.(assistantBubble, run.artifact_refs, activeConversationId);
+    if (run.status === "completed") renderFinalArtifactCard(assistantBubble, run.artifact_refs, activeConversationId);
     const timeline = createAgentTimeline(assistantBubble, false);
     updateStoredTimeline(timeline, run);
     if (!timeline.terminal) pollStoredTimeline(timeline, activeConversationId, run.id);
@@ -762,6 +762,19 @@ if (chatApp) {
           timeline.titleText.textContent = "Không tìm thấy lần chạy";
           return;
         }
+        if (run.status === "completed" && run.assistant_message_id) {
+          const messages = await requestJson(`/api/conversations/${conversationId}/messages`);
+          if (!timeline.root.isConnected || conversationId !== activeConversationId) return;
+          const stored = messages.find(message => message.id === run.assistant_message_id);
+          const row = timeline.root.closest(".message-row");
+          const bubble = row?.querySelector(".message-bubble");
+          if (stored && bubble) {
+            timeline.markdown = stored.content;
+            window.renderMarkdown(bubble, stored.content);
+            renderCitations(bubble, stored.citations, stored.id, conversationId);
+            renderFinalArtifactCard(bubble, stored.artifact_refs, conversationId);
+          }
+        }
         updateStoredTimeline(timeline, run);
       } catch {
         stopTimelineClock(timeline);
@@ -832,14 +845,13 @@ if (chatApp) {
       messages.forEach((message) => {
         const bubble = addMessage(message.role, message.content);
         if (message.role === "assistant") renderCitations(bubble, message.citations, message.id, conversation.id);
-        if (message.role === "assistant") window.renderArtifactCards?.(bubble, message.artifact_refs, conversation.id);
+        if (message.role === "assistant") renderFinalArtifactCard(bubble, message.artifact_refs, conversation.id);
         const run = runsByAssistantMessage.get(message.id);
         if (message.role === "assistant" && run) renderStoredTimeline(bubble, run);
         if (message.role === "user") {
           for (const failedRun of failedRunsByUserMessage.get(message.id) || []) {
             if (failedRun.durable && ["queued", "running", "waiting_approval"].includes(failedRun.status)) {
               const activeBubble = addMessage("assistant");
-              window.renderArtifactCards?.(activeBubble, failedRun.artifact_refs, conversation.id);
               const timeline = createAgentTimeline(activeBubble);
               timeline.root.dataset.runId = failedRun.id;
               setBusy(true);
@@ -877,6 +889,10 @@ if (chatApp) {
     return { event, id, data: JSON.parse(dataLines.join("\n")) };
   }
 
+  function renderFinalArtifactCard(bubble, refs, conversationId) {
+    window.renderArtifactCards?.(bubble, (refs || []).slice(-1), conversationId, { replace: true });
+  }
+
   async function consumeAgentStream(response, { assistantBubble, timeline }) {
     if (!response.ok) {
       const error = await response.json();
@@ -889,6 +905,8 @@ if (chatApp) {
     let buffer = "";
     let runId = timeline.root.dataset.runId || null;
     let assistantMarkdown = timeline.markdown;
+    const conversationId = activeConversationId;
+    timeline.artifactVersionIds ||= new Set();
 
     try {
       while (true) {
@@ -915,6 +933,9 @@ if (chatApp) {
           if (parsed.event === "reset") {
             assistantMarkdown = "";
             timeline.markdown = "";
+            timeline.pendingArtifactRef = null;
+            timeline.artifactVersionIds.clear();
+            renderFinalArtifactCard(assistantBubble, [], conversationId);
             window.renderMarkdown(assistantBubble, "");
             timeline.titleText.textContent = parsed.data.message;
           }
@@ -925,14 +946,15 @@ if (chatApp) {
           }
           if (parsed.event === "snapshot") {
             finishTimeline(timeline, parsed.data.status);
-            if (parsed.data.message_id) {
-              const messages = await requestJson(`/api/conversations/${activeConversationId}/messages`);
+            if (parsed.data.status === "completed" && parsed.data.message_id) {
+              const messages = await requestJson(`/api/conversations/${conversationId}/messages`);
+              if (conversationId !== activeConversationId) continue;
               const stored = messages.find((message) => message.id === parsed.data.message_id);
               if (stored) {
                 timeline.markdown = stored.content;
                 window.renderMarkdown(assistantBubble, stored.content);
                 renderCitations(assistantBubble, stored.citations, stored.id, activeConversationId);
-                window.renderArtifactCards?.(assistantBubble, stored.artifact_refs, activeConversationId);
+                renderFinalArtifactCard(assistantBubble, stored.artifact_refs, conversationId);
               }
             }
           }
@@ -941,10 +963,12 @@ if (chatApp) {
             timeline.root.dataset.runId = runId;
             updateTimelineSearchMode(timeline, parsed.data.rag_search_mode);
           }
-          if (parsed.event === "artifact_ready" && parsed.data.conversation_id === activeConversationId) {
-            window.renderArtifactCards?.(assistantBubble, [parsed.data.ref], activeConversationId);
-            artifactPreview?.onVersionReady(parsed.data.ref, activeConversationId);
-            window.dispatchEvent(new CustomEvent("artifact-library-changed"));
+          if (parsed.event === "artifact_ready" && parsed.data.conversation_id === conversationId) {
+            const ref = parsed.data.ref;
+            if (!timeline.artifactVersionIds.has(ref.version_id)) {
+              timeline.artifactVersionIds.add(ref.version_id);
+              timeline.pendingArtifactRef = ref;
+            }
           }
           if (parsed.event === "progress") {
             updatePipelineProgress(timeline, parsed.data);
@@ -997,6 +1021,15 @@ if (chatApp) {
                 ? ""
                 : ` · cache ${(usage.prompt_cache_hit_rate * 100).toFixed(1)}%`;
             status.textContent = `${parsed.data.partial ? "Kết quả một phần" : "Đã trả lời"} · ${usage.total_tokens || 0} token${cacheText}`;
+            if (conversationId === activeConversationId) {
+              const refs = parsed.data.artifact_refs ?? (timeline.pendingArtifactRef ? [timeline.pendingArtifactRef] : []);
+              renderFinalArtifactCard(assistantBubble, refs, conversationId);
+              const finalRef = refs.at(-1);
+              if (finalRef) {
+                artifactPreview?.onVersionReady(finalRef, conversationId);
+                window.dispatchEvent(new CustomEvent("artifact-library-changed"));
+              }
+            }
           }
         }
         if (done) break;

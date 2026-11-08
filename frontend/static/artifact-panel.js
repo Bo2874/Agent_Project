@@ -169,10 +169,12 @@
       if (current.artifact_id === ref.artifact_id && current.version_id !== ref.version_id) void open(ref.version_id, contextId, {}, false);
     } };
   };
-  window.renderArtifactCards = (bubble, refs, contextId) => {
-    if (!refs?.length) return;
+  window.renderArtifactCards = (bubble, refs, contextId, { replace = false } = {}) => {
     const row = bubble.closest(".message-row"); if (!row) return;
-    let list = row.querySelector(".artifact-cards"); if (!list) { list = element("div", "artifact-cards"); row.append(list); }
+    let list = row.querySelector(".artifact-cards");
+    if (replace) { list?.remove(); list = null; }
+    if (!refs?.length) return;
+    if (!list) { list = element("div", "artifact-cards"); row.append(list); }
     for (const ref of refs) {
       if ([...list.children].some(item => item.dataset.versionId === ref.version_id)) continue;
       const card = element("div", "artifact-card"); card.dataset.versionId = ref.version_id;

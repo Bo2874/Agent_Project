@@ -93,7 +93,12 @@ async def run_artifacts(session, owner, conversation_id, run_id):
                     AgentRun.id == run_id,
                     AgentRun.conversation_id == conversation_id,
                 )
-                .order_by(ArtifactVersion.created_at, ArtifactVersion.version_number)
+                .order_by(
+                    ArtifactVersion.created_at.desc(),
+                    ArtifactVersion.version_number.desc(),
+                    ArtifactVersion.id.desc(),
+                )
+                .limit(1)
             )
         ).all()
     )
@@ -111,10 +116,14 @@ async def message_artifacts(session, owner, conversation_id, message_ids):
                 MessageArtifact.message_id.in_(message_ids),
                 ArtifactVersion.owner_user_id == owner,
             )
-            .order_by(ArtifactVersion.created_at, ArtifactVersion.version_number)
+            .order_by(
+                ArtifactVersion.created_at, ArtifactVersion.version_number, ArtifactVersion.id
+            )
         )
     ).all()
     result: dict[UUID, list[PublishedArtifact]] = {}
     for message_id, version in rows:
-        result.setdefault(message_id, []).append(published(version))
+        # Old messages may bind intermediate outputs too. Present only the final
+        # published version, without deleting any immutable files or bindings.
+        result[message_id] = [published(version)]
     return result
