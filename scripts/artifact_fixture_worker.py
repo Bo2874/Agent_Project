@@ -10,10 +10,10 @@ async def main():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from backend.core.config import Settings
+    from backend.services.artifacts.python import PythonToolService
     from backend.services.artifacts.runner_client import ArtifactRunnerClient
     from backend.services.artifacts.service import ArtifactService
     from backend.services.artifacts.storage import ArtifactStorage
-    from backend.services.artifacts.tools import ArtifactToolService
     from scripts.artifact_fixture import OfflineArtifactRuntime
 
     url = make_url(os.environ["ARTIFACT_TEST_DATABASE_URL"])
@@ -37,7 +37,7 @@ async def main():
     )
     storage = ArtifactService(ArtifactStorage(settings.artifact_storage_path))
     if marker := os.environ.get("ARTIFACT_FIXTURE_CRASH_MARKER"):
-        original = ArtifactToolService.execute
+        original = PythonToolService.execute
 
         async def crash(self, *args, **kwargs):
             result = await original(self, *args, **kwargs)
@@ -46,7 +46,7 @@ async def main():
                 os._exit(86)
             return result
 
-        ArtifactToolService.execute = crash
+        PythonToolService.execute = crash
     runtime = await OfflineArtifactRuntime(
         settings,
         sessions,

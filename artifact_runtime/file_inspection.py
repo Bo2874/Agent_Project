@@ -4,6 +4,7 @@ Unlike legacy structured-edit validators, these readers never save the workbook
 or document. Unsupported previews are warnings, never a lossy file conversion.
 """
 
+import codecs
 import re
 import stat
 import zipfile
@@ -74,11 +75,49 @@ def safe_office(path):
             raise ValueError("Office file does not match its declared format")
         # Formulas can launch applications or load external data when opened later.
         for name in names:
+            if name.startswith("word/") and name.endswith(".xml"):
+                instructions = []
+                with archive.open(name) as source:
+                    for _, node in ElementTree.iterparse(source, events=("end",)):
+                        local = node.tag.rsplit("}", 1)[-1]
+                        if local == "instrText":
+                            instructions.append(node.text or "")
+                        if local == "fldSimple":
+                            instructions.extend(
+                                value
+                                for key, value in node.attrib.items()
+                                if key.rsplit("}", 1)[-1] == "instr"
+                            )
+                        node.clear()
+                instruction = "".join(instructions)
+                if re.search(
+                    r"DDE(?:AUTO)?|INCLUDETEXT|INCLUDEPICTURE|MACROBUTTON|DATABASE|\bLINK\s",
+                    instruction,
+                    re.I,
+                ):
+                    raise ValueError("Unsafe active Word field")
+                for target in re.findall(r'HYPERLINK\s+"([^"]+)"', instruction, re.I):
+                    if not target.startswith("#") and urlsplit(target).scheme.lower() not in {
+                        "http",
+                        "https",
+                        "mailto",
+                    }:
+                        raise ValueError("Unsafe external Word hyperlink field")
             if name.startswith("xl/worksheets/") and name.endswith(".xml"):
                 with archive.open(name) as source:
                     for _, node in ElementTree.iterparse(source, events=("end",)):
                         if node.tag.rsplit("}", 1)[-1] == "f":
                             formula = node.text or ""
+                            if re.search(r"HYPERLINK\s*\(", formula, re.I):
+                                target = re.search(r'HYPERLINK\s*\(\s*"([^"]+)"', formula, re.I)
+                                if target is None or (
+                                    not target[1].startswith("#")
+                                    and urlsplit(target[1]).scheme.lower()
+                                    not in {"http", "https", "mailto"}
+                                ):
+                                    raise ValueError(
+                                        "Unsafe executable or external hyperlink formula"
+                                    )
                             if (
                                 re.search(
                                     r"(?:WEBSERVICE|DDE|RTD|CALL|REGISTER\.ID|IMAGE)\s*\(",
@@ -140,7 +179,9 @@ def inspect_file(path, *, request=None):
     if suffix in {".txt", ".md", ".csv", ".json"}:
         with path.open("rb") as source:
             content = source.read(64004)
-        text = content.decode("utf-8-sig")
+        text = codecs.getincrementaldecoder("utf-8-sig")().decode(
+            content, final=path.stat().st_size <= len(content)
+        )
         return GeneratedArtifact(
             preview_manifest={
                 "kind": "text",

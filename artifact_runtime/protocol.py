@@ -80,7 +80,8 @@ class PythonCodeInput(StrictModel):
     outputs: tuple[PythonOutput, ...] = Field(default=(), max_length=3)
     primary_output: str | None = None
     text_only_pdf_inputs: tuple[TextOnlyPdfInput, ...] = Field(
-        default=(), max_length=3, exclude_if=lambda value: not value)
+        default=(), max_length=3, exclude_if=lambda value: not value
+    )
 
     @model_validator(mode="after")
     def declared_outputs(self):

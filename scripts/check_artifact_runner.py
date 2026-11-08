@@ -1,7 +1,7 @@
 """Offline Docker gate: transport, signatures, isolation, replay and cancellation.
 
 No model, application database or external service is contacted. Requires locally
-built personal-agent-artifact-code:1. Prints NOT RUN and exits nonzero if unavailable.
+built personal-agent-python-runtime:1. Prints NOT RUN and exits nonzero if unavailable.
 """
 
 import os
@@ -18,7 +18,7 @@ def main() -> int:
         print("NOT RUN: Docker CLI unavailable")
         return 2
     probe = subprocess.run(
-        [docker, "image", "inspect", "personal-agent-artifact-code:1"],
+        [docker, "image", "inspect", "personal-agent-python-runtime:1"],
         capture_output=True,
         check=False,
     )

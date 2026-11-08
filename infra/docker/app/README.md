@@ -300,9 +300,7 @@ socket hay mạng. Font Inter/Lora được phục vụ từ `/static/fonts`, k�
 Build image cố định trước khi bật module:
 
 ```powershell
-docker build -f infra/docker/artifact-sandbox/Dockerfile --target code -t personal-agent-artifact-code:1 .
-docker build -f infra/docker/artifact-sandbox/Dockerfile --target render -t personal-agent-artifact-render:1 .
-docker build -f infra/docker/artifact-runner/Dockerfile -t personal-agent-artifact-runner:dev .
+docker build -f infra/docker/python-runtime/Dockerfile -t personal-agent-python-runtime:1 .
 python -m scripts.check_artifact_runner
 docker compose --env-file .env.docker.example config --quiet
 ```

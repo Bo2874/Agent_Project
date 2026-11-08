@@ -66,7 +66,7 @@ def main():
     if not docker:
         print("NOT RUN: Docker CLI unavailable")
         return 2
-    for image in ("personal-agent-artifact-code:1", "personal-agent-artifact-render:1"):
+    for image in ("personal-agent-python-runtime:1",):
         if subprocess.run([docker, "image", "inspect", image], capture_output=True).returncode:
             print(f"NOT RUN: required local image {image} is unavailable")
             return 2

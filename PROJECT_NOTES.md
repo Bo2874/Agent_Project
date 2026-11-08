@@ -1,5 +1,14 @@
 # Project Notes
 
+## Python runtime hợp nhất — 2026-11-08
+
+- Nhánh `refactor/unified-python-runtime`: một tool tổng quát `run_python_code`, một image `personal-agent-python-runtime:1`.
+- Không duyệt từng lần chạy Python; mỗi lần là container mới, dùng file version để truyền dữ liệu giữa các lần.
+- Receipt độc lập file, primary output lưu bền; giữ streaming thật và một file cuối khi câu trả lời hoàn tất.
+- Các tool artifact structured chỉ còn adapter ẩn cho checkpoint cũ. Executor sandbox cũ và Dockerfile trùng đã được loại bỏ.
+- Hướng dẫn khởi động/cấu hình/thư viện/giới hạn: [manual-python-runtime.md](docs/manual-python-runtime.md).
+- `.env` thật không tự đổi; cần bật `PYTHON_SANDBOX_ENABLED=true`, build image và restart broker/web/worker khi chuyển sang dùng bản này.
+
 ## Công nghệ và kỹ thuật đã triển khai
 
 - Kiểm thử release: Ruff, E2E HTTP/DeepSeek, safety regression và eval versioned

@@ -69,7 +69,9 @@ def checkpoint_registry(registry, values):
         result.register(
             create_context_tool(
                 name="run_python_code",
-                description="Saved legacy Python checkpoint; explains migration without executing code.",
+                description=(
+                    "Saved legacy Python checkpoint; explains migration without executing code."
+                ),
                 args_schema=LegacyPythonInput,
                 coroutine=retired,
             ),

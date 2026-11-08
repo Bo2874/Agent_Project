@@ -25,8 +25,6 @@ LABEL = "personal-agent.artifact-runner"
 JOB_LABEL = "personal-agent.artifact-job"
 CREATED_LABEL = "personal-agent.artifact-created"
 RUNTIME_IMAGE = "personal-agent-python-runtime:1"
-# Internal legacy callers share the same image during checkpoint migration.
-CODE_IMAGE = RENDER_IMAGE = RUNTIME_IMAGE
 
 
 class RunnerError(ValueError):
@@ -126,13 +124,21 @@ class DockerBroker:
             if is_volume:
                 # Containers must be removed before the volume, regardless of list ordering.
                 continue
-            await self.command("rm", "-f", item)
+            try:
+                await self.command("rm", "-f", item)
+            except RunnerError as error:
+                if "no such container" not in str(error).lower():
+                    raise
         name = f"artifact-input-{job}"
         raw = await self.command("volume", "inspect", name, check=False)
         if raw:
             labels = json.loads(raw)[0].get("Labels", {})
             if labels.get(LABEL) == "1" and labels.get(JOB_LABEL) == job:
-                await self.command("volume", "rm", name)
+                try:
+                    await self.command("volume", "rm", name)
+                except RunnerError as error:
+                    if "no such volume" not in str(error).lower():
+                        raise
 
     async def recover(self) -> None:
         """Run before accepting requests. Completed output bundles remain replayable."""
@@ -330,7 +336,7 @@ class DockerBroker:
                         *self.limits(intake=True),
                         "--mount",
                         f"type=volume,src={volume},dst=/input",
-                        CODE_IMAGE,
+                        RUNTIME_IMAGE,
                         "python",
                         "-I",
                         "-B",
@@ -341,20 +347,16 @@ class DockerBroker:
                     output=root / "intake.log",
                     deadline=15,
                 )
-                render = request.action in {"recalculate", "render_document", "render_pages"} or (
-                    request.operation
-                    and request.operation.kind in {"rebuild_pdf", "rebuild_pdf_text_only"}
-                )
                 await self.pipe_container(
                     [
                         "run",
                         "--name",
                         f"artifact-{job}-exec",
                         *labels,
-                        *self.limits(render=render),
+                        *self.limits(),
                         "--mount",
                         f"type=volume,src={volume},dst=/input,readonly",
-                        RENDER_IMAGE if render else CODE_IMAGE,
+                        RUNTIME_IMAGE,
                         "python",
                         "-I",
                         "-B",

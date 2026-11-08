@@ -35,6 +35,7 @@ from backend.services.artifacts.validation import (
 
 class ArtifactToolService:
     input_mime_types = {XLSX_MIME, DOCX_MIME, PDF_MIME}
+
     def __init__(self, *, service=None, sessions=None, runner_factory=None):
         self.service = service
         self.sessions = sessions or SessionFactory

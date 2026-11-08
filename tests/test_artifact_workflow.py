@@ -60,7 +60,7 @@ async def test_real_worker_graph_and_postgres_checkpoints(api):  # noqa: F811
                     select(ArtifactVersion).where(ArtifactVersion.source_run_id == run_id)
                 )
             ).all()
-            assert len(versions) == 1 and versions[0].calculation_status == "fresh"
+            assert len(versions) == 1 and versions[0].calculation_status == "not_calculated"
             assert await session.scalar(
                 select(RunEvent.id).where(
                     RunEvent.agent_run_id == run_id, RunEvent.kind == "artifact_ready"

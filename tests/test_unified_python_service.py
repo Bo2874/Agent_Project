@@ -148,6 +148,31 @@ async def test_standalone_pdf_needs_no_editable_docx_companion(python_bridge):
     assert result.data["artifact_refs"][0]["mime_type"] == "application/pdf"
 
 
+async def test_docx_header_is_preserved_and_preview_can_render(python_bridge):
+    service, context, sessions, storage = python_bridge
+    result = await service.execute(
+        context,
+        PythonCodeInput(
+            code=(
+                "from docx import Document; d=Document(); d.add_paragraph('Report'); "
+                "d.sections[0].header.paragraphs[0].text='Header'; d.save('header.docx')"
+            ),
+            outputs=[{"path": "header.docx"}],
+        ),
+    )
+    assert not result.is_error, result
+    ref = result.data["artifact_refs"][0]
+    async with sessions() as session:
+        row = await session.get(ArtifactVersion, UUID(ref["version_id"]))
+    from docx import Document
+
+    assert (
+        Document(storage.storage.path(row.storage_key)).sections[0].header.paragraphs[0].text
+        == "Header"
+    )
+    assert row.preview_manifest["kind"] == "pages"
+
+
 async def test_recovery_after_published_file_before_receipt_commit(python_bridge, monkeypatch):
     service, context, sessions, _ = python_bridge
     original = service.save_receipt
@@ -180,6 +205,44 @@ async def test_recovery_after_published_file_before_receipt_commit(python_bridge
         )
 
 
+async def test_durable_graph_reconciles_zero_output_python_receipt(python_bridge):
+    from agent_core.graph.runtime import _fingerprint
+    from backend.models import RunStep, ToolCall
+    from backend.services.artifacts.maintenance import recover_artifact_operations
+
+    service, context, sessions, _ = python_bridge
+    context = replace(context, operation_key="root.tool.1.python-qa")
+    arguments = {"code": "print('observation saved')"}
+    result = await service.execute(context, PythonCodeInput(**arguments))
+    assert not result.is_error, result
+    async with sessions() as session:
+        step = RunStep(id=uuid4(), agent_run_id=context.run_id, step_number=1)
+        session.add(step)
+        await session.flush()
+        session.add(
+            ToolCall(
+                run_step_id=step.id,
+                provider_call_id="python-qa",
+                tool_name="run_python_code",
+                arguments=arguments,
+                status="running",
+            )
+        )
+        operation = AgentOperation(
+            agent_run_id=context.run_id,
+            key=context.operation_key,
+            fingerprint=_fingerprint({"name": "run_python_code", "arguments": arguments}),
+            status="started",
+        )
+        session.add(operation)
+        await session.commit()
+        assert await recover_artifact_operations(session, context.user_id, context.run_id) == 1
+        await session.commit()
+        await session.refresh(operation)
+        assert operation.status == "completed"
+        assert operation.result["data"]["execution"]["stdout"] == "observation saved\n"
+
+
 async def test_png_and_text_preview_and_upload_roundtrip(python_bridge, api):  # noqa: F811
     service, context, _, _ = python_bridge
     result = await service.execute(
@@ -208,33 +271,46 @@ async def test_every_pdf_input_is_preflighted_and_text_only_intent_is_pinned(pyt
 
     service, context, sessions, storage = python_bridge
     # A generated blank second page is unreadable: the PDF need not be an output parent.
-    source = await service.execute(context, PythonCodeInput(
-        code=("from reportlab.pdfgen import canvas; c=canvas.Canvas('partial.pdf'); "
-              "c.drawString(50,750,'Text'); c.showPage(); c.showPage(); c.save()"),
-        outputs=[{"path": "partial.pdf"}]))
+    source = await service.execute(
+        context,
+        PythonCodeInput(
+            code=(
+                "from reportlab.pdfgen import canvas; c=canvas.Canvas('partial.pdf'); "
+                "c.drawString(50,750,'Text'); c.showPage(); c.showPage(); c.save()"
+            ),
+            outputs=[{"path": "partial.pdf"}],
+        ),
+    )
     assert not source.is_error, source
     pdf = source.data["artifact_refs"][0]
     child_context = replace(context, operation_key="partial-read")
-    arguments = dict(code="from pathlib import Path; Path('result.txt').write_text('Text')",
-        input_version_ids=[pdf["version_id"]], outputs=[{"path": "result.txt"}])
+    arguments = dict(
+        code="from pathlib import Path; Path('result.txt').write_text('Text')",
+        input_version_ids=[pdf["version_id"]],
+        outputs=[{"path": "result.txt"}],
+    )
     denied = await service.execute(child_context, PythonCodeInput(**arguments))
     assert denied.is_error and "text-only" in denied.content
     # The model cannot self-attest consent. Require the exact user clarification.
     pinned = [{"version_id": pdf["version_id"], "sha256": pdf["sha256"], "omitted_pages": [2]}]
-    no_user = await service.execute(child_context,
-        PythonCodeInput(**arguments, text_only_pdf_inputs=pinned))
+    no_user = await service.execute(
+        child_context, PythonCodeInput(**arguments, text_only_pdf_inputs=pinned)
+    )
     assert no_user.is_error
     async with sessions() as session:
-        message = Message(conversation_id=context.conversation_id, role="user",
-            content="Đồng ý chỉ xử lý văn bản")
+        message = Message(
+            conversation_id=context.conversation_id, role="user", content="Đồng ý chỉ xử lý văn bản"
+        )
         session.add(message)
         await session.flush()
         run = await session.get(AgentRun, context.run_id)
         run.user_message_id = message.id
         await session.commit()
     # A different call gets a new immutable fingerprint and the pinned consent.
-    accepted = await service.execute(replace(context, operation_key="partial-confirmed"),
-        PythonCodeInput(**arguments, text_only_pdf_inputs=pinned))
+    accepted = await service.execute(
+        replace(context, operation_key="partial-confirmed"),
+        PythonCodeInput(**arguments, text_only_pdf_inputs=pinned),
+    )
     assert not accepted.is_error, accepted
     assert accepted.data["pdf_inputs"][0]["sha256"] == pdf["sha256"]
     assert accepted.data["pdf_inputs"][0]["omitted_pages"] == [2]

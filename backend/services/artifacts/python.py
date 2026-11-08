@@ -47,14 +47,22 @@ class PythonToolService(ArtifactToolService):
         from backend.models import Message
 
         async with self.sessions() as session:
-            text = await session.scalar(select(Message.content).join(
-                AgentRun, AgentRun.user_message_id == Message.id).where(
+            text = await session.scalar(
+                select(Message.content)
+                .join(AgentRun, AgentRun.user_message_id == Message.id)
+                .where(
                     AgentRun.id == context.run_id,
-                    Message.conversation_id == context.conversation_id, Message.role == "user"))
+                    Message.conversation_id == context.conversation_id,
+                    Message.role == "user",
+                )
+            )
         # A content-loss clarification, not permission to run Python. The exact
         # phrase avoids treating quoted text/model assertions as user consent.
-        return bool(text and text.strip().casefold().rstrip(".! ") in {
-            "đồng ý chỉ xử lý văn bản", "i agree to text-only processing"})
+        return bool(
+            text
+            and text.strip().casefold().rstrip(".! ")
+            in {"đồng ý chỉ xử lý văn bản", "i agree to text-only processing"}
+        )
 
     async def allowed(self, context, request):
         await self.check(context)
@@ -202,19 +210,33 @@ class PythonToolService(ArtifactToolService):
                             }
                         )
                         if request.outputs and preview.get("coverage") != "complete":
-                            pin = next((pin for pin in request.text_only_pdf_inputs
-                                if str(pin.version_id) == identities[index]["version_id"]), None)
-                            if (preview.get("coverage") != "partial" or pin is None
-                                    or pin.sha256 != item.sha256
-                                    or list(pin.omitted_pages) != preview.get("omitted_pages")
-                                    or not await self.text_only_intent(context)):
+                            pin = next(
+                                (
+                                    pin
+                                    for pin in request.text_only_pdf_inputs
+                                    if str(pin.version_id) == identities[index]["version_id"]
+                                ),
+                                None,
+                            )
+                            if (
+                                preview.get("coverage") != "partial"
+                                or pin is None
+                                or pin.sha256 != item.sha256
+                                or list(pin.omitted_pages) != preview.get("omitted_pages")
+                                or not await self.text_only_intent(context)
+                            ):
                                 raise ValueError(
                                     "PDF text-only clarification required. Source version: "
-                                    + identities[index]["version_id"] + "; sha256: " + item.sha256
-                                    + "; unreadable/image pages: " + str(preview.get("omitted_pages", []))
+                                    + identities[index]["version_id"]
+                                    + "; sha256: "
+                                    + item.sha256
+                                    + "; unreadable/image pages: "
+                                    + str(preview.get("omitted_pages", []))
                                     + '. Ask the user to reply: "Đồng ý chỉ xử lý văn bản". '
-                                    "Then pin this version, hash and exact omitted_pages in text_only_pdf_inputs. "
-                                    "Scanned PDFs with no extractable text cannot be processed (no OCR).")
+                                    "Then pin this version, hash and exact omitted_pages "
+                                    "in text_only_pdf_inputs. Scanned PDFs without text "
+                                    "cannot be processed (no OCR)."
+                                )
                 generated = await self.run(
                     context,
                     job("execute"),

@@ -106,7 +106,7 @@ def test_old_operation_wire_shape_stays_identical():
 def test_unified_broker_profile_has_one_image_and_consistent_limits():
     from artifact_runtime import containers
 
-    assert containers.CODE_IMAGE == containers.RENDER_IMAGE == "personal-agent-python-runtime:1"
+    assert containers.RUNTIME_IMAGE == "personal-agent-python-runtime:1"
     for render in (False, True):
         limits = containers.DockerBroker.limits(render=render)
         assert "--memory=1024m" in limits
@@ -114,3 +114,27 @@ def test_unified_broker_profile_has_one_image_and_consistent_limits():
         assert "--cpus=1" in limits
         assert "--network=none" in limits
         assert "--user=65532:65532" in limits
+
+
+async def test_cleanup_is_idempotent_when_another_reaper_already_removed_volume(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from artifact_runtime.containers import JOB_LABEL, LABEL, DockerBroker, RunnerError
+
+    broker, job = DockerBroker(tmp_path), uuid4()
+
+    async def resources(job_id):
+        return []
+
+    async def command(*args, **kwargs):
+        if args[:2] == ("volume", "inspect"):
+            return json.dumps([{"Labels": {LABEL: "1", JOB_LABEL: str(job)}}])
+        if args[:2] == ("volume", "rm"):
+            raise RunnerError("Error response from daemon: no such volume")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(broker, "resources", resources)
+    monkeypatch.setattr(broker, "command", command)
+    await broker.cleanup(job)

@@ -15,30 +15,32 @@ async def model_call(messages):
 @pytest.mark.parametrize("format", ["docx", "pdf"])
 async def test_offline_fixture_creates_requested_document_format(format):
     name, args = await model_call([{"role": "user", "content": "create " + format.upper()}])
-    assert name == "artifact_create" and args["format"] == format
-    assert args["payload"]["blocks"]
+    assert name == "run_python_code"
+    assert args["outputs"][0]["path"].endswith("." + format)
+    assert "code" in args
 
 
 async def test_offline_fixture_inspects_before_editing_a_document():
     parent = str(uuid4())
     messages = [{"role": "user", "content": f"edit {parent} DOCX"}]
     name, args = await model_call(messages)
-    assert name == "artifact_inspect" and args["version_id"] == parent
-    node = "a" * 64 + ":0"
+    assert name == "run_python_code" and args["input_version_ids"] == [parent]
+    assert args["outputs"][0]["parent_version_id"] == parent
+    assert "Document(" in args["code"]
     messages.append(
         {
             "role": "tool",
-            "tool_call_id": "artifact-fixture-inspect",
+            "tool_call_id": "python-fixture-generate",
             "content": json.dumps(
                 {
-                    "content": json.dumps(
-                        {"nodes": [{"node_id": node, "kind": "paragraph", "text": "Old text"}]}
-                    ),
-                    "data": {},
+                    "content": "generated",
+                    "data": {"artifact_refs": [{"version_id": parent}]},
+                    "is_error": False,
                 }
             ),
         }
     )
     name, args = await model_call(messages)
-    assert name == "artifact_edit" and args["parent_version_id"] == parent
-    assert args["payload"]["operations"][0]["node_id"] == node
+    assert name == "run_python_code" and args["input_version_ids"] == [parent]
+    assert not args.get("outputs")
+    assert "print" in args["code"]
