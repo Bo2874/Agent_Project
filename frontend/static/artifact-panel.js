@@ -41,6 +41,20 @@
     function columnName(column) { let text = ""; while (column) { column--; text = String.fromCharCode(65 + column % 26) + text; column = Math.floor(column / 26); } return text; }
     function render(data) {
       body.replaceChildren();
+      if (data.preview.kind === "text") {
+        body.append(element("pre", "artifact-text-preview", data.preview.text || ""));
+        if (data.preview.truncated) body.append(element("p", "document-hint", "Preview được rút gọn. Tải file để xem đầy đủ."));
+        for (const warning of data.preview.warnings || []) body.append(element("p", "document-hint", warning));
+        return;
+      }
+      if (data.preview.kind === "image") {
+        const image = element("img", "artifact-output-image");
+        image.alt = data.name;
+        image.src = `/api/artifact-versions/${encodeURIComponent(data.version_id)}/content`;
+        image.style.maxWidth = "100%";
+        body.append(image);
+        return;
+      }
       if (data.preview.kind === "source_copy") { body.append(element("p", "document-hint", "Bản sao nguồn được giữ nguyên để tải xuống. Yêu cầu chỉnh sửa trong chat để tạo phiên bản có preview; cấu trúc chưa hỗ trợ sẽ được báo rõ.")); return; }
       if (data.preview.kind === "pages") {
         const preview = data.preview;
@@ -58,6 +72,7 @@
         return;
       }
       const preview = data.preview, sheets = element("div", "artifact-sheets");
+      for (const warning of preview.warnings || []) body.append(element("p", "document-hint", warning));
       for (const sheet of preview.sheets || []) {
         const tab = button(sheet.name, () => { void open(data.version_id, context, { sheet: sheet.name }, false); });
         tab.setAttribute("aria-pressed", String(sheet.name === preview.sheet)); sheets.append(tab);

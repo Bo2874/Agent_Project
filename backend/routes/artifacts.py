@@ -91,8 +91,7 @@ def view(row: ArtifactVersion) -> dict:
         "version_number": row.version_number,
         "origin": row.origin,
         "created_at": row.created_at.isoformat(),
-        "can_edit": row.mime_type
-        in {MIME_TYPES[extension] for extension in ("xlsx", "docx", "pdf")},
+        "can_edit": row.mime_type in set(MIME_TYPES.values()) - {MIME_TYPES["png"]},
         "source_run_id": str(row.source_run_id) if row.source_run_id else None,
     }
 
@@ -107,8 +106,8 @@ async def upload_artifact(
 ):
     name = validate_name(file.filename or "")
     extension = Path(name).suffix.lower()
-    if extension not in {".xlsx", ".docx", ".pdf"}:
-        raise HTTPException(415, "Supported uploads: XLSX, DOCX and text PDF.")
+    if extension not in {".xlsx", ".docx", ".pdf", ".txt", ".md", ".csv", ".json"}:
+        raise HTTPException(415, "Supported uploads: XLSX, DOCX, text PDF, TXT, MD, CSV, JSON.")
     if (file.content_type or "").split(";", 1)[0] not in {
         MIME_TYPES[extension[1:]],
         "application/octet-stream",
@@ -125,7 +124,7 @@ async def upload_artifact(
     cleanup = {stored.key}
     try:
         settings = get_settings()
-        if extension != ".pdf":
+        if extension in {".xlsx", ".docx"}:
             await asyncio.to_thread(
                 validate_archive,
                 service.storage.path(stored.key),
@@ -142,7 +141,9 @@ async def upload_artifact(
                 "input-0" + extension, stored.mime_type, stored.size_bytes, stored.sha256, source
             )
             report = await runner_client(service, user.id).execute(
-                ArtifactRunRequest(job_id=uuid4(), action="inspect", inputs=(input.descriptor(),)),
+                ArtifactRunRequest(
+                    job_id=uuid4(), action="inspect_file", inputs=(input.descriptor(),)
+                ),
                 (input,),
                 cancel=cancel,
             )
@@ -273,7 +274,7 @@ async def list_artifacts(
     user: CurrentUser,
     service: Service,
     q: Annotated[str | None, Query(max_length=255)] = None,
-    file_type: Literal["xlsx", "docx", "pdf", "txt"] | None = None,
+    file_type: Literal["xlsx", "docx", "pdf", "txt", "md", "csv", "json", "png"] | None = None,
     origin: Literal["upload", "agent", "document"] | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -359,6 +360,25 @@ async def download(version_id: UUID, session: DbSession, user: CurrentUser, serv
     )
 
 
+@router.get("/api/artifact-versions/{version_id}/content")
+async def image_content(version_id: UUID, session: DbSession, user: CurrentUser, service: Service):
+    row = await service.open_owned_version(session, user.id, version_id)
+    if row.mime_type != MIME_TYPES["png"]:
+        raise HTTPException(415, "Inline content is supported for PNG only")
+    path = service.storage.path(row.storage_key)
+    if not path.is_file():
+        raise HTTPException(404, "Artifact file not found")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
+
+
 @router.get("/api/artifact-versions/{version_id}/preview")
 async def preview_artifact(
     version_id: UUID,
@@ -386,7 +406,7 @@ async def preview_artifact(
                 result = await runner_client(service, user.id).execute(
                     ArtifactRunRequest(
                         job_id=uuid4(),
-                        action="inspect",
+                        action="inspect_file",
                         inputs=(input.descriptor(),),
                         preview_sheet=sheet,
                         preview_offset=offset,

@@ -13,7 +13,13 @@ from backend.services.artifacts.selection import owned_conversation
 from backend.services.artifacts.service import published
 
 OUTPUT_TOOLS = frozenset(
-    {"artifact_create", "artifact_edit", "run_artifact_python", "artifact_rebuild_pdf_text_only"}
+    {
+        "run_python_code",
+        "artifact_create",
+        "artifact_edit",
+        "run_artifact_python",
+        "artifact_rebuild_pdf_text_only",
+    }
 )
 
 
@@ -82,6 +88,26 @@ async def bind_message_artifacts(session, owner, conversation_id, message_id, re
 
 async def run_artifacts(session, owner, conversation_id, run_id):
     await owned_conversation(session, owner, conversation_id)
+    from backend.models import AgentOperation
+
+    selection = await session.scalar(
+        select(AgentOperation).where(
+            AgentOperation.agent_run_id == run_id,
+            AgentOperation.key == "python.primary",
+            AgentOperation.status == "completed",
+        )
+    )
+    if selection:
+        return await validated_refs(
+            session, owner, conversation_id, selection.result["artifact_refs"], run_id=run_id
+        )
+    receipt = await session.scalar(
+        select(AgentOperation.id)
+        .where(AgentOperation.agent_run_id == run_id, AgentOperation.key.like("python.receipt.%"))
+        .limit(1)
+    )
+    if receipt:
+        return ()
     return tuple(
         published(row)
         for row in (

@@ -57,7 +57,10 @@ async def test_run_queries_only_the_latest_owned_output(monkeypatch):
     owner, conversation, run = uuid4(), uuid4(), uuid4()
     final = version()
     monkeypatch.setattr(publication, "owned_conversation", AsyncMock())
-    session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [final])))
+    session = SimpleNamespace(
+        scalar=AsyncMock(return_value=None),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [final])),
+    )
     result = await publication.run_artifacts(session, owner, conversation, run)
     assert [ref.version_id for ref in result] == [final.id]
     query = session.scalars.call_args.args[0]

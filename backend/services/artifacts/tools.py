@@ -34,6 +34,7 @@ from backend.services.artifacts.validation import (
 
 
 class ArtifactToolService:
+    input_mime_types = {XLSX_MIME, DOCX_MIME, PDF_MIME}
     def __init__(self, *, service=None, sessions=None, runner_factory=None):
         self.service = service
         self.sessions = sessions or SessionFactory
@@ -93,7 +94,7 @@ class ArtifactToolService:
                 )
                 if binding is None:
                     raise HTTPException(404, "Artifact is not in this run's scope.")
-        if row.mime_type not in {XLSX_MIME, DOCX_MIME, PDF_MIME}:
+        if row.mime_type not in self.input_mime_types:
             raise HTTPException(415, "This document format is not supported yet.")
         return row
 

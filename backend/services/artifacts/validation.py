@@ -15,7 +15,8 @@ from backend.services.artifacts.storage import ArtifactStorageError, StoredArtif
 def validate_name(name: str) -> str:
     name = unicodedata.normalize("NFC", name)
     if (
-        Path(name).suffix.lower().lstrip(".") not in {"xlsx", "docx", "pdf", "txt"}
+        Path(name).suffix.lower().lstrip(".")
+        not in {"xlsx", "docx", "pdf", "txt", "md", "csv", "json", "png"}
         or not 1 < len(name) <= 255
         or any(c in name for c in "/\\:")
         or any(unicodedata.category(c).startswith("C") for c in name)
