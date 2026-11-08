@@ -183,7 +183,7 @@ async def agent_run_handler(context, payload):
                 raise ValueError("Run job scope changed")
             if run.status == "completed":
                 return {"run_id": str(run_id), "status": "completed"}
-            if get_settings().workspace_artifacts_enabled:
+            if get_settings().workspace_artifacts_enabled or get_settings().python_sandbox_enabled:
                 from backend.services.artifacts.maintenance import recover_artifact_operations
 
                 await recover_artifact_operations(session, owner.id, run_id)

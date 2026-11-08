@@ -126,9 +126,12 @@ def scope_registry(registry):
     old = [
         entry
         for entry in result.list_accessible_tools("admin")
-        if entry.tool.name.startswith(("google_", "artifact_"))
-        or entry.capability
-        and entry.capability.side_effect != "read_only"
+        if entry.tool.name != "run_python_code"
+        and (
+            entry.tool.name.startswith(("google_", "artifact_"))
+            or entry.capability
+            and entry.capability.side_effect != "read_only"
+        )
     ]
     result.replace_owned(
         old, [replace(entry, policy=replace(entry.policy, requires_approval=True)) for entry in old]

@@ -43,6 +43,19 @@ class PythonToolService(ArtifactToolService):
     async def check(self, context, tool="run_python_code"):
         await super().check(context, "run_python_code")
 
+    async def text_only_intent(self, context):
+        from backend.models import Message
+
+        async with self.sessions() as session:
+            text = await session.scalar(select(Message.content).join(
+                AgentRun, AgentRun.user_message_id == Message.id).where(
+                    AgentRun.id == context.run_id,
+                    Message.conversation_id == context.conversation_id, Message.role == "user"))
+        # A content-loss clarification, not permission to run Python. The exact
+        # phrase avoids treating quoted text/model assertions as user consent.
+        return bool(text and text.strip().casefold().rstrip(".! ") in {
+            "đồng ý chỉ xử lý văn bản", "i agree to text-only processing"})
+
     async def allowed(self, context, request):
         await self.check(context)
         from backend.core.config import get_settings
@@ -189,11 +202,19 @@ class PythonToolService(ArtifactToolService):
                             }
                         )
                         if request.outputs and preview.get("coverage") != "complete":
-                            raise ValueError(
-                                "PDF text is incomplete; clarify text-only handling with the user "
-                                "before creating outputs. Unreadable/image pages: "
-                                + str(preview.get("omitted_pages", []))
-                            )
+                            pin = next((pin for pin in request.text_only_pdf_inputs
+                                if str(pin.version_id) == identities[index]["version_id"]), None)
+                            if (preview.get("coverage") != "partial" or pin is None
+                                    or pin.sha256 != item.sha256
+                                    or list(pin.omitted_pages) != preview.get("omitted_pages")
+                                    or not await self.text_only_intent(context)):
+                                raise ValueError(
+                                    "PDF text-only clarification required. Source version: "
+                                    + identities[index]["version_id"] + "; sha256: " + item.sha256
+                                    + "; unreadable/image pages: " + str(preview.get("omitted_pages", []))
+                                    + '. Ask the user to reply: "Đồng ý chỉ xử lý văn bản". '
+                                    "Then pin this version, hash and exact omitted_pages in text_only_pdf_inputs. "
+                                    "Scanned PDFs with no extractable text cannot be processed (no OCR).")
                 generated = await self.run(
                     context,
                     job("execute"),

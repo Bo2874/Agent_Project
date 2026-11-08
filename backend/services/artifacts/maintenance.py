@@ -55,6 +55,28 @@ async def recover_artifact_operations(session, owner, run_id):
             )
         ):
             continue
+        if call.tool_name == "run_python_code":
+            receipt = await session.scalar(
+                select(AgentOperation).where(
+                    AgentOperation.agent_run_id == run_id,
+                    AgentOperation.key
+                    == "python.receipt." + hashlib.sha256(operation.key.encode()).hexdigest(),
+                )
+            )
+            if receipt and receipt.status == "completed":
+                operation.status, operation.result, operation.actual_tokens = (
+                    "completed",
+                    receipt.result,
+                    0,
+                )
+            elif receipt:
+                # Exact request resumes the saved receipt/broker job; no blind rerun.
+                await session.delete(operation)
+            else:
+                # Old Python calls have no durable broker receipt: outcome remains unknown.
+                continue
+            recovered += 1
+            continue
         key = "artifact:" + hashlib.sha256(f"{run_id}:{operation.key}".encode()).hexdigest()
         version = await session.scalar(
             select(ArtifactVersion).where(
@@ -116,10 +138,23 @@ async def reconcile_orphans(sessions, storage, *, grace_seconds=86400, limit=100
                     )
                 )
                 after = target.stat()
-                if referenced is None and (before.st_ino, before.st_mtime_ns, before.st_size) == (
-                    after.st_ino,
-                    after.st_mtime_ns,
-                    after.st_size,
+                staged = await session.scalar(
+                    select(AgentOperation.id)
+                    .where(
+                        AgentOperation.status == "executed",
+                        AgentOperation.result["files"].contains([{"key": key}]),
+                    )
+                    .limit(1)
+                )
+                if (
+                    referenced is None
+                    and staged is None
+                    and (before.st_ino, before.st_mtime_ns, before.st_size)
+                    == (
+                        after.st_ino,
+                        after.st_mtime_ns,
+                        after.st_size,
+                    )
                 ):
                     if not dry_run:
                         storage.delete(key)

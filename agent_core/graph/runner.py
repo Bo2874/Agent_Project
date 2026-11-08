@@ -2543,6 +2543,15 @@ async def run_agent_graph_stream(
                 pending_interrupt = interrupts[0]
                 pending_step, pending_request = _approval_interrupt_request(pending_interrupt.value)
                 approval_id = pending_interrupt.id
+                if pending_request.name in {"run_python_code", "run_artifact_python"} and not tool_executor.needs_approval(
+                    registry, context, pending_request.name, pending_request.arguments
+                ):
+                    # Old checkpoints may still carry an approval interrupt. Apply the
+                    # current host policy without emitting a new approval UI or changing
+                    # historical approval decisions. The legacy adapter never reinterprets code.
+                    approval_started_at = perf_counter()
+                    decision_task = asyncio.create_task(asyncio.sleep(0, result=True))
+                    continue
                 if approval_handler is not None:
                     decision_task = asyncio.create_task(
                         approval_handler(context, approval_id, pending_request)

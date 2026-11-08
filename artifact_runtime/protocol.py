@@ -60,12 +60,27 @@ class PythonOutput(StrictModel):
         return value
 
 
+class TextOnlyPdfInput(StrictModel):
+    version_id: UUID
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    omitted_pages: tuple[int, ...] = Field(min_length=1, max_length=20)
+
+    @field_validator("omitted_pages")
+    @classmethod
+    def pages(cls, value):
+        if list(value) != sorted(set(value)) or not all(1 <= page <= 20 for page in value):
+            raise ValueError("Omitted pages must be unique ordered page numbers from 1 to 20")
+        return value
+
+
 class PythonCodeInput(StrictModel):
     code: str = Field(min_length=1, max_length=32000)
     stdin: str | None = Field(default=None, max_length=65536)
     input_version_ids: tuple[UUID, ...] = Field(default=(), max_length=3)
     outputs: tuple[PythonOutput, ...] = Field(default=(), max_length=3)
     primary_output: str | None = None
+    text_only_pdf_inputs: tuple[TextOnlyPdfInput, ...] = Field(
+        default=(), max_length=3, exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def declared_outputs(self):
@@ -74,6 +89,9 @@ class PythonCodeInput(StrictModel):
             raise ValueError("Duplicate output paths")
         if len(self.input_version_ids) != len(set(self.input_version_ids)):
             raise ValueError("Duplicate input versions")
+        pdf_ids = [item.version_id for item in self.text_only_pdf_inputs]
+        if len(pdf_ids) != len(set(pdf_ids)) or not set(pdf_ids) <= set(self.input_version_ids):
+            raise ValueError("Text-only PDF sources must identify unique explicit input versions")
         if len(paths) > 1 and self.primary_output is None:
             raise ValueError("Multiple outputs require primary_output")
         if self.primary_output is not None and self.primary_output not in paths:

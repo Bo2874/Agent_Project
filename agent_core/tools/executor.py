@@ -35,6 +35,18 @@ class ToolExecutor:
         self._expected_tools = dict(expected_tools) if expected_tools is not None else None
         self._force_approval = force_approval
 
+    def approval_required(self, registered: RegisteredTool) -> bool:
+        capability = registered.capability
+        if (
+            registered.tool.name == "run_python_code"
+            and capability is not None
+            and capability.plugin_id is None
+            and capability.immutable_output
+            and not registered.policy.requires_approval
+        ):
+            return False
+        return registered.policy.requires_approval or self._force_approval
+
     async def execute(
         self,
         registry: ToolRegistry,
@@ -93,7 +105,7 @@ class ToolExecutor:
         cached = self._successful_results.get(idempotency_key)
         if policy.idempotent and cached is not None and cached[0] is registered:
             return cached[1]
-        if (policy.requires_approval or self._force_approval) and approval_granted is not True:
+        if self.approval_required(registered) and approval_granted is not True:
             if approval_granted is False:
                 return ToolResult.failure(
                     f"User đã từ chối tool '{tool_name}'.",
@@ -198,7 +210,7 @@ class ToolExecutor:
             return False
         if self._validate_arguments(registered.tool.args_schema, arguments) is not None:
             return False
-        if not registered.policy.requires_approval and not self._force_approval:
+        if not self.approval_required(registered):
             return False
 
         key = self._idempotency_key(context, tool_name, arguments)

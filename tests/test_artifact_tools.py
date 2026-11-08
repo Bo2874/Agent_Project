@@ -223,7 +223,7 @@ def test_file_task_routes_to_tools_not_rag_only():
         selected_artifacts=[{"name": "budget.xlsx", "version_id": str(UUID(int=1))}],
     )
     assert json.loads(request.state)["selected_artifacts"][0]["name"] == "budget.xlsx"
-    assert "artifact_edit" in request.instructions
+    assert "run_python_code" in request.instructions
     prepared, _ = PrivacyPolicy().prepare(request)
     assert json.loads(prepared.state)["selected_artifacts"][0]["name"] == "budget.xlsx"
 

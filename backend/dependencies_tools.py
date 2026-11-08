@@ -2,7 +2,6 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from agent_core.code_execution import register_python_execution_tool
 from agent_core.plugins.manager import PluginManager
 from agent_core.tools import ToolRegistry
 from agent_core.tools.email import register_email_tool
@@ -14,12 +13,10 @@ from backend.core.mcp_http_config import load_http_configs
 settings = get_settings()
 tool_registry = ToolRegistry(allowlist=settings.tool_allowlist_names)
 if settings.python_sandbox_enabled:
-    register_python_execution_tool(tool_registry)
-if settings.workspace_artifacts_enabled:
-    from agent_core.tools.artifacts import register_artifact_tools
-    from backend.services.artifacts.tools import ArtifactToolService
+    from agent_core.tools.python import register_python_tool
+    from backend.services.artifacts.python import PythonToolService
 
-    register_artifact_tools(tool_registry, ArtifactToolService())
+    register_python_tool(tool_registry, PythonToolService())
 if (email_config := settings.email_config) is not None:
     register_email_tool(tool_registry, email_config)
 if settings.google_connector_enabled:

@@ -527,6 +527,10 @@ async def stream_assistant_response(
             plugin_runtime(registry, skill_registry, tool_context)
         )
         execution_registry = runtime.registry
+        if resume:
+            from backend.services.artifacts.legacy import checkpoint_registry
+
+            execution_registry = checkpoint_registry(execution_registry, values)
         base_guard = runtime.context.authorization_guard
 
         async def lease_guard(name):

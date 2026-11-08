@@ -30,7 +30,7 @@ QUERY_INSTRUCTIONS = (
     "hiểu tham chiếu, query mới có thể đổi/hủy ý cũ. selected_documents: nguồn hỏi đáp RAG; "
     "hỏi nội dung/chủ thể/file này hoặc nối tiếp về nguồn đã chọn: document_qa, kể cả history "
     "có câu trả lời. Không hỏi lại dữ kiện đã rõ. selected_artifacts: Excel/Word/PDF, "
-    "độc lập RAG. Đọc/tạo/sửa file làm việc dùng artifact_inspect/artifact_create/artifact_edit: "
+    "độc lập RAG. Đọc/tạo/sửa file hoặc tính toán bằng Python dùng run_python_code: "
     "tool_task; phối hợp đọc nguồn/tìm web rồi ghi file/gửi mail: planned_task. Một thao tác "
     "công cụ độc lập: tool_task. Nhiều file không tự thành planned_task. Chat không liên quan "
     "file vẫn chọn chat; văn bản dán đủ, viết kế hoạch hoặc thiếu dữ kiện thiết yếu: chat. "

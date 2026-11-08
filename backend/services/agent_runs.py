@@ -798,6 +798,18 @@ async def list_agent_run_timelines(
             )
         ).all():
             artifact_refs[row.source_run_id] = [published(row).model_dump(mode="json")]
+        from backend.models import AgentOperation
+
+        for selection in (
+            await session.scalars(
+                select(AgentOperation).where(
+                    AgentOperation.agent_run_id.in_(run_ids),
+                    AgentOperation.key == "python.primary",
+                    AgentOperation.status == "completed",
+                )
+            )
+        ).all():
+            artifact_refs[selection.agent_run_id] = selection.result["artifact_refs"]
     steps = list(
         (
             await session.scalars(
