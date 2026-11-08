@@ -17,7 +17,11 @@ def main():
     output = Path("/output")
     report = GeneratedArtifact()
     input_path = Path("/input") / request.inputs[0].name if request.inputs else None
-    if request.action == "inspect":
+    if request.action == "inspect_file":
+        from artifact_runtime.file_inspection import inspect_file
+
+        report = inspect_file(input_path, request=request)
+    elif request.action == "inspect":
         if input_path.suffix == ".docx":
             from artifact_runtime.document import inspect_docx
 
@@ -57,9 +61,14 @@ def main():
         report = GeneratedArtifact(calculation=calculation)
     elif request.operation.kind == "python":
         if request.operation.python is not None:
+            from artifact_runtime.file_inspection import inspect_file
             from artifact_runtime.python_execution import execute_python
 
+            for item in request.inputs:
+                inspect_file(Path("/input") / item.name)
             report, files = execute_python(request, input_dir=Path("/input"), output_dir=output)
+            for _, path in files:
+                inspect_file(path)
             write_bundle(sys.stdout.buffer, report, tuple(item[1] for item in files))
             return
         # X4 preflight is deliberately shared with structured editing.
@@ -140,7 +149,7 @@ def main():
             input_path=Path("/input/input-0.xlsx") if request.inputs else None,
             output_dir=output,
         )
-    if request.action == "inspect":
+    if request.action in {"inspect", "inspect_file"}:
         write_bundle(sys.stdout.buffer, report, ())
     else:
         files = collect_outputs(output)

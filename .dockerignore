@@ -38,6 +38,8 @@
 !infra/docker/artifact-sandbox/**
 !infra/docker/artifact-runner/
 !infra/docker/artifact-runner/**
+!infra/docker/python-runtime/
+!infra/docker/python-runtime/**
 !infra/ci/
 !infra/ci/**
 !tests/

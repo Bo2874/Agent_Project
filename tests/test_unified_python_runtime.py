@@ -54,7 +54,10 @@ def test_python_error_is_observation_for_agent_to_correct(tmp_path):
 def test_explicit_outputs_keep_declaration_order_and_ignore_scratch(tmp_path):
     report, files = execute(
         tmp_path,
-        code="from pathlib import Path; Path('a.csv').write_text('a,b'); Path('b.json').write_text('{}'); Path('scratch.bin').write_bytes(b'abc')",
+        code=(
+            "from pathlib import Path; Path('a.csv').write_text('a,b'); "
+            "Path('b.json').write_text('{}'); Path('scratch.bin').write_bytes(b'abc')"
+        ),
         outputs=[{"path": "b.json", "name": "report.json"}, {"path": "a.csv", "name": "data.csv"}],
         primary_output="a.csv",
     )
@@ -98,3 +101,16 @@ def test_no_output_bundle_roundtrip(tmp_path):
 def test_old_operation_wire_shape_stays_identical():
     value = {"kind": "python", "parent_version_id": None, "payload": {}, "code": "print(1)"}
     assert protocol.ArtifactOperation.model_validate(value).model_dump(mode="json") == value
+
+
+def test_unified_broker_profile_has_one_image_and_consistent_limits():
+    from artifact_runtime import containers
+
+    assert containers.CODE_IMAGE == containers.RENDER_IMAGE == "personal-agent-python-runtime:1"
+    for render in (False, True):
+        limits = containers.DockerBroker.limits(render=render)
+        assert "--memory=1024m" in limits
+        assert "--ulimit=cpu=90:90" in limits
+        assert "--cpus=1" in limits
+        assert "--network=none" in limits
+        assert "--user=65532:65532" in limits

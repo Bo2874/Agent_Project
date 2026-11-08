@@ -136,10 +136,12 @@ x-runtime: &runtime
 services:
   artifact-runner:
     profiles: [artifacts]
-    image: "${DEV_IMAGE_PREFIX:-personal-agent}-artifact-runner:${DEV_IMAGE_TAG:-dev}"
+    image: personal-agent-python-runtime:1
     build:
       context: .
-      dockerfile: infra/docker/artifact-runner/Dockerfile
+      dockerfile: infra/docker/python-runtime/Dockerfile
+    user: "0:0"
+    command: [python, -m, uvicorn, "artifact_runtime.app:application_factory", --factory, --host, "0.0.0.0", --port, "8080", --no-access-log]
     init: true
     read_only: true
     environment:

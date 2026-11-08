@@ -24,8 +24,9 @@ from artifact_runtime.temporary import reap_workspaces, temporary_workspace
 LABEL = "personal-agent.artifact-runner"
 JOB_LABEL = "personal-agent.artifact-job"
 CREATED_LABEL = "personal-agent.artifact-created"
-CODE_IMAGE = "personal-agent-artifact-code:1"
-RENDER_IMAGE = "personal-agent-artifact-render:1"
+RUNTIME_IMAGE = "personal-agent-python-runtime:1"
+# Internal legacy callers share the same image during checkpoint migration.
+CODE_IMAGE = RENDER_IMAGE = RUNTIME_IMAGE
 
 
 class RunnerError(ValueError):
@@ -199,8 +200,8 @@ class DockerBroker:
 
     @staticmethod
     def limits(*, render=False, intake=False) -> list[str]:
-        memory = "1024m" if render else "512m"
-        cpu = 60 if render else 15
+        memory = "1024m"
+        cpu = 90
         args = [
             "--pull=never",
             "--network=none",
@@ -362,13 +363,18 @@ class DockerBroker:
                     ],
                     source=None,
                     output=root / "pending.bundle",
-                    deadline=90 if render else 30,
+                    deadline=90,
                 )
                 with temporary_workspace(root, "artifact-validated-") as folder:
                     with (root / "pending.bundle").open("rb") as source:
                         report, _ = unpack_bundle(source, folder)
-                    if bool(report.files) != (request.action != "inspect"):
+                    unified = request.operation and request.operation.python is not None
+                    if not unified and bool(report.files) != (
+                        request.action not in {"inspect", "inspect_file"}
+                    ):
                         raise RunnerError("Unexpected output count for runner action")
+                    if unified and report.execution is None:
+                        raise RunnerError("Missing Python execution receipt")
                 (root / "pending.bundle").replace(result)
                 self.set_status(job, "completed")
                 return result

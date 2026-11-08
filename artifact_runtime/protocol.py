@@ -191,9 +191,9 @@ class BlobDescriptor(StrictModel):
 
 class ArtifactRunRequest(StrictModel):
     job_id: UUID
-    action: Literal["execute", "inspect", "recalculate", "render_document", "render_pages"] = (
-        "execute"
-    )
+    action: Literal[
+        "execute", "inspect", "inspect_file", "recalculate", "render_document", "render_pages"
+    ] = "execute"
     operation: ArtifactOperation | None = None
     inputs: tuple[BlobDescriptor, ...] = Field(default=(), max_length=3)
     preview_sheet: str | None = Field(default=None, max_length=31)
