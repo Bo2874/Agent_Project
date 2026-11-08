@@ -1,127 +1,204 @@
-# Unified Python execution and working files
+# Thiết kế hợp nhất công cụ Python và hệ thống file làm việc
 
-Status: proposed final inventory; implementation has not started. The user selected a general-purpose Python tool with independent executions and persistent files, rather than persistent Python variables. This document makes the replacement and deletion scope reviewable.
+**Trạng thái:** bản thiết kế đã cập nhật theo yêu cầu người dùng; chưa triển khai thay đổi vào sản phẩm.
 
-## Intent and agreed behavior
+**Các quyết định đã chốt:**
 
-`run_python_code` is the general computation/execution tool, not an Excel-specific generator. The LLM writes Python for calculations, data analysis/transformation, text processing, chart generation, and reading/creating/editing supported files. No separate create/edit tool or per-format operation schema should be required for routine requests.
+- Dùng một tool Python tổng quát tên `run_python_code`.
+- Dùng một Docker image xử lý chung tên `personal-agent-python-runtime:1`.
+- Mỗi lần chạy Python là một môi trường mới; không giữ biến trong RAM giữa các lần gọi tool.
+- Giữ các file đã lưu để Agent đọc, kiểm tra và sửa tiếp ở lần chạy sau.
+- Chạy `run_python_code` như tool bình thường, không yêu cầu người dùng chấp nhận từng lần chạy.
+- Cài sẵn một bộ thư viện Python phổ biến. Nếu phát sinh thư viện còn thiếu, cập nhật bộ thư viện và build lại image sau; Agent không tự cài gói trong lúc thực thi.
 
-Every call uses a fresh isolated execution container. Variables, imports, open handles and process memory do not survive. Selected input file versions and published outputs do survive in private storage. The agent can pass output version IDs into a later call to inspect or revise them. Preserve the existing chat behavior: real text streaming, one final output card after the answer completes, closed preview stays closed, reload/replay does not duplicate cards.
+## 1. Mục tiêu và hành vi
 
-The scope covers the whole existing file workflow (Excel, DOCX, text PDF), general Python computations without files, and legacy small text outputs (TXT, Markdown, CSV, JSON). File/image/OCR understanding is not added by this refactor. Generated chart images can be outputs; viewing a preview in the browser must not be described as the text model visually reviewing it.
+`run_python_code` là công cụ thực thi Python tổng quát, không phải công cụ chỉ để tạo Excel. LLM tự viết code để tính toán, phân tích và biến đổi dữ liệu, xử lý văn bản, tạo biểu đồ, đọc, tạo hoặc chỉnh sửa các định dạng file được hỗ trợ.
 
-## Approaches and selection
+Không bắt buộc LLM phải diễn đạt yêu cầu thành các thao tác cố định như `write_cells`, `set_formula`, `format_range` hoặc `add_chart`. Ví dụ, khi người dùng yêu cầu tạo Excel có biểu đồ, LLM chọn thư viện phù hợp và tự viết Python để tạo file thực tế.
 
-1. Expand the old `code_execution` sandbox: retains the old executor but must rebuild binary input/output transport, storage and version integration. Its existing 5-second/128-MiB/text-only contract does not fit document work.
-2. Consolidate on the existing Artifact transport and publication: retain private storage, scoped versions, cancellation and operation recovery; put a general Python interface in front and remove competing public tool paths. This matches the user's chosen direction and reuses the tested file pipeline.
+Mỗi lần gọi tool tạo một container thực thi độc lập. Biến Python, thư viện đã import, đối tượng đang mở và dữ liệu trong RAM không được giữ lại. Phiên bản file đầu vào và file kết quả đã công bố được giữ trong kho riêng của người dùng. Agent có thể truyền ID phiên bản kết quả vào lần chạy sau để đọc lại, tự kiểm tra hoặc chỉnh sửa.
 
-Use approach 2. This is a refactor of the execution interface and environment, not a replacement of the artifact database or existing stored files.
+Giữ nguyên luồng chat đã nghiệm thu: chữ được stream theo nội dung model trả về; khi trả lời xong mới hiện một thẻ file kết quả cuối cùng; panel preview đang đóng không tự mở; tải lại trang hoặc kết nối lại không nhân đôi thẻ file.
 
-## Final inventory
+Phạm vi gồm Excel, DOCX, PDF văn bản, tính toán không tạo file, các file văn bản TXT/Markdown/CSV/JSON và ảnh biểu đồ PNG do Python tạo. Việc cài thư viện xử lý ảnh không đồng nghĩa bổ sung OCR hoặc khả năng hiểu ảnh cho LLM trong giai đoạn này.
 
-### One public execution tool
+## 2. Phương án được chọn
 
-Keep **`run_python_code`** as the only public Python/file execution tool. Evolve its schema to accept Python source, optional text stdin, explicitly selected input version IDs, and explicit output declarations. Output declarations identify generated file paths/names and optional parent version IDs; they are not Excel/Word operations. The host validates paths and ownership and chooses the actual storage keys.
+Hai hướng đã được đối chiếu:
 
-Return bounded stdout/stderr, execution status, warnings, and published file references. A calculation that writes no files must succeed. Multiple generated files may be retained internally, while the reply attaches only its selected final output. Code can reopen and validate its output within one execution, or the agent can inspect a saved output in a later call. Do not return binary data as inline base64 in model observations.
+1. **Nâng cấp sandbox Python cũ:** giữ bộ thực thi cũ nhưng phải xây thêm đường nhận/trả file nhị phân, lưu trữ và quản lý phiên bản. Hợp đồng cũ chỉ hỗ trợ file text nhỏ, thời gian mặc định 5 giây và RAM 128 MiB nên chưa đáp ứng việc xử lý tài liệu.
+2. **Hợp nhất trên nền Artifacts hiện có:** tận dụng kho file riêng, quyền truy cập, truyền file nhị phân, phiên bản, dừng tác vụ và phục hồi công việc; đưa một giao diện Python tổng quát ra trước rồi bỏ các nhánh tool trùng chức năng.
 
-An output declaration contains its relative output path, display name and optional parent version ID. The call identifies one declared output as `primary_output`; a single output is the default primary. A successful zero-output/review call preserves the run's previously selected final output rather than clearing it. Multi-output calls must choose their primary explicitly. The host verifies the selected reference and binds only that reference to the completed message. Completion, restored timelines and replay use this persisted selection, not the newest ArtifactVersion timestamp. The existing latest-version rule remains only as a legacy history fallback.
+Chọn phương án 2. Đây là thay đổi giao diện thực thi và môi trường xử lý; không thay thế database Artifacts hoặc xóa các file người dùng đã lưu.
 
-Each execution has a durable receipt independent of file versions, using the existing AgentOperation journal where its invariants fit. Its fingerprint covers code/stdin, input version IDs and hashes, declared outputs/parents, primary selection, acknowledgements and runtime contract version. A zero-output success stores and replays its bounded stdout/status without rerunning code. Published children use deterministic per-output operation keys derived from the execution identity and output declaration. A repeated operation reconciles runner receipts and already published outputs before continuing; an unknown execution is never silently rerun. Do not pretend one ArtifactVersion is the execution receipt for a multi-output call.
+## 3. Danh sách tool sau hợp nhất
 
-Remove these from the new-run catalog and its prompt/routing metadata:
+### Tool giữ lại
 
-| Public tool | Replacement |
+Giữ **`run_python_code`** làm tool Python/xử lý file công khai duy nhất. Đầu vào gồm:
+
+- Mã Python cần chạy.
+- Chuỗi `stdin` tùy chọn.
+- Danh sách ID phiên bản file được phép đưa vào container.
+- Khai báo file đầu ra: đường dẫn tương đối, tên hiển thị và ID phiên bản cha nếu đang sửa file.
+- Chỉ định file kết quả chính qua `primary_output` nếu tạo nhiều file.
+
+Khai báo đầu ra chỉ dùng để xác định file cần thu và lưu; không chứa danh sách thao tác Excel/Word. Backend kiểm tra đường dẫn, quyền sở hữu và tự cấp khóa lưu trữ thực tế.
+
+Kết quả trả về gồm trạng thái thực thi, `stdout`, `stderr` có giới hạn dung lượng, cảnh báo và các tham chiếu file đã công bố. Chạy phép tính không tạo file vẫn được xem là thành công. Không đưa nội dung file nhị phân lớn hoặc chuỗi base64 vào ngữ cảnh của model.
+
+Nếu chỉ có một file đầu ra, mặc định đó là file chính. Nếu có nhiều file, lời gọi phải chỉ rõ file chính. Lời gọi chỉ đọc/kiểm tra và không tạo file không được xóa lựa chọn file kết quả trước đó của cùng tác vụ. Backend lưu lựa chọn cuối một cách bền vững để hoàn tất câu trả lời, tải lại lịch sử và phát lại sự kiện đều dùng đúng file; không suy đoán bằng thời gian tạo phiên bản mới nhất. Quy tắc chọn phiên bản mới nhất chỉ còn là phương án tương thích với lịch sử cũ.
+
+### Tool bỏ khỏi danh sách dùng cho tác vụ mới
+
+| Tool cũ | Cách thay thế |
 | --- | --- |
-| `artifact_create` | Python code through `run_python_code` |
-| `artifact_edit` | Python code plus pinned input and parent version |
-| `run_artifact_python` | Merged into `run_python_code` |
-| `artifact_inspect` | Python reading selected/output files; internal preview inspection remains |
-| `artifact_rebuild_pdf_text_only` | No separate public format tool; preserve its omission/consent behavior in host validation and approval metadata |
+| `artifact_create` | Python qua `run_python_code` |
+| `artifact_edit` | Python cùng file đầu vào và phiên bản cha |
+| `run_artifact_python` | Hợp nhất vào `run_python_code` |
+| `artifact_inspect` | Python đọc file đã chọn hoặc file do Agent tạo; phần đọc phục vụ preview vẫn giữ nội bộ |
+| `artifact_rebuild_pdf_text_only` | Python xử lý PDF; giữ kiểm tra độ phủ nội dung và thông tin phần bị bỏ, không duy trì tool riêng theo định dạng |
 
-There is no `create_excel` public tool in the current registry; do not invent a deletion target with that name. Non-Python tools (web search, Google Workspace, email, RAG, plugins, automation controls) remain in their own domains.
+Registry hiện không có tool công khai tên `create_excel`; không tạo mục xóa giả với tên này. Các tool tìm web, Google Workspace, email, RAG, plugin và điều khiển automation vẫn giữ vai trò riêng.
 
-### One runtime image
+## 4. Một Docker image dùng chung
 
-Build **`personal-agent-python-runtime:1`** with the supported Python interpreter, Python execution/inspection code, Office/PDF/chart libraries and LibreOffice/UNO/Poppler. Initial library set: openpyxl, XlsxWriter, python-docx, pypdf, ReportLab, matplotlib and pandas, with compatible versions locked before implementation verification. This is an implementer choice supporting the user's requested general workflow; not a promise that every Python package is available.
+Build **`personal-agent-python-runtime:1`**, gồm Python, mã thực thi/kiểm tra file, các thư viện phổ biến và phần mềm cần để tính công thức hoặc render tài liệu.
 
-The same image has two trusted entry points:
+### Bộ thư viện cài sẵn ban đầu
 
-- Execution: disposable non-root container, no network, no host directories, no Docker socket or credentials. Includes internal inspect/recalculate/render actions used by the host, not public model tools.
-- Broker: the existing Runner service, using the same image in Compose and given the Docker socket only in this role. Install the Docker CLI and HTTP service dependencies in this shared image. The execution role never receives the socket or runner signing key.
+| Nhóm | Thư viện/phần mềm | Mục đích |
+| --- | --- | --- |
+| Tính toán, dữ liệu bảng | `numpy`, `pandas` | Tính toán mảng, làm sạch, tổng hợp, biến đổi dữ liệu |
+| Toán học, thống kê | `scipy`, `sympy`, `statsmodels` | Hàm toán học, biểu thức đại số và thống kê |
+| Phân tích dữ liệu phổ biến | `scikit-learn` | Tiền xử lý, phân cụm, hồi quy và mô hình nhỏ phù hợp tài nguyên |
+| Excel | `openpyxl`, `XlsxWriter` | Đọc/sửa workbook và tạo Excel với công thức, định dạng, biểu đồ |
+| Word, mẫu tài liệu | `python-docx`, `docxtpl` | Tạo/sửa DOCX và điền dữ liệu vào mẫu |
+| PDF | `pypdf`, `pdfplumber`, `reportlab` | Đọc, ghép, tách, trích văn bản/bảng và tạo PDF |
+| Biểu đồ | `matplotlib`, `seaborn` | Tạo biểu đồ và xuất ảnh kết quả |
+| Ảnh cơ bản | `Pillow` | Đọc/ghi, đổi kích thước hoặc kết hợp ảnh do code tạo; không cung cấp OCR |
+| Văn bản, ngày tháng | `regex`, `rapidfuzz`, `python-dateutil` | Xử lý chuỗi, so khớp gần đúng và ngày tháng |
+| Dữ liệu có cấu trúc, mẫu | `PyYAML`, `lxml`, `beautifulsoup4`, `Jinja2` | Đọc dữ liệu YAML/XML/HTML và dựng nội dung theo mẫu |
+| Tiện ích HTTP phổ biến | `requests`, `httpx` | Cung cấp API thư viện quen thuộc; không mở quyền mạng cho container |
+| Phần mềm hệ thống | LibreOffice Calc/Writer, UNO, Poppler, font Unicode phù hợp tiếng Việt | Tính công thức, chuyển đổi/render tài liệu và hỗ trợ văn bản tiếng Việt |
+| Thư viện vận hành | `pydantic`, `defusedxml`, FastAPI, Uvicorn và các phụ thuộc cần thiết | Kiểm tra dữ liệu, vận hành Runner và giao thức nội bộ |
 
-On native Windows, the broker may continue running from the project venv on loopback 8081. It launches children from the unified image. This does not require a second Docker image or persistent Python session.
+Các module chuẩn như `csv`, `json`, `math`, `statistics`, `datetime`, `decimal`, `sqlite3`, `pathlib`, `zipfile` đã có trong Python, không cần cài gói riêng.
 
-Retire after successful replacement verification and deployment compatibility checks:
+Danh sách trên là bộ thư viện ban đầu được yêu cầu, không phải cam kết cài mọi thư viện Python. Không đưa các bộ nặng như PyTorch, TensorFlow, mô hình OCR hoặc trình duyệt tự động vào chỉ để dự phòng. Khi triển khai phải chọn phiên bản tương thích với Python/UNO, khóa phiên bản và hash, rồi kiểm tra import thực tế trong image. Không xem việc ghi tên thư viện vào tài liệu là đã cài xong.
 
-| Old image | Replacement |
+Cấu hình các thư viện số học dùng số luồng phù hợp với 1 CPU, tránh vượt giới hạn tiến trình/luồng của container. Matplotlib dùng backend không cần màn hình; cache và file tạm đặt trong vùng được phép ghi. Kiểm tra font và xuất tài liệu/biểu đồ có dấu tiếng Việt.
+
+### Quy trình bổ sung thư viện về sau
+
+1. Lần chạy gặp `ModuleNotFoundError` hoặc `ImportError` trả lỗi dễ hiểu và tên module thiếu cho Agent.
+2. Không tự chạy `pip install`, tải mã từ Internet hoặc thay đổi môi trường đang chạy để né lỗi.
+3. Người phát triển đối chiếu module với đúng gói, bổ sung vào danh sách phụ thuộc, cập nhật lockfile, build và kiểm tra lại image.
+4. Cập nhật hướng dẫn/danh mục thư viện để LLM biết môi trường mới có gì. Ghi nhận phiên bản hoặc digest image để truy vết được môi trường của từng lần chạy.
+
+### Hai vai trò chạy từ cùng image
+
+- **Thực thi:** container tạm, chạy dưới user không phải root, không có mạng, không nhận đường dẫn host, Docker socket hay thông tin đăng nhập. Các bước kiểm tra, tính công thức và render nội bộ cũng dùng image này.
+- **Điều phối:** dịch vụ Runner hiện có, chạy từ cùng image khi dùng Compose. Chỉ vai trò này được mount Docker socket. Image có Docker CLI và thư viện HTTP cần thiết, nhưng container thực thi không được cấp socket hoặc khóa ký của Runner.
+
+Trên Windows chạy Python trực tiếp, Runner có thể tiếp tục chạy bằng venv của project tại loopback cổng 8081 và tạo container con từ image chung. Không cần thêm image hoặc giữ phiên Python sống lâu.
+
+### Image cũ sẽ loại bỏ
+
+| Image cũ | Thay bằng |
 | --- | --- |
-| `personal-agent-python-sandbox:3.11-v1` | Unified runtime |
-| `personal-agent-artifact-code:1` | Unified runtime |
-| `personal-agent-artifact-render:1` | Unified runtime |
-| `personal-agent-artifact-runner:dev` (including configured equivalents) | Compose broker uses unified runtime |
+| `personal-agent-python-sandbox:3.11-v1` | Image runtime hợp nhất |
+| `personal-agent-artifact-code:1` | Image runtime hợp nhất |
+| `personal-agent-artifact-render:1` | Image runtime hợp nhất |
+| `personal-agent-artifact-runner:dev` và tag tương ứng theo cấu hình | Runner Compose dùng image runtime hợp nhất |
 
-App/worker, PostgreSQL/pgvector, Redis and unrelated service images are outside this deletion scope. Do not use Docker prune. Check exact image IDs, tags and existing container references before deleting the specifically retired images on the user's machine.
+Chỉ xóa sau khi bản thay thế kiểm thử thành công và không còn container/tác vụ phụ thuộc. Kiểm tra đúng ID, tag và tham chiếu trước khi xóa. Không dùng Docker prune. Image app/worker, PostgreSQL/pgvector, Redis và dịch vụ không liên quan nằm ngoài phạm vi xóa.
 
-## Components retained behind the tool
+## 5. Những phần backend giữ lại
 
-Keep Artifact/ArtifactVersion metadata, immutable private storage, user ownership, selected-file UI, downloads, message bindings, version picker, previews, operation journals, cancellation and worker recovery. Keep the Runner's HTTP/binary transport, but make its execution behavior general-purpose rather than limited to one generated Office file. Keep Office/PDF inspection and render code internally where useful; remove the requirement to express changes as `write_cells`, `set_formula`, `format_range`, `add_chart`, or Word block-edit schemas.
+Giữ metadata `Artifact`/`ArtifactVersion`, kho riêng, quyền sở hữu, phiên bản bất biến, giao diện chọn file, tải xuống, liên kết file với tin nhắn, bộ chọn phiên bản, preview, nhật ký thực thi, dừng tác vụ và phục hồi Worker.
 
-Only declared and authorized input versions are staged read-only in the container. The backend supplies deterministic relative input paths, file names and IDs in trusted tool context. An arbitrary local path in model code never grants host-file access. Output publication is performed by the host, not by LLM-written SQL or storage API calls.
+Giữ giao thức HTTP/truyền file nhị phân của Runner, nhưng mở rộng từ một file Office sang thực thi Python tổng quát. Giữ các bộ đọc/render Office và PDF cần thiết ở nội bộ. Không bắt LLM phải chọn một tool riêng để gọi những bước này.
 
-## File handling and review
+Backend chỉ đưa các phiên bản đã được cấp quyền vào thư mục input chỉ đọc. Ngữ cảnh tool cung cấp tên, ID và đường dẫn tương đối xác định trước. Viết một đường dẫn host trong code không cấp thêm quyền đọc file host. Việc lưu/công bố output do backend thực hiện, không để code LLM tự ghi SQL hoặc gọi trực tiếp hệ thống lưu trữ của ứng dụng.
 
-Separate structural/security validation from feature-support checks. Continue rejecting malformed archives, path traversal, symlinks, oversized output, macros/executable embedded content and unsafe external/executable links. Do not reject a valid workbook solely because it contains a supported library-generated chart beyond column/bar/line, or a safe feature the old structured editor could not preserve.
+## 6. Nhật ký thực thi, chống chạy lặp và file cuối
 
-Never rewrite an existing file just to generate a preview. Preview, formula recalculation and document rendering are host services. If a conversion cannot preserve unsupported features, retain the original generated bytes and report the limitation; do not silently replace the file with a lossy conversion. New safe formulas are not confined to five functions. State calculation status truthfully; formula text alone does not establish a fresh cached result.
+Mỗi lần thực thi có một bản ghi bền vững độc lập với phiên bản file; tận dụng `AgentOperation` khi đáp ứng được các bất biến cần thiết. Dấu vân tay đầu vào bao gồm code/stdin, ID và hash file đầu vào, khai báo output/phiên bản cha, lựa chọn file chính, phạm vi xử lý đã xác định và phiên bản hợp đồng runtime.
 
-Retain text-PDF coverage warnings and explicit consent before discarding unreadable/image pages. The generic tool must not remove this existing behavior merely by dropping a dedicated tool name. Record any acknowledgement against the exact source version/hash and omitted pages in approval metadata, independently of model prose. No OCR is added.
+Lần chạy thành công không tạo file vẫn lưu và phát lại được trạng thái/stdout mà không chạy lại code. Mỗi file đầu ra có khóa thao tác xác định từ danh tính lần thực thi và khai báo file, tránh nhân phiên bản khi retry hoặc phục hồi.
 
-Preflight every staged PDF on the host-controlled path, even if the model declares no parent for the output. Conservatively require a source-version/hash/page acknowledgement when a call receives a partially readable PDF and declares document outputs. Read-only analysis can return coverage warnings without acknowledging a lossy rewrite. The host cannot infer preservation from arbitrary Python or from the model's description of its code.
+Khi nhận lại cùng thao tác, đối chiếu biên nhận Runner và output đã lưu trước khi tiếp tục. Nếu kết quả thực thi trước chưa rõ, không âm thầm chạy lại code. Không dùng một `ArtifactVersion` làm đại diện duy nhất cho một lần chạy có nhiều output.
 
-A newly generated PDF may be independent (for example, ReportLab/pypdf output); it does not require a DOCX companion. Editable companion sources are optional, explicitly associated outputs. Preserve companions and downloads of existing PDF versions. Apply safe PDF validation/rendering to the declared PDF itself.
+## 7. Xử lý file và Agent tự kiểm tra
 
-For self-review, Python can reopen outputs, check cell contents/formulas, parse documents and print bounded summaries. A rendered image may be displayed to the user. Visual inspection by the LLM requires an explicitly supported vision input path, which is outside this refactor; do not claim it happened.
+Tách kiểm tra cấu trúc/an toàn khỏi giới hạn tính năng. Tiếp tục chặn archive lỗi, đường dẫn vượt phạm vi, symlink, output quá dung lượng, macro/mã thực thi nhúng và liên kết ngoài có khả năng thực thi/nguy hiểm. Không từ chối workbook hợp lệ chỉ vì chứa loại biểu đồ hoặc tính năng an toàn mà bộ sửa có cấu trúc cũ chưa giữ được.
 
-Legacy text artifacts remain bounded and downloadable through the same storage system. PNG output uses authenticated image preview; TXT/MD/CSV/JSON use safe text preview or download. Preserve existing working-file selection for Office/PDF, and allow the generic tool to reuse its own supported outputs. Do not add a tool per extension.
+Không ghi đè file chỉ để tạo preview. Tính công thức, render và tạo preview là dịch vụ nội bộ. Nếu một chuyển đổi không giữ được tính năng, giữ nguyên bytes của file kết quả và báo rõ hạn chế; không lặng lẽ thay bằng bản mất nội dung. Công thức mới an toàn không bị giới hạn trong năm hàm cũ. Chỉ báo kết quả tính còn mới khi đã xác minh thực sự.
 
-## Prompt and discovery
+PDF được kiểm tra độ phủ văn bản đối với mọi file đầu vào, không chỉ file được LLM khai báo là phiên bản cha. Nếu có trang không đọc được hoặc có phần ảnh ngoài phạm vi, trả thông tin cụ thể. Không được mặc nhiên coi bản dựng lại từ phần văn bản là đã bảo toàn toàn bộ tài liệu. Nếu yêu cầu người dùng chưa xác định rõ việc chỉ lấy phần text, Agent làm rõ nội dung yêu cầu trong chat; đây không phải hộp thoại xin phép chạy Python. Ghi nhận phạm vi xử lý gắn đúng phiên bản/hash/trang bị ảnh hưởng. Không thêm OCR trong lần hợp nhất này.
 
-The tool description explains general execution capabilities, installed packages, stateless calls, input/output conventions, stdout/error handling, and the ability to create/edit files. Include Excel/Word/PDF/chart examples without making the tool exclusively a file generator. Remove the old instruction to use Python only if a narrower tool cannot solve the task, and remove the preference for now-retired artifact tools.
+PDF mới có thể được tạo độc lập bằng ReportLab/pypdf, không bắt buộc có DOCX đi kèm. Nguồn DOCX chỉnh sửa được là thành phần tùy chọn, phải liên kết rõ ràng nếu có. Giữ các nguồn đi kèm và link tải của phiên bản cũ.
 
-Update all discovery layers: registration, allowlist defaults, routing/shortlisting, execution-context metadata, Agent prompts, automation authority, output publication and operation recovery. A correct prompt is insufficient if the tool is filtered out before the model sees it. Retain code-execution approval policy; this refactor does not silently authorize previously unapproved arbitrary code or broaden automation file grants.
+Để tự kiểm tra, Agent có thể chạy Python mở lại kết quả, kiểm tra ô/công thức, đọc nội dung tài liệu và in tóm tắt có giới hạn. Ảnh render có thể hiện cho người dùng. Việc LLM tự nhìn ảnh để đánh giá bố cục cần đường đọc ảnh/model hỗ trợ riêng; không tuyên bố đã làm việc đó chỉ vì có preview.
 
-Visible consequence for approval: structured create/edit actions previously permitted by an automation's artifact grants may now wait for Python-code approval. Do not automatically reinterpret an existing create/edit grant as permission to execute arbitrary generated Python. Preserve pause/resume and show this consequence in rollout documentation. Any future preauthorization of constrained automation code is a separate explicit policy decision, not an incidental effect of renaming tools.
+PNG được preview qua đường dẫn có xác thực. TXT/MD/CSV/JSON được xem như văn bản an toàn hoặc tải xuống. Giữ việc chọn file Office/PDF hiện có và cho phép tool dùng lại các output của chính nó được hỗ trợ. Không thêm tool theo từng đuôi file.
 
-## Limits and configuration
+## 8. Prompt, lựa chọn tool và quyền thực thi
 
-Use one execution resource profile suitable for general computations and documents, with resource limits independent of the user's total agent token budget. Start from the current larger artifact profile (1 CPU, 1,024 MiB RAM, 90-second wall time per execution, no network); verify actual child-process CPU/time limits against calculations, Office generation and rendering before claiming compatibility. Keep 20-MiB/file and 40-MiB aggregate transport limits initially, bounded logs, and private-storage quotas. A no-output call is valid; no artificial 8-KiB text-only ceiling remains.
+Mô tả tool phải nói rõ khả năng thực thi tổng quát, thư viện đã cài, tính độc lập giữa các lần chạy, quy ước input/output, cách nhận lỗi/stdout và khả năng tạo/sửa file. Có ví dụ Excel/Word/PDF/biểu đồ để LLM biết chọn tool, nhưng không biến mô tả thành chỉ dẫn dành riêng cho Excel.
 
-Use existing `PYTHON_SANDBOX_ENABLED` to enable the unified tool. `WORKSPACE_ARTIFACTS_ENABLED` continues to control working-file UI/APIs; file publication requires that functionality enabled. Samples and Compose must expose the correct enablement; do not silently enable arbitrary code when a deployment explicitly disabled it. Native development currently has Python disabled and Artifacts enabled; document the one-time switch needed after rollout without copying or overwriting the real `.env`.
+Bỏ hướng dẫn cũ yêu cầu chỉ dùng Python khi không có tool hẹp hơn phù hợp; bỏ ưu tiên gọi những tool Artifacts đã loại bỏ. Cập nhật đồng bộ đăng ký, allowlist, routing/shortlist, ngữ cảnh thực thi, prompt Agent, quyền automation, công bố output và phục hồi thao tác. Prompt đúng chưa đủ nếu tool bị bộ lọc loại trước khi đến model.
 
-Keep runner URL/key/storage settings compatible unless an implementation constraint requires a documented rename. Do not create a new configuration flag for each file type. Do not edit user credentials or migrate database contents merely to rename tools/images.
+### Không yêu cầu duyệt từng lần chạy Python
 
-## Compatibility and retirement
+Theo yêu cầu trực tiếp của người dùng, cấu hình `run_python_code` với **`requires_approval=False`**. Không hiện nút chấp nhận/từ chối trước mỗi lần chạy, không tạo yêu cầu duyệt code và không chuyển tác vụ sang chờ duyệt chỉ vì gọi Python. Agent được chạy, đọc lỗi, sửa code và gọi lại có chủ đích để hoàn thành yêu cầu như với tool bình thường.
 
-Existing files, hashes, version IDs, download URLs and message history must remain readable. Stored operation keys/checkpoints/approval records must not be silently rewritten to new semantics or cause code to run twice. Before deleting old execution code/images, detect and handle old nonterminal runs: drain them under the old version, or provide a narrowly scoped compatibility path preserving the old operation fingerprint and approved payload. Hidden compatibility is only for existing runs, not a second public execution tool for new work. Document which code can be removed immediately and which must wait for the compatibility gate.
+Chính sách này áp dụng cho chat và automation đã được phép sử dụng tool. Automation tạo/sửa file không bị dừng hằng ngày để xin duyệt code Python. Cập nhật bộ kiểm quyền automation để nhận tool hợp nhất và tiếp tục ràng buộc file đầu vào, phạm vi nhiệm vụ và kết quả theo cấu hình đã cấp. Việc bỏ bước duyệt Python không tự cấp quyền cho tool Google/email, truy cập file ngoài phạm vi hoặc thay đổi quyền của tool khác.
 
-Retire the old standalone `agent_core/code_execution` executor/contract and `infra/docker/python-sandbox` image definition once their general-computation behavior is covered by the unified implementation. Migrate active scripts/tests to the unified contract; retain historical acceptance documents as history. Consolidate `infra/docker/artifact-sandbox` and `infra/docker/artifact-runner` into one runtime image definition/lockfile; preserve useful internals rather than deleting version/storage services.
+Vẫn giữ sandbox, kiểm tra đầu vào/đầu ra, giới hạn tài nguyên, ownership, cơ chế dừng, nhật ký và chống thực thi lặp. Các lần chạy bị hủy hoặc kết quả chưa rõ không được tự động chạy lại chỉ vì không còn bước duyệt.
 
-Docker image deletion is the last step after real-container create/edit/review/download and general-calculation checks pass. If old images are still referenced by active/unmigrated containers, report that concrete dependency rather than forcing removal.
+## 9. Giới hạn và cấu hình
 
-## Acceptance
+Dùng một cấu hình tài nguyên thực thi phù hợp cả tính toán và tài liệu, độc lập với ngân sách token tổng của Agent. Mức ban đầu: 1 CPU, RAM 1.024 MiB, tối đa 90 giây mỗi lần thực thi và không có mạng. Khi triển khai phải chỉnh đồng bộ timeout của tiến trình con, container và tool; không để sót giới hạn 8/25/30 giây của các nhánh cũ rồi tuyên bố được chạy 90 giây.
 
-1. Registry exposes exactly one Python/file execution tool, `run_python_code`, including a configuration check against duplicate registration.
-2. General computation and stdin work without generated files; stdout/errors are bounded and code errors permit an intentional corrected call.
-3. Create and edit Excel with styles, merged cells, formulas and a non-legacy chart using Python, then reopen the saved output in another independent execution. Original version remains downloadable.
-4. Create/edit DOCX and create/read text PDF; retain PDF coverage/consent behavior. Verify legacy text outputs and generated PNG output.
-5. Selected uploads and earlier outputs can be staged; unselected/foreign versions and arbitrary host paths cannot.
-6. Preview limitations do not corrupt or silently drop valid generated content. Calculation freshness is verified separately.
-7. Code requiring unavailable imports gets a clear error; network/secret/socket/resource isolation remains enforced. RAM state does not persist.
-8. One final file card, real streaming, cancellation, replay, approvals, recovery and scheduled-automation authority continue to work.
-9. Real Docker execution and Compose startup use only the unified runtime image for this subsystem. The optional native broker remains supported.
-10. No live `.env`, user files or unrelated Docker resources are modified by tests or cleanup. Final retirement inventory names the actual removed code, tools and image tags.
+Giữ ban đầu 20 MiB/file, 40 MiB tổng cho một lượt truyền, giới hạn log và quota kho riêng. Lần chạy không tạo file là hợp lệ; bỏ trần file text 8 KiB của sandbox cũ. Cài thư viện thống kê/ML không bảo đảm mọi mô hình lớn chạy được trong mức tài nguyên này.
 
-## Builder check
+Dùng `PYTHON_SANDBOX_ENABLED` để bật tool hợp nhất. `WORKSPACE_ARTIFACTS_ENABLED` tiếp tục điều khiển UI/API file làm việc; công bố file cần phần này được bật. Cập nhật file mẫu và Compose để bật đúng chức năng; không ghi đè `.env` thật. Cấu hình Windows đang tắt Python và bật Artifacts cần hướng dẫn chuyển bật Python sau khi triển khai.
 
-One independent builder check found three missing contracts: PDF acknowledgement must cover all staged inputs, PDFs must not require a DOCX companion, and generic calls need durable zero/multi-output receipts plus explicit final-output selection. These are resolved above. The reviewer found no remaining unavoidable user-only implementation question. The Python approval consequence is explicitly disclosed; this proposed document is ready for user review before product changes.
+Giữ tương thích các biến URL/key/storage của Runner trừ khi có lý do triển khai phải đổi tên và được ghi rõ. Không thêm cờ cấu hình cho từng định dạng file. Không sửa thông tin đăng nhập hay thay nội dung database chỉ để đổi tên tool/image.
+
+## 10. Tương thích và xóa thành phần cũ
+
+File, hash, ID phiên bản, URL tải và lịch sử tin nhắn cũ phải tiếp tục đọc được. Không âm thầm đổi khóa thao tác, checkpoint hoặc nhật ký cũ sang nghĩa mới khiến code chạy hai lần.
+
+Trước khi xóa bộ thực thi/image cũ, xác định các tác vụ chưa kết thúc. Hoàn tất chúng dưới phiên bản cũ hoặc có đường tương thích hẹp giữ nguyên dấu vân tay và dữ liệu thao tác. Đường tương thích chỉ phục vụ tác vụ tồn tại trước khi nâng cấp, không trở thành một tool Python công khai thứ hai. Các tác vụ Python cũ đang chờ duyệt cần có cách chuyển trạng thái/phục hồi rõ ràng theo chính sách mới, không để treo và không chạy lại thao tác đã thực thi. Hồ sơ duyệt cũ được giữ làm lịch sử; không phát sinh duyệt Python mới.
+
+Loại bỏ bộ thực thi/hợp đồng độc lập cũ trong `agent_core/code_execution` và định nghĩa image `infra/docker/python-sandbox` sau khi hành vi tính toán tổng quát đã được bao phủ bằng bản hợp nhất. Chuyển script và test còn hoạt động sang hợp đồng mới; giữ tài liệu nghiệm thu lịch sử.
+
+Hợp nhất định nghĩa image và lockfile của `infra/docker/artifact-sandbox` cùng `infra/docker/artifact-runner`. Giữ các bộ đọc/render/tính công thức và dịch vụ lưu trữ/phiên bản còn hữu ích; không xóa nguyên thư mục chỉ vì tên cũ có chữ artifact.
+
+Xóa các image Docker cũ là bước cuối sau khi kiểm thử tạo/sửa/tự kiểm tra/tải file và tính toán bằng container thật đạt. Nếu image còn được container hoặc tác vụ chưa chuyển đổi dùng đến, báo đúng phụ thuộc đó thay vì ép xóa.
+
+## 11. Tiêu chí nghiệm thu
+
+1. Registry chỉ công khai một tool Python/xử lý file tên `run_python_code`; không đăng ký trùng khi bật đồng thời các cờ tính năng.
+2. Tính toán và stdin hoạt động khi không tạo file. Stdout/stderr có giới hạn; Agent đọc được lỗi và có thể sửa code trong lần gọi mới.
+3. Chạy Python không tạo yêu cầu duyệt hoặc hiện nút chấp nhận; chat và automation không chuyển sang chờ duyệt vì tool này. Các tool khác giữ chính sách riêng.
+4. Tạo/sửa Excel có định dạng, ô gộp, công thức và biểu đồ ngoài bộ cũ; lần chạy độc lập tiếp theo mở lại được kết quả; bản gốc vẫn tải được.
+5. Tạo/sửa DOCX; tạo/đọc PDF văn bản độc lập, giữ cảnh báo độ phủ. TXT/MD/CSV/JSON và PNG hoạt động qua kho file chung.
+6. File đã chọn và output trước đó được đưa vào xử lý; file của người khác, file chưa được cấp quyền và đường dẫn host tùy ý bị chặn.
+7. Hạn chế preview không làm hỏng hoặc mất nội dung file hợp lệ. Độ mới của kết quả công thức được xác minh riêng.
+8. Mọi thư viện trong danh sách ban đầu import được trong image. Có bài chạy nhỏ đại diện cho tính toán, bảng dữ liệu, Excel, DOCX, PDF, biểu đồ và xử lý văn bản.
+9. Module thiếu trả lỗi rõ ràng; không tự cài gói hoặc mở mạng. Cách bổ sung thư viện và build lại image được ghi trong hướng dẫn vận hành.
+10. Biến RAM không tồn tại giữa các lần chạy. Mạng/secret/socket và giới hạn tài nguyên được kiểm tra trên container thật.
+11. Một thẻ file cuối, streaming thật, dừng tác vụ, phát lại, phục hồi và ràng buộc quyền automation tiếp tục hoạt động.
+12. Docker và Compose chỉ dùng image runtime hợp nhất cho phân hệ này. Runner Windows vẫn chạy được.
+13. Test và dọn dẹp không sửa `.env`, file người dùng hoặc tài nguyên Docker không liên quan. Báo cáo cuối liệt kê chính xác code/tool/tag image đã xóa và phần tương thích còn giữ.
+
+## 12. Rà soát thiết kế
+
+Bản thiết kế gốc đã có một lượt rà soát độc lập. Ba điểm cần bổ sung được đưa vào tài liệu: kiểm tra PDF phải bao phủ mọi file đầu vào; PDF không bắt buộc có DOCX đi kèm; thực thi tổng quát cần nhật ký độc lập cho trường hợp không có/nhiều output và lựa chọn file cuối rõ ràng.
+
+Bản tiếng Việt này cập nhật thêm hai quyết định trực tiếp của người dùng: bỏ duyệt từng lần chạy Python và cài sẵn bộ thư viện phổ biến, bổ sung thư viện thiếu vào image sau khi có nhu cầu thực tế. Các đoạn giữ chính sách duyệt Python ở bản cũ đã được thay thế bằng mục 8; không dùng chúng làm yêu cầu triển khai nữa.
