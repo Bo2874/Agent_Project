@@ -34,11 +34,11 @@
 
 **Interfaces:** `PythonCodeInput(code, stdin, input_version_ids, outputs, primary_output)`; `PythonOutput(path,name,parent_version_id)`; `GeneratedArtifact` thêm execution report. `execute_python(request,input_dir,output_dir)` trả report và chỉ thu thập output được khai báo.
 
-- [ ] Viết test tính toán không file, stdin, lỗi có stderr, output khai báo/primary, từ chối path traversal/symlink và giới hạn log.
-- [ ] Chạy test: kỳ vọng FAIL vì hợp đồng mới chưa có.
-- [ ] Cài schema, subprocess cách ly, log hữu hạn và zero-output bundle; giữ nguyên wire shape của operation cũ.
-- [ ] Chạy `pytest tests/test_unified_python_runtime.py tests/test_artifact_protocol.py`: kỳ vọng PASS (điều chỉnh tên file theo inventory).
-- [ ] Commit `feat: define general Python execution and output contract`.
+- [x] Viết test tính toán không file, stdin, lỗi có stderr, output khai báo/primary, từ chối path traversal/symlink và giới hạn log.
+- [x] Chạy test: kỳ vọng FAIL vì hợp đồng mới chưa có.
+- [x] Cài schema, subprocess cách ly, log hữu hạn và zero-output bundle; giữ nguyên wire shape của operation cũ.
+- [x] Chạy `pytest tests/test_unified_python_runtime.py tests/test_artifact_protocol.py`: kỳ vọng PASS (điều chỉnh tên file theo inventory).
+- [x] Commit `feat: define general Python execution and output contract`.
 
 ### Task 2: Một image và một profile thực thi
 
@@ -46,11 +46,11 @@
 
 **Interfaces:** `RUNTIME_IMAGE=personal-agent-python-runtime:1`; broker và executor dùng cùng image với entrypoint riêng. `ArtifactRunRequest` từ Task 1 giữ replay theo job fingerprint.
 
-- [ ] Viết test broker dùng một image, 90 giây/1 CPU/1024 MiB, zero-output hợp lệ.
-- [ ] Chạy test mới: kỳ vọng FAIL.
-- [ ] Hợp nhất Dockerfile/lockfile, thư viện phổ biến và BLAS/Agg/cache env; đồng bộ timeout ngoài và trong.
-- [ ] Build image; chạy import tất cả thư viện, tính toán, stdin, Excel nâng cao, DOCX/PDF/PNG tiếng Việt, kiểm tra isolation: kỳ vọng PASS.
-- [ ] Commit `feat: consolidate isolated Python and document runtime image`.
+- [x] Viết test broker dùng một image, 90 giây/1 CPU/1024 MiB, zero-output hợp lệ.
+- [x] Chạy test mới: kỳ vọng FAIL.
+- [x] Hợp nhất Dockerfile/lockfile, thư viện phổ biến và BLAS/Agg/cache env; đồng bộ timeout ngoài và trong.
+- [x] Build image; chạy import tất cả thư viện, tính toán, stdin, Excel nâng cao, DOCX/PDF/PNG tiếng Việt, kiểm tra isolation: kỳ vọng PASS.
+- [x] Commit `feat: consolidate isolated Python and document runtime image`.
 
 ### Task 3: Scope, receipt, publication và primary
 
@@ -58,10 +58,10 @@
 
 **Interfaces:** `PythonToolService.execute(context, request: PythonCodeInput) -> ToolResult`; fingerprint bao gồm code/stdin/input hash/output/primary/contract. Lưu receipt độc lập ArtifactVersion, khóa publication theo output index, primary lưu bền.
 
-- [ ] Test zero-output replay, nhiều output, đọc lại giữ primary, sai input/parent, PDF không đọc được và resume sau publish dở; chạy và xác nhận FAIL.
-- [ ] Cài scoped staging, kiểm tra mỗi PDF, receipt/reconcile và immutable publication; text/PNG preview; giữ nguyên output nâng cao và báo calculation trung thực.
-- [ ] Chạy test service/publication/storage/validation: kỳ vọng PASS.
-- [ ] Commit `feat: publish scoped Python outputs with durable execution receipts`.
+- [x] Test zero-output replay, nhiều output, đọc lại giữ primary, sai input/parent, PDF không đọc được và resume sau publish dở; chạy và xác nhận FAIL.
+- [x] Cài scoped staging, kiểm tra mỗi PDF, receipt/reconcile và immutable publication; text/PNG preview; giữ nguyên output nâng cao và báo calculation trung thực.
+- [x] Chạy test service/publication/storage/validation: kỳ vọng PASS.
+- [x] Commit `feat: publish scoped Python outputs with durable execution receipts`.
 
 ### Task 4: Registry, prompt, automation và compatibility
 
@@ -69,10 +69,10 @@
 
 **Interfaces:** registry run mới chỉ đăng ký Python mới theo `PYTHON_SANDBOX_ENABLED`; file publication vẫn theo `WORKSPACE_ARTIFACTS_ENABLED`. Tool schema dùng Task 1, service dùng Task 3. Legacy checkpoint được nhận diện riêng.
 
-- [ ] Test registry chỉ có một Python tool, không approval, prompt tổng quát và automation file grants, pending approval cũ không treo; chạy xác nhận FAIL.
-- [ ] Cài wiring, prompt hướng dẫn tạo/đọc/sửa file bằng Python; sửa artifact-ready và persisted primary; giới hạn compatibility cho run cũ.
-- [ ] Chạy routing/registry/automation/recovery/streaming tests và Node final-card tests: kỳ vọng PASS.
-- [ ] Commit `refactor: route chat and automations through unified Python tool`.
+- [x] Test registry chỉ có một Python tool, không approval, prompt tổng quát và automation file grants, pending approval cũ không treo; chạy xác nhận FAIL.
+- [x] Cài wiring, prompt hướng dẫn tạo/đọc/sửa file bằng Python; sửa artifact-ready và persisted primary; giới hạn compatibility cho run cũ.
+- [x] Chạy routing/registry/automation/recovery/streaming tests và Node final-card tests: kỳ vọng PASS.
+- [x] Commit `refactor: route chat and automations through unified Python tool`.
 
 ### Task 5: Di chuyển fixtures, bỏ phần thừa và hướng dẫn vận hành
 
@@ -80,16 +80,16 @@
 
 **Interfaces:** build/doctor/acceptance chỉ tham chiếu image/tool mới; tài liệu lịch sử không bị viết lại.
 
-- [ ] Viết acceptance kiểm tra thư viện thiếu báo lỗi rõ, PDF không cần DOCX companion, không giữ RAM, hỗ trợ file upload/sửa lại và selected primary; chạy xác nhận FAIL.
-- [ ] Di chuyển fixtures và script; xóa executor/contract cũ sau khi không còn active import; giữ helper parsing/rendering/legacy cần thiết.
-- [ ] Cập nhật `.env.example`/Compose và hướng dẫn tiếng Việt với lệnh build/start/test, inventory giữ/xóa. Không đổi `.env` thật.
-- [ ] Chạy toàn bộ pytest, Ruff, Node và acceptance Docker/DB riêng: kỳ vọng PASS; ghi rõ mọi skip và phần cần user nghiệm thu.
-- [ ] Commit `refactor: retire redundant Python runtimes and document rollout`.
+- [x] Viết acceptance kiểm tra thư viện thiếu báo lỗi rõ, PDF không cần DOCX companion, không giữ RAM, hỗ trợ file upload/sửa lại và selected primary; chạy xác nhận FAIL.
+- [x] Di chuyển fixtures và script; xóa executor/contract cũ sau khi không còn active import; giữ helper parsing/rendering/legacy cần thiết.
+- [x] Cập nhật `.env.example`/Compose và hướng dẫn tiếng Việt với lệnh build/start/test, inventory giữ/xóa. Không đổi `.env` thật.
+- [x] Chạy toàn bộ pytest, Ruff, Node và acceptance Docker/DB riêng: kỳ vọng PASS; ghi rõ mọi skip và phần cần user nghiệm thu.
+- [x] Commit `refactor: retire redundant Python runtimes and document rollout`.
 
 ### Task 6: Review toàn nhánh và bàn giao
 
-- [ ] Tạo review package gồm diff, spec, plan, evidence và các quyết định.
-- [ ] Một reviewer độc lập kiểm tra cả nhánh, nhất là năm Review Focus.
-- [ ] Sửa Critical/Important bằng test RED→GREEN, chạy regression liên quan và full suite; không tự merge/push.
-- [ ] Xác minh image cũ không còn dependent; chỉ xóa đúng tag dư thuộc phạm vi nếu an toàn, liệt kê tag chưa thể xóa và lý do.
-- [ ] Bàn giao kết quả thực tế, lệnh user cần chạy và giới hạn còn lại.
+- [x] Tạo review package gồm diff, spec, plan, evidence và các quyết định.
+- [x] Một reviewer độc lập kiểm tra cả nhánh, nhất là năm Review Focus.
+- [x] Sửa Critical/Important bằng test RED→GREEN, chạy regression liên quan và full suite; không tự merge/push.
+- [x] Xác minh image cũ không còn dependent; chỉ xóa đúng tag dư thuộc phạm vi nếu an toàn, liệt kê tag chưa thể xóa và lý do.
+- [x] Bàn giao kết quả thực tế, lệnh user cần chạy và giới hạn còn lại.

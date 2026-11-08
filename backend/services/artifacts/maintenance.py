@@ -5,12 +5,13 @@ import hashlib
 import os
 import time
 from dataclasses import asdict
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from agent_core.tools import ToolResult
-from backend.models import AgentOperation, RunStep, ToolCall, User
+from backend.models import AgentOperation, AgentRun, RunStep, ToolCall, User
 from backend.models.artifact import ArtifactVersion
 from backend.services.artifacts.publication import OUTPUT_TOOLS
 from backend.services.artifacts.service import published
@@ -66,7 +67,9 @@ async def recover_artifact_operations(session, owner, run_id):
             if receipt and receipt.status == "completed":
                 operation.status, operation.result, operation.actual_tokens = (
                     "completed",
-                    receipt.result,
+                    # The graph journal requires usage/context_blocks. Normalize
+                    # compact execution receipts, including ones already saved.
+                    asdict(ToolResult(**receipt.result)),
                     0,
                 )
             elif receipt:
@@ -112,6 +115,9 @@ async def reconcile_orphans(sessions, storage, *, grace_seconds=86400, limit=100
     if grace_seconds < 3600 or limit < 1:
         raise ValueError("Orphan cleanup requires at least one hour of grace and a positive limit")
     cutoff, removed = time.time() - grace_seconds, 0
+    # Failed chat runs can resume. Retain their execution source for one week;
+    # terminal/cancelled outputs are eligible after the ordinary orphan grace.
+    failed_cutoff = datetime.now(UTC) - timedelta(days=7)
     for folder, dirs, files in os.walk(storage.root, followlinks=False):
         from pathlib import Path
 
@@ -140,8 +146,15 @@ async def reconcile_orphans(sessions, storage, *, grace_seconds=86400, limit=100
                 after = target.stat()
                 staged = await session.scalar(
                     select(AgentOperation.id)
+                    .join(AgentRun, AgentRun.id == AgentOperation.agent_run_id)
                     .where(
                         AgentOperation.status == "executed",
+                        AgentRun.status.not_in(["completed", "cancelled"]),
+                        or_(
+                            AgentRun.status != "failed",
+                            func.coalesce(AgentRun.finished_at, AgentRun.created_at)
+                            >= failed_cutoff,
+                        ),
                         AgentOperation.result["files"].contains([{"key": key}]),
                     )
                     .limit(1)

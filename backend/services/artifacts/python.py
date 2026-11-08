@@ -312,6 +312,7 @@ class PythonToolService(ArtifactToolService):
                         parent_version_id=parent[1] if parent else None,
                         staged=staged,
                         operation_key=operation_key,
+                        retain_source_on_failure=True,
                     )
                     refs.append(ref.model_dump(mode="json"))
             execution = saved["execution"]

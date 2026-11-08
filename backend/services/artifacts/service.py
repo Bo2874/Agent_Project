@@ -106,6 +106,7 @@ class ArtifactService:
         parent_version_id: UUID | None,
         staged: ValidatedArtifact,
         operation_key: str,
+        retain_source_on_failure: bool = False,
     ) -> PublishedArtifact:
         # Only server-generated paths belonging to this owner may enter cleanup/publication.
         key = staged.stored.key
@@ -307,7 +308,10 @@ class ArtifactService:
                 )
                 if referenced is None:
                     for unused in owned_keys:
-                        await asyncio.to_thread(self.storage.delete, unused)
+                        # A durable Python receipt owns its immutable source until
+                        # publication/recovery succeeds or terminal orphan cleanup.
+                        if unused != key or not retain_source_on_failure:
+                            await asyncio.to_thread(self.storage.delete, unused)
                 await session.rollback()
             except Exception:
                 logger.warning("Artifact staging cleanup deferred", exc_info=True)

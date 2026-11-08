@@ -2,9 +2,48 @@
 
 import hashlib
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from artifact_runtime.document_types import DocumentBlocks
 from artifact_runtime.pdf_types import PdfPage, PdfTextDocument
+
+
+def _safe_link_annotations(page):
+    """Permit passive links/navigation, never executable annotation actions."""
+    from pypdf.generic import ArrayObject, DictionaryObject, TextStringObject
+
+    annotations = page.get("/Annots", [])
+    if hasattr(annotations, "get_object"):
+        annotations = annotations.get_object()
+    if not isinstance(annotations, (list, ArrayObject)) or len(annotations) > 200:
+        raise ValueError("PDF annotation limit exceeded")
+    for reference in annotations:
+        annotation = reference.get_object()
+        if (
+            not isinstance(annotation, DictionaryObject)
+            or annotation.get("/Subtype") != "/Link"
+            or any(key in annotation for key in ("/AA", "/FS", "/RichMediaContent"))
+        ):
+            raise ValueError("PDF active annotations are not supported")
+        action = annotation.get("/A")
+        if action is None:
+            # /Dest only navigates within this document; other action types
+            # require /A and are checked below.
+            continue
+        action = action.get_object()
+        if not isinstance(action, DictionaryObject) or "/Next" in action:
+            raise ValueError("PDF active annotation actions are not supported")
+        if action.get("/S") == "/GoTo" and "/D" in action:
+            continue
+        uri = action.get("/URI")
+        if (
+            action.get("/S") != "/URI"
+            or not isinstance(uri, TextStringObject)
+            or len(uri) > 8192
+            or urlsplit(uri).scheme.lower() not in {"http", "https", "mailto"}
+            or any(ord(char) < 32 for char in uri)
+        ):
+            raise ValueError("PDF active annotation actions are not supported")
 
 
 def _stream_has_images(stream, reader, page_bytes, total_bytes):
@@ -73,8 +112,9 @@ def read_pdf_text(source: Path) -> PdfTextDocument:
         raise ValueError("Active PDF content, forms and embedded files are not supported")
     pages, omitted, total_bytes = [], [], [0]
     for number, page in enumerate(reader.pages, 1):
-        if any(key in page for key in ("/AA", "/Annots")):
-            raise ValueError("PDF annotations and active content are not supported")
+        if "/AA" in page:
+            raise ValueError("PDF active content is not supported")
+        _safe_link_annotations(page)
         stream = page.get_contents()
         page_bytes = [0]
         inline = _stream_has_images(stream, reader, page_bytes, total_bytes)

@@ -16,6 +16,52 @@ from defusedxml import ElementTree
 from artifact_runtime.protocol import CalculationReport, GeneratedArtifact
 
 
+def safe_formula(formula):
+    """Inspect executable tokens; quoted spreadsheet text is passive content."""
+    from openpyxl.formula import Tokenizer
+    from openpyxl.formula.tokenizer import TokenizerError
+
+    # openpyxl's lexer predates Excel's spill operator. It has no executable
+    # semantics here: validate the same reference without '#', preserving
+    # quoted text/identifiers and never modifying the stored workbook.
+    inspected = re.sub(
+        r'"(?:[^"]|"")*"|\'(?:[^\']|\'\')*\'|(?P<spill>\$?[A-Za-z_][A-Za-z_0-9.$]*#)',
+        lambda match: match.group(0)[:-1] if match.group("spill") else match.group(0),
+        formula,
+    )
+    try:
+        tokens = [
+            token
+            for token in Tokenizer("=" + inspected.lstrip("=")).items
+            if token.type != "WHITE-SPACE"
+        ]
+    except TokenizerError as error:
+        raise ValueError("Cannot safely inspect spreadsheet formula") from error
+    dangerous = {"WEBSERVICE", "DDE", "RTD", "CALL", "REGISTER.ID", "IMAGE", "EXEC", "RUN"}
+    for index, token in enumerate(tokens):
+        if token.type == "FUNC" and token.subtype == "OPEN":
+            function = re.sub(r"^(?:_XLFN\.|_XLWS\.|_XLL\.)+", "", token.value[:-1].upper())
+            if function in dangerous or any(marker in function for marker in ("!", "[", "|")):
+                raise ValueError("Unsafe executable or external spreadsheet formula")
+            if function == "HYPERLINK":
+                target = tokens[index + 1] if index + 1 < len(tokens) else None
+                if target is None or target.type != "OPERAND" or target.subtype != "TEXT":
+                    raise ValueError("External hyperlink must have a literal safe target")
+                url = target.value[1:-1].replace('""', '"')
+                if not url.startswith("#") and urlsplit(url).scheme.lower() not in {
+                    "http",
+                    "https",
+                    "mailto",
+                }:
+                    raise ValueError("Unsafe executable or external hyperlink formula")
+        if token.type == "OPERAND" and token.subtype == "RANGE":
+            # A quoted sheet title may contain '|'; a DDE separator remains
+            # outside quoted identifiers. External workbook refs are unsafe even quoted.
+            unquoted = re.sub(r"'(?:[^']|'')*'", "", token.value)
+            if "|" in unquoted or re.search(r"\[[^\]]+\][^!]*!", token.value):
+                raise ValueError("Unsafe executable or external spreadsheet reference")
+
+
 def safe_office(path):
     with zipfile.ZipFile(path) as archive:
         entries, names = archive.infolist(), set()
@@ -103,33 +149,17 @@ def safe_office(path):
                         "mailto",
                     }:
                         raise ValueError("Unsafe external Word hyperlink field")
-            if name.startswith("xl/worksheets/") and name.endswith(".xml"):
+            if name.startswith("xl/") and name.endswith(".xml"):
                 with archive.open(name) as source:
                     for _, node in ElementTree.iterparse(source, events=("end",)):
-                        if node.tag.rsplit("}", 1)[-1] == "f":
-                            formula = node.text or ""
-                            if re.search(r"HYPERLINK\s*\(", formula, re.I):
-                                target = re.search(r'HYPERLINK\s*\(\s*"([^"]+)"', formula, re.I)
-                                if target is None or (
-                                    not target[1].startswith("#")
-                                    and urlsplit(target[1]).scheme.lower()
-                                    not in {"http", "https", "mailto"}
-                                ):
-                                    raise ValueError(
-                                        "Unsafe executable or external hyperlink formula"
-                                    )
-                            if (
-                                re.search(
-                                    r"(?:WEBSERVICE|DDE|RTD|CALL|REGISTER\.ID|IMAGE)\s*\(",
-                                    formula,
-                                    re.I,
-                                )
-                                or "|" in formula
-                                or re.search(r"\[[^\]]+\].*!", formula)
-                            ):
-                                raise ValueError(
-                                    "Unsafe executable or external spreadsheet formula"
-                                )
+                        if node.tag.rsplit("}", 1)[-1] in {
+                            "f",
+                            "definedName",
+                            "formula",
+                            "formula1",
+                            "formula2",
+                        }:
+                            safe_formula(node.text or "")
                         node.clear()
 
 

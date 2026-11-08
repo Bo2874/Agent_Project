@@ -77,6 +77,9 @@ docker compose --env-file .env.docker --profile artifacts up -d --build
 ```
 
 Service `artifact-runner` dùng image `personal-agent-python-runtime:1` với command Uvicorn và Docker socket.
+Mặc định Docker env tắt Python cùng với profile broker chưa bật. Nếu chỉ dùng Python tính toán và tắt UI file,
+vẫn bật `DEV_PYTHON_SANDBOX_ENABLED=true` và chạy profile `artifacts` để có broker;
+`DEV_WORKSPACE_ARTIFACTS_ENABLED` có thể tiếp tục là `false`.
 Job thực thi dùng chính image đó với command executor, user không phải root, không mạng, không socket.
 Web/worker gọi broker qua mạng riêng; broker không publish port ra host trong Compose.
 
@@ -140,7 +143,10 @@ Kiểm tra file chỉ hiện khi câu trả lời kết thúc và panel chỉ m�
 Receipt lưu riêng trong `agent_operations`, kể cả chạy không tạo file. Fingerprint ghim code/stdin/input hash/output/primary/contract.
 Broker dùng job ID cố định để replay kết quả đã xong; job bị gián đoạn hoặc kết quả không rõ không tự chạy lại.
 Publication có khóa riêng cho từng output; phục hồi sau gián đoạn không tạo version trùng. File staging của receipt chưa hoàn tất
-được bảo vệ khỏi orphan sweep. Run cũ và file/version/hash/history/download không bị viết lại.
+được bảo vệ khỏi orphan sweep, kể cả khi database lỗi lúc publish. Khi run hoàn tất hoặc bị hủy, staging chưa publish
+có thể được dọn sau thời gian chờ mặc định 24 giờ. Run lỗi giữ staging thêm tối đa 7 ngày kể từ lúc lỗi để có thể resume;
+sau đó cần yêu cầu mới nếu file chưa được publish đã bị dọn. File/version đã publish luôn được giữ.
+Run cũ và file/version/hash/history/download không bị viết lại.
 
 Các tag cũ thuộc subsystem: `personal-agent-python-sandbox:3.11-v1`, `personal-agent-artifact-code:1`,
 `personal-agent-artifact-render:1`, `personal-agent-artifact-runner:dev`. Chỉ gỡ tag sau khi kiểm tra không có container

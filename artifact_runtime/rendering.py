@@ -23,10 +23,12 @@ def export_docx_pdf(source: Path, target: Path):
     from com.sun.star.document.MacroExecMode import NEVER_EXECUTE
     from com.sun.star.document.UpdateDocMode import NO_UPDATE
 
-    from artifact_runtime.document import load_safe_docx
+    from artifact_runtime.file_inspection import safe_office
     from artifact_runtime.pdf import read_pdf_text
 
-    load_safe_docx(source)
+    # Rendering never edits the source. Apply the active-content boundary,
+    # not legacy python-docx's lossless structured-edit feature restrictions.
+    safe_office(source)
     if target.exists():
         raise ValueError("Refusing to overwrite a rendered output")
 

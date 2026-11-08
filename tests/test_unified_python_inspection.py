@@ -84,3 +84,131 @@ def test_executable_file_hyperlink_formula_is_rejected(tmp_path):
     workbook.save(path)
     with pytest.raises(ValueError, match="executable|external|hyperlink"):
         inspect_file(path)
+
+
+def test_defined_name_cannot_hide_external_function(tmp_path):
+    from openpyxl.workbook.defined_name import DefinedName
+
+    from artifact_runtime.file_inspection import inspect_file
+
+    path = tmp_path / "names.xlsx"
+    workbook = Workbook()
+    workbook.defined_names.add(DefinedName("Hidden", attr_text='WEBSERVICE("https://example.com")'))
+    workbook.active["A1"] = "=Hidden"
+    workbook.save(path)
+    with pytest.raises(ValueError, match="executable|external"):
+        inspect_file(path)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        '=TEXTJOIN("|",TRUE,A1:A2)',
+        '=IF(A1="WEBSERVICE(",1,0)',
+        "=SUM(A1#)",
+    ],
+)
+def test_text_literals_are_not_executable_formula_tokens(tmp_path, formula):
+    from artifact_runtime.file_inspection import inspect_file
+
+    path = tmp_path / "literal.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "a"
+    workbook.active["B1"] = formula
+    workbook.save(path)
+    before = path.read_bytes()
+    inspect_file(path)
+    assert path.read_bytes() == before
+
+
+def test_pdf_passive_web_link_is_preserved(tmp_path):
+    from pypdf import PdfWriter
+    from pypdf.generic import (
+        ArrayObject,
+        DecodedStreamObject,
+        DictionaryObject,
+        FloatObject,
+        NameObject,
+        TextStringObject,
+    )
+
+    from artifact_runtime.file_inspection import inspect_file
+
+    path = tmp_path / "linked.pdf"
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 10 100 Td (Example website) Tj ET")
+    page[NameObject("/Contents")] = stream
+    page[NameObject("/Resources")] = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {
+                    NameObject("/F1"): DictionaryObject(
+                        {
+                            NameObject("/Type"): NameObject("/Font"),
+                            NameObject("/Subtype"): NameObject("/Type1"),
+                            NameObject("/BaseFont"): NameObject("/Helvetica"),
+                        }
+                    )
+                }
+            ),
+        }
+    )
+    page[NameObject("/Annots")] = ArrayObject(
+        [
+            DictionaryObject(
+                {
+                    NameObject("/Subtype"): NameObject("/Link"),
+                    NameObject("/Rect"): ArrayObject([FloatObject(n) for n in (10, 90, 150, 110)]),
+                    NameObject("/A"): DictionaryObject(
+                        {
+                            NameObject("/S"): NameObject("/URI"),
+                            NameObject("/URI"): TextStringObject("https://example.com"),
+                        }
+                    ),
+                }
+            )
+        ]
+    )
+    with path.open("wb") as output:
+        writer.write(output)
+    before = path.read_bytes()
+    inspect_file(path)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "action,target",
+    [("/URI", "file:///evil.exe"), ("/JavaScript", "alert(1)"), ("/Launch", "/bin/sh")],
+)
+def test_pdf_executable_annotation_is_rejected(tmp_path, action, target):
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, NameObject, TextStringObject
+
+    from artifact_runtime.pdf import read_pdf_text
+
+    path = tmp_path / "active.pdf"
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    page[NameObject("/Annots")] = ArrayObject(
+        [
+            DictionaryObject(
+                {
+                    NameObject("/Subtype"): NameObject("/Link"),
+                    NameObject("/A"): DictionaryObject(
+                        {
+                            NameObject("/S"): NameObject(action),
+                            NameObject("/URI" if action == "/URI" else "/JS"): TextStringObject(
+                                target
+                            ),
+                        }
+                    ),
+                }
+            )
+        ]
+    )
+    with path.open("wb") as output:
+        writer.write(output)
+    with pytest.raises(ValueError, match="active|annotation"):
+        read_pdf_text(path)

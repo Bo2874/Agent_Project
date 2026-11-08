@@ -138,7 +138,8 @@ async def test_standalone_pdf_needs_no_editable_docx_companion(python_bridge):
         PythonCodeInput(
             code=(
                 "from reportlab.pdfgen import canvas; c=canvas.Canvas('report.pdf'); "
-                "c.drawString(50,750,'Report'); c.save()"
+                "c.drawString(50,750,'Report'); "
+                "c.linkURL('https://example.com',(50,740,200,760)); c.save()"
             ),
             outputs=[{"path": "report.pdf"}],
         ),
@@ -171,6 +172,148 @@ async def test_docx_header_is_preserved_and_preview_can_render(python_bridge):
         == "Header"
     )
     assert row.preview_manifest["kind"] == "pages"
+
+
+async def test_safe_word_page_field_is_published_and_previewed(python_bridge):
+    service, context, _, _ = python_bridge
+    result = await service.execute(
+        context,
+        PythonCodeInput(
+            code=(
+                "from docx import Document; from docx.oxml import OxmlElement; "
+                "from docx.oxml.ns import qn; "
+                "d=Document(); d.add_paragraph('Report'); "
+                "p=d.sections[0].footer.paragraphs[0]; "
+                "f=OxmlElement('w:fldSimple'); "
+                "f.set(qn('w:instr'),'PAGE'); "
+                "r=OxmlElement('w:r'); t=OxmlElement('w:t'); t.text='1'; "
+                "r.append(t); f.append(r); p._p.append(f); d.save('page.docx')"
+            ),
+            outputs=[{"path": "page.docx"}],
+        ),
+    )
+    assert not result.is_error, result
+    assert result.data["artifact_refs"][0]["name"] == "page.docx"
+
+
+async def test_word_picture_and_web_hyperlink_publish_with_preview(python_bridge):
+    service, context, _, _ = python_bridge
+    result = await service.execute(
+        context,
+        PythonCodeInput(
+            code="""
+from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from PIL import Image
+Image.new('RGB', (40, 40), 'red').save('figure.png')
+d = Document()
+p = d.add_paragraph('Report website: ')
+link = OxmlElement('w:hyperlink')
+link.set(qn('r:id'), p.part.relate_to('https://example.com', RT.HYPERLINK, is_external=True))
+r = OxmlElement('w:r')
+t = OxmlElement('w:t')
+t.text = 'Example'
+r.append(t)
+link.append(r)
+p._p.append(link)
+d.add_picture('figure.png')
+d.save('linked.docx')
+""",
+            outputs=[{"path": "linked.docx"}],
+        ),
+    )
+    assert not result.is_error, result
+    assert result.data["artifact_refs"][0]["name"] == "linked.docx"
+
+
+async def test_database_publication_failure_preserves_executed_output(python_bridge, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    service, context, sessions, storage = python_bridge
+    original = AsyncSession.flush
+    failed = False
+
+    async def flush(session, *args, **kwargs):
+        nonlocal failed
+        if not failed and any(isinstance(item, ArtifactVersion) for item in session.new):
+            failed = True
+            raise OperationalError("publish", {}, RuntimeError("temporary database failure"))
+        return await original(session, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "flush", flush)
+    args = PythonCodeInput(
+        code="from pathlib import Path; Path('recover.txt').write_text('durable output')",
+        outputs=[{"path": "recover.txt"}],
+    )
+    with pytest.raises(OperationalError):
+        await service.execute(context, args)
+    async with sessions() as session:
+        receipt = await session.scalar(
+            select(AgentOperation).where(
+                AgentOperation.agent_run_id == context.run_id,
+                AgentOperation.key.like("python.receipt.%"),
+            )
+        )
+        assert receipt.status == "executed"
+        assert storage.storage.path(receipt.result["files"][0]["key"]).exists()
+    recovered = await service.execute(context, args)
+    assert not recovered.is_error, recovered
+    async with sessions() as session:
+        assert (
+            await session.scalar(
+                select(func.count())
+                .select_from(ArtifactVersion)
+                .where(ArtifactVersion.source_run_id == context.run_id)
+            )
+            == 1
+        )
+
+
+async def test_partial_publication_does_not_invent_final_card_on_reload(
+    python_bridge,
+    api,  # noqa: F811
+    monkeypatch,
+):
+    from backend.services import agent_runs
+    from backend.services.artifacts.publication import run_artifacts
+
+    service, context, sessions, storage = python_bridge
+    original = storage.publish_version
+    count = 0
+
+    async def publish(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == 2:
+            raise ValueError("second output publication failed")
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(storage, "publish_version", publish)
+    monkeypatch.setattr(agent_runs, "get_settings", lambda: api[6])
+    result = await service.execute(
+        context,
+        PythonCodeInput(
+            code=(
+                "from pathlib import Path; Path('a.txt').write_text('A'); "
+                "Path('b.txt').write_text('B')"
+            ),
+            outputs=[{"path": "a.txt"}, {"path": "b.txt"}],
+            primary_output="b.txt",
+        ),
+    )
+    assert result.is_error
+    async with sessions() as session:
+        run = await session.get(AgentRun, context.run_id)
+        run.status = "completed"
+        await session.commit()
+        assert not await run_artifacts(
+            session, context.user_id, context.conversation_id, context.run_id
+        )
+        timelines = await agent_runs.list_agent_run_timelines(session, context.conversation_id)
+        assert timelines[0].artifact_refs == []
 
 
 async def test_recovery_after_published_file_before_receipt_commit(python_bridge, monkeypatch):
@@ -241,6 +384,61 @@ async def test_durable_graph_reconciles_zero_output_python_receipt(python_bridge
         await session.refresh(operation)
         assert operation.status == "completed"
         assert operation.result["data"]["execution"]["stdout"] == "observation saved\n"
+        # The graph journal uses the complete ToolResult wire shape even
+        # though the Python execution receipt only needs its compact fields.
+        assert operation.result["usage"] is None
+        assert operation.result["context_blocks"] == []
+
+
+@pytest.mark.parametrize("terminal_status", ["cancelled", "completed", "failed"])
+async def test_terminal_run_does_not_retain_unpublished_staging_forever(
+    python_bridge, monkeypatch, terminal_status
+):
+    import asyncio
+    import os
+    import time
+    from datetime import UTC, datetime, timedelta
+
+    from backend.services.artifacts.maintenance import reconcile_orphans
+
+    service, context, sessions, storage = python_bridge
+    original = service.save_receipt
+
+    async def interrupted(*args, **kwargs):
+        await original(*args, **kwargs)
+        if kwargs["status"] == "executed":
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(service, "save_receipt", interrupted)
+    with pytest.raises(asyncio.CancelledError):
+        await service.execute(
+            context,
+            PythonCodeInput(
+                code="from pathlib import Path; Path('staged.txt').write_text('staging')",
+                outputs=[{"path": "staged.txt"}],
+            ),
+        )
+    async with sessions() as session:
+        receipt = await session.scalar(
+            select(AgentOperation).where(
+                AgentOperation.agent_run_id == context.run_id,
+                AgentOperation.key.like("python.receipt.%"),
+            )
+        )
+        path = storage.storage.path(receipt.result["files"][0]["key"])
+        old = time.time() - 90000
+        os.utime(path, (old, old))
+        assert await reconcile_orphans(sessions, storage.storage) == 0
+        run = await session.get(AgentRun, context.run_id)
+        run.status = "failed"
+        run.finished_at = datetime.now(UTC)
+        await session.commit()
+        assert await reconcile_orphans(sessions, storage.storage) == 0
+        run.status = terminal_status
+        run.finished_at = datetime.now(UTC) - timedelta(days=8)
+        await session.commit()
+    assert await reconcile_orphans(sessions, storage.storage) == 1
+    assert not path.exists()
 
 
 async def test_png_and_text_preview_and_upload_roundtrip(python_bridge, api):  # noqa: F811

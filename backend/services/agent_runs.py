@@ -800,6 +800,20 @@ async def list_agent_run_timelines(
             artifact_refs[row.source_run_id] = [published(row).model_dump(mode="json")]
         from backend.models import AgentOperation
 
+        # Unified calls declare their final selection explicitly. A partly
+        # published bundle must never acquire a final card through legacy fallback.
+        for receipt_run_id in (
+            await session.scalars(
+                select(AgentOperation.agent_run_id)
+                .where(
+                    AgentOperation.agent_run_id.in_(run_ids),
+                    AgentOperation.key.like("python.receipt.%"),
+                )
+                .distinct()
+            )
+        ).all():
+            artifact_refs.pop(receipt_run_id, None)
+
         for selection in (
             await session.scalars(
                 select(AgentOperation).where(
