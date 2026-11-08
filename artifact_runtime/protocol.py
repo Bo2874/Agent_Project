@@ -4,7 +4,7 @@ import os
 import stat
 import struct
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Literal
 from uuid import UUID
 
@@ -24,10 +24,71 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PDF_MIME = "application/pdf"
 PNG_MIME = "image/png"
-GENERATED_TYPES = {".xlsx": XLSX_MIME, ".docx": DOCX_MIME, ".pdf": PDF_MIME, ".png": PNG_MIME}
+GENERATED_TYPES = {
+    ".xlsx": XLSX_MIME,
+    ".docx": DOCX_MIME,
+    ".pdf": PDF_MIME,
+    ".png": PNG_MIME,
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+    ".json": "application/json",
+}
 MAX_FILE_BYTES = 20971520
 MAX_TOTAL_BYTES = 41943040
 MAX_MANIFEST_BYTES = 1048576
+
+
+class PythonOutput(StrictModel):
+    path: str = Field(min_length=1, max_length=240)
+    name: str | None = Field(default=None, max_length=255)
+    parent_version_id: UUID | None = None
+
+    @field_validator("path")
+    @classmethod
+    def relative_path(cls, value):
+        path = PurePosixPath(value)
+        if (
+            path.is_absolute()
+            or any(part in {"", ".", ".."} for part in value.split("/"))
+            or "\\" in value
+            or ":" in value
+            or "\x00" in value
+            or path.suffix not in GENERATED_TYPES
+        ):
+            raise ValueError("Output path must be a safe relative supported filename")
+        return value
+
+
+class PythonCodeInput(StrictModel):
+    code: str = Field(min_length=1, max_length=32000)
+    stdin: str | None = Field(default=None, max_length=65536)
+    input_version_ids: tuple[UUID, ...] = Field(default=(), max_length=3)
+    outputs: tuple[PythonOutput, ...] = Field(default=(), max_length=3)
+    primary_output: str | None = None
+
+    @model_validator(mode="after")
+    def declared_outputs(self):
+        paths = [item.path for item in self.outputs]
+        if len(paths) != len(set(paths)):
+            raise ValueError("Duplicate output paths")
+        if len(self.input_version_ids) != len(set(self.input_version_ids)):
+            raise ValueError("Duplicate input versions")
+        if len(paths) > 1 and self.primary_output is None:
+            raise ValueError("Multiple outputs require primary_output")
+        if self.primary_output is not None and self.primary_output not in paths:
+            raise ValueError("primary_output must identify a declared output path")
+        return self
+
+
+class PythonExecutionReport(StrictModel):
+    status: Literal["success", "error", "timeout"] = "success"
+    exit_code: int | None = 0
+    stdout: str = Field(default="", max_length=65536)
+    stderr: str = Field(default="", max_length=65536)
+    logs_truncated: bool = False
+    primary_output: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 class PublishedArtifact(StrictModel):
@@ -56,6 +117,7 @@ class ArtifactOperation(StrictModel):
         default_factory=dict, validate_default=True
     )
     code: str | None = Field(default=None, min_length=1, max_length=32000)
+    python: PythonCodeInput | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("payload", mode="before")
     @classmethod
@@ -90,8 +152,12 @@ class ArtifactOperation(StrictModel):
         if self.kind == "python":
             if not self.code or self.payload:
                 raise ValueError("Python operations require code and no structured payload")
+            if self.python is not None and self.python.code != self.code:
+                raise ValueError("Python source must match the execution contract")
         elif self.code is not None:
             raise ValueError("Structured operations cannot contain code")
+        elif self.python is not None:
+            raise ValueError("Structured operations cannot contain Python arguments")
         if self.kind.startswith("edit_") and self.parent_version_id is None:
             raise ValueError("Editing requires a parent version")
         if self.kind == "rebuild_pdf_text_only" and self.parent_version_id is None:
@@ -102,7 +168,7 @@ class ArtifactOperation(StrictModel):
 
 
 class BlobDescriptor(StrictModel):
-    name: str = Field(pattern=r"^(input|output)-[0-2]\.(xlsx|docx|pdf|png)$")
+    name: str = Field(pattern=r"^(input|output)-[0-2]\.(xlsx|docx|pdf|png|txt|md|csv|json)$")
     mime_type: str = XLSX_MIME
     size_bytes: int = Field(gt=0, le=MAX_FILE_BYTES)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -170,6 +236,9 @@ class GeneratedArtifact(StrictModel):
     files: tuple[BlobDescriptor, ...] = Field(default=(), max_length=3)
     calculation: CalculationReport = Field(default_factory=CalculationReport)
     preview_manifest: dict = Field(default_factory=dict)
+    execution: PythonExecutionReport | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def bounded(self):

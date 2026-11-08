@@ -56,6 +56,12 @@ def main():
         calculation = recalculate_xlsx(Path("/input/input-0.xlsx"), output_dir=output)
         report = GeneratedArtifact(calculation=calculation)
     elif request.operation.kind == "python":
+        if request.operation.python is not None:
+            from artifact_runtime.python_execution import execute_python
+
+            report, files = execute_python(request, input_dir=Path("/input"), output_dir=output)
+            write_bundle(sys.stdout.buffer, report, tuple(item[1] for item in files))
+            return
         # X4 preflight is deliberately shared with structured editing.
         if request.inputs:
             from artifact_runtime.spreadsheet import load_safe
