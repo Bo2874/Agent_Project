@@ -759,8 +759,15 @@ async def run_agent_graph_stream(
     model_finished_steps: set[int] = set()
     planning_reconciled = False
     last_plan_snapshot = None
+    answer_has_text = False
 
     async def publish(item: AgentStreamItem) -> None:
+        nonlocal answer_has_text
+        if isinstance(item, LLMChunk):
+            if item.reset_content:
+                answer_has_text = False
+            elif item.content:
+                answer_has_text = True
         if isinstance(item, AgentLoopEvent):
             if item.kind == "model_started":
                 model_started_steps.add(item.step_number)
@@ -1458,6 +1465,8 @@ async def run_agent_graph_stream(
                 },
             )
         )
+        if answer_has_text:
+            await publish(LLMChunk(reset_content=True))
         await publish(LLMChunk(content=content, usage=_usage_from_state(state["usage"])))
         return {
             "final_answer": content,
@@ -1633,16 +1642,38 @@ async def run_agent_graph_stream(
         call_buffers: dict[int, _ToolCallBuffer] = {}
         step_usage = TokenUsage()
         finish_reason: str | None = None
+        rows = state["tool_observations"]
+        missing_sources = (
+            react_enabled
+            and worker_plan is None
+            and not state.get("planning")
+            and _unresolved_web_sources(rows)
+            and not any(not r["is_error"] for r in rows)
+        )
+        # Stream root answer text as the provider produces it. Task proposals and
+        # the host-owned missing-source explanation are not a root answer.
+        stream_text = not react_enabled or (
+            worker_plan is None
+            and not dag.active_spec(state.get("planning"))
+            and not missing_sources
+        )
+        streamed_text = False
         try:
             async for chunk in model.stream(
                 to_model_messages(state["prepared_messages"]),
                 tools=state["tool_definitions"] or None,
                 user_id=str(context.user_id),
             ):
+                if react_enabled and chunk.tool_call_deltas and streamed_text:
+                    await publish(LLMChunk(reset_content=True))
+                    streamed_text = False
                 if chunk.content:
                     content_parts.append(chunk.content)
-                    if not react_enabled:
+                    if stream_text and (
+                        not react_enabled or (not call_buffers and not chunk.tool_call_deltas)
+                    ):
                         await publish(LLMChunk(content=chunk.content))
+                        streamed_text = True
                 if chunk.usage is not None:
                     step_usage = chunk.usage
                     if receipt is not None:
@@ -1709,21 +1740,14 @@ async def run_agent_graph_stream(
                     code="empty_model_response",
                 )
             if react_enabled:
-                rows = state["tool_observations"]
-                if (
-                    worker_plan is None
-                    and not state.get("planning")
-                    and _unresolved_web_sources(rows)
-                    and not any(not r["is_error"] for r in rows)
-                ):
+                if missing_sources:
                     # No usable observations exist. Host facts, not model prose,
                     # determine the failure explanation and actual search count.
                     content = _missing_sources_answer(rows)
                     content_parts = [content]
-                # A model may emit prose before a tool call, even in another language.
-                # Publish only a confirmed final response; activity stays on the timeline.
-                for part in content_parts:
-                    await publish(LLMChunk(content=part))
+                if not streamed_text:
+                    for part in content_parts:
+                        await publish(LLMChunk(content=part))
                 await publish(LLMChunk(usage=cumulative, finish_reason=finish_reason))
             return {
                 "messages": [AIMessage(content=content)],

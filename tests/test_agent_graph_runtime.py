@@ -226,7 +226,7 @@ async def test_react_does_not_silently_omit_tools_when_schema_budget_is_too_smal
     assert not model.requests
 
 
-async def test_react_does_not_publish_or_keep_action_prefaces_as_final_answer():
+async def test_react_resets_streamed_action_prefaces_and_keeps_only_the_final_answer():
     model = FakeModel(
         [
             [
@@ -256,7 +256,16 @@ async def test_react_does_not_publish_or_keep_action_prefaces_as_final_answer():
             react_enabled=True,
         )
     ]
-    assert "".join(i.content for i in items if isinstance(i, LLMChunk)) == "Final answer"
+    visible = ""
+    resets = 0
+    for item in items:
+        if isinstance(item, LLMChunk):
+            if item.reset_content:
+                visible = ""
+                resets += 1
+            visible += item.content
+    assert visible == "Final answer"
+    assert resets == 1
     assert "Intermediate action preface" not in json.dumps(model.requests[1][0])
 
 

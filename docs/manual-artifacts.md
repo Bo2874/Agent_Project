@@ -20,6 +20,10 @@ Trong chat, nội dung trả lời được stream trước; sau khi trả lời
 thẻ file kết quả cuối cùng. Nếu Agent tạo hoặc sửa qua nhiều bước trong cùng lượt,
 chat dùng output được công bố sau cùng. Các phiên bản trung gian vẫn còn trong kho và
 lịch sử phiên bản. Lượt bị dừng hoặc lỗi không hiện output trung gian như file cuối.
+ReAct chuyển nội dung trả lời của model ra ngay khi nhận được từng chunk. Nếu model
+đang viết lời dẫn rồi chuyển sang gọi tool, phần lời dẫn tạm được xóa trước kết quả
+tiếp theo; tiến trình và file đang chờ không bị xóa. Nội dung worker/kế hoạch nội bộ
+và giải thích lỗi thiếu nguồn do hệ thống tạo không được stream như câu trả lời model.
 
 Agent có thể sửa tiếp output của chính hội thoại, không cần thay input đã ghim.
 Chỉnh sửa tạo phiên bản mới và giữ bản gốc. Hai sửa từ cùng parent giữ hai nhánh.

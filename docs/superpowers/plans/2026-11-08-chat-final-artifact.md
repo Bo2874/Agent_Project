@@ -18,3 +18,24 @@ Review focus: replay must not restore an older output; reconnect/reset must not 
 - Ruff check and format check, Node syntax checks for both changed JavaScript files, and `git diff --check` passed.
 - Independent code review: no Critical or Important findings.
 - Interactive/browser acceptance, live-model reproduction and the full suite were not run; the user chose to perform hands-on testing. No schema migration or configuration change is required.
+
+## Follow-up: forward live model text
+
+User acceptance found that text still arrived in a block. Root cause: `call_model_unreserved`
+buffered all ReAct text until generation finished to discard tool-call prefaces. The first
+change tested the browser's delta consumer, not this model-to-graph boundary.
+
+- [x] Prove first text arrives before a deliberately blocked model can finish, for both direct chat and a response after a tool call.
+- [x] Forward root answer content chunks immediately. If a streamed preface becomes a tool call, reset only the answer text; preserve file selection, progress and pending artifacts. Keep task-worker/internal planning content out of the root answer and retain the missing-source host guard.
+- [x] Map answer resets through SSE, clear accumulated server answer text, and handle resets in the browser without affecting the final-file rule.
+- [x] Run focused graph, adapter and frontend checks; user performs browser/live-model acceptance. No live `.env` or database changes.
+
+Follow-up verification: both gated generation tests failed before the change (no visible chunk
+while the provider was paused), and pass after it. Independent review found a timeout path
+appending the host partial answer to an unfinished model prefix. A new failing regression
+confirmed it; one fix pass made the host partial answer reset previously visible text.
+The combined final graph/runtime/budget/provider/planning/task-worker/control/status/query-router
+run passed all 219 tests. Node SSE consumer tests: 11 passed, including answer-only reset
+preserving the pending file. Ruff, format, JavaScript syntax and diff checks passed.
+Live-provider/browser acceptance and the full project suite remain unrun; these checks use
+fixtures rather than paid model requests.

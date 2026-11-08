@@ -42,6 +42,9 @@ class LLMChunk:
     usage: TokenUsage | None = None
     finish_reason: str | None = None
     tool_call_deltas: tuple[LLMToolCallDelta, ...] = ()
+    # Host-generated control packet: discard provisional answer text when a
+    # streamed model response turns into a tool call. Not model reasoning.
+    reset_content: bool = False
 
 
 ModelMessage = dict[str, Any]

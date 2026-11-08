@@ -258,6 +258,8 @@ def agent_stream_sse(item: AgentStreamItem) -> str | None:
         if item.kind == "pipeline_progress":
             return sse_event("progress", item.progress or {})
         return sse_event("agent_status", agent_status_payload(item))
+    if item.reset_content:
+        return sse_event("answer_reset", {})
     if item.content:
         return sse_event("delta", {"content": item.content})
     return None
@@ -737,6 +739,10 @@ async def stream_assistant_response(
                     yield encoded_event
                 continue
             chunk = item
+            if chunk.reset_content:
+                parts.clear()
+                if encoded_event is not None:
+                    yield encoded_event
             if chunk.content:
                 parts.append(chunk.content)
                 if encoded_event is not None:

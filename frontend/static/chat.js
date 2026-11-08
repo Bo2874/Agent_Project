@@ -974,6 +974,11 @@ if (chatApp) {
             updatePipelineProgress(timeline, parsed.data);
             messageList.scrollTop = messageList.scrollHeight;
           }
+          if (parsed.event === "answer_reset") {
+            assistantMarkdown = "";
+            timeline.markdown = "";
+            window.renderMarkdown(assistantBubble, "");
+          }
           if (parsed.event === "delta") {
             assistantMarkdown += parsed.data.content;
             timeline.markdown = assistantMarkdown;

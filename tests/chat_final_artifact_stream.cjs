@@ -98,6 +98,17 @@ test('an explicit reset discards outputs from the previous attempt', async () =>
   assert.equal(h.cards.length, 0);
 });
 
+test('answer reset replaces a tool preface without losing the pending final file', async () => {
+  const h = harness();
+  await h.consume([
+    ready(ref('v1')), ['delta', { content: 'I will edit this.' }],
+    ['answer_reset', {}], ['delta', { content: 'Edited successfully.' }], done(undefined),
+  ]);
+  const texts = h.calls.filter(call => call[0] === 'text').map(call => call[1]);
+  assert.deepEqual(texts, ['I will edit this.', '', 'Edited successfully.']);
+  assert.deepEqual(h.cards.map(value => value.version_id), ['v1']);
+});
+
 function cardRenderer() {
   class Element {
     constructor() { this.children = []; this.dataset = {}; }

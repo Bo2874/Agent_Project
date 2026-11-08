@@ -113,11 +113,13 @@ def test_agent_status_is_encoded_as_named_sse_event() -> None:
 def test_graph_stream_items_map_to_existing_sse_event_names() -> None:
     status_event = agent_stream_sse(AgentLoopEvent(kind="model_started", step_number=1))
     delta_event = agent_stream_sse(LLMChunk(content="Xin chào"))
+    answer_reset = agent_stream_sse(LLMChunk(reset_content=True))
     usage_only = agent_stream_sse(LLMChunk(usage=TokenUsage(total_tokens=5)))
 
     assert status_event is not None
     assert status_event.startswith("event: agent_status\n")
     assert delta_event == 'event: delta\ndata: {"content": "Xin chào"}\n\n'
+    assert answer_reset == "event: answer_reset\ndata: {}\n\n"
     assert usage_only is None
 
 
