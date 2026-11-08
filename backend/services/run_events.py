@@ -1,11 +1,11 @@
 """Owner-scoped SSE replay and fenced operation journal, without a second scheduler."""
 
-import asyncio
 import hashlib
 import json
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from time import monotonic
 
 from sqlalchemy import func, select
 
@@ -13,6 +13,11 @@ from agent_core.graph.runtime import AgentNodeExecutionError
 from backend.background.queue import BackgroundJobOwnershipError
 from backend.database import SessionFactory
 from backend.models import AgentOperation, AgentRun, BackgroundJob, Conversation, RunEvent, User
+from backend.services.run_event_notifications import (
+    HEARTBEAT_SECONDS,
+    notifications,
+    notify_run_event,
+)
 
 current_job = ContextVar("agent_job_lease", default=None)
 
@@ -141,6 +146,8 @@ async def append_event(run_id, kind, data, *, allow_cancel=False):
         session.add(
             RunEvent(agent_run_id=run_id, sequence=run.event_sequence, kind=kind, data=data)
         )
+        # PostgreSQL delivers NOTIFY only when this event transaction commits.
+        await notify_run_event(session, run_id)
         await session.commit()
 
 
@@ -166,8 +173,17 @@ def event_cursor(run_id, value):
 
 async def subscribe(owner, conversation_id, run_id, after=0):
     """Subscriber cancellation never touches the durable job."""
+    async with notifications.subscribe(run_id) as signal:
+        async for packet in _subscribe(owner, conversation_id, run_id, after, signal):
+            yield packet
+
+
+async def _subscribe(owner, conversation_id, run_id, after, signal):
     first_page = True
+    next_heartbeat = 0
     while True:
+        # Clear before querying, so a commit during/after the query cannot be lost.
+        signal.clear()
         async with SessionFactory() as session:
             run = await session.scalar(
                 select(AgentRun)
@@ -232,5 +248,7 @@ async def subscribe(owner, conversation_id, run_id, after=0):
             )
             return
         if not events:
-            yield ": heartbeat\n\n"
-            await asyncio.sleep(0.5)
+            if monotonic() >= next_heartbeat:
+                next_heartbeat = monotonic() + HEARTBEAT_SECONDS
+                yield ": heartbeat\n\n"
+            await signal.wait()

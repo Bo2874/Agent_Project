@@ -24,6 +24,10 @@ ReAct chuyển nội dung trả lời của model ra ngay khi nhận được t�
 đang viết lời dẫn rồi chuyển sang gọi tool, phần lời dẫn tạm được xóa trước kết quả
 tiếp theo; tiến trình và file đang chờ không bị xóa. Nội dung worker/kế hoạch nội bộ
 và giải thích lỗi thiếu nguồn do hệ thống tạo không được stream như câu trả lời model.
+Đường chạy qua Worker lưu từng packet ngay, không chờ đủ 1.000 ký tự. Web nhận tín hiệu
+PostgreSQL sau khi sự kiện được commit để đọc và đẩy SSE ngay, thay cho nhịp chờ 0,5 giây.
+Sự kiện vẫn lưu trong database để kết nối lại theo sequence. Nếu listener mất kết nối,
+hệ thống tạm kiểm tra database mỗi 0,1 giây và thử nối lại; log có cảnh báo listener.
 
 Agent có thể sửa tiếp output của chính hội thoại, không cần thay input đã ghim.
 Chỉnh sửa tạo phiên bản mới và giữ bản gốc. Hai sửa từ cùng parent giữ hai nhánh.

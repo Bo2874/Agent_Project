@@ -30,6 +30,7 @@ from backend.models.automation import (
     AutomationRun,
 )
 from backend.services.automations.service import owned_automation
+from backend.services.run_event_notifications import notify_run_event
 
 
 def execution_limits_for_source(source, settings):
@@ -141,6 +142,7 @@ async def reconcile_terminal_automation_jobs(session, *, queue_name, limit=100):
                         },
                     )
                 )
+                await notify_run_event(session, agent.id)
             # This retains completed outputs, and keeps uncertain operations active.
             await sync_automation_run(session, row.id, drained=True)
         else:

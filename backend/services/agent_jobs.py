@@ -1,6 +1,7 @@
 """Durable root jobs. PostgreSQL queue owns leases, LangGraph owns execution state."""
 
 import asyncio
+from contextlib import aclosing
 from dataclasses import asdict
 from datetime import UTC, datetime
 from uuid import UUID
@@ -16,6 +17,7 @@ from backend.background.queue import BackgroundJobOwnershipError, PostgresJobQue
 from backend.core.config import get_settings
 from backend.database import SessionFactory
 from backend.models import AgentOperation, AgentRun, BackgroundJob, Conversation, RunEvent, User
+from backend.services.run_event_notifications import notify_run_event
 from backend.services.run_events import (
     OperationJournal,
     append_event,
@@ -128,9 +130,17 @@ async def enqueue_run(arguments):
             idempotency_key=f"agent-{run_id}-resume{run.resume_count}",
             session=session,
         )
+        await notify_run_event(session, run_id)
         await session.commit()
     await arguments["model"].aclose()
     return after
+
+
+async def persist_agent_packets(run_id, packets):
+    """Persist every provider delta before requesting another stream packet."""
+    async with aclosing(packets):
+        async for packet in packets:
+            await append_packet(run_id, packet)
 
 
 async def agent_run_handler(context, payload):
@@ -228,14 +238,7 @@ async def agent_run_handler(context, payload):
         if model.model != data["model"]:
             await model.aclose()
             raise ValueError("Model configuration changed")
-        buffer = []
-
-        async def flush():
-            if buffer:
-                await append_event(run_id, "delta", {"content": "".join(buffer)})
-                buffer.clear()
-
-        async for packet in stream_assistant_response(
+        packets = stream_assistant_response(
             agent_run_id=run_id,
             conversation_id=UUID(data["conversation_id"]),
             user_message_id=UUID(data["user_message_id"]),
@@ -270,17 +273,8 @@ async def agent_run_handler(context, payload):
             operation_journal=OperationJournal(run_id),
             elapsed_seconds_floor=(datetime.now(UTC) - started).total_seconds() if resume else 0,
             execution_source=execution_source,
-        ):
-            if packet.startswith("event: delta\n"):
-                import json
-
-                buffer.append(json.loads(packet.split("data: ", 1)[1])["content"])
-                if sum(map(len, buffer)) >= 1000:
-                    await flush()
-            else:
-                await flush()
-                await append_packet(run_id, packet)
-        await flush()
+        )
+        await persist_agent_packets(run_id, packets)
         return {"run_id": str(run_id)}
     except asyncio.CancelledError:
         # Lease validation prevents a replaced worker from marking the new run cancelled.

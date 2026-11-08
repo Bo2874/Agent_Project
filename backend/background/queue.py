@@ -13,6 +13,7 @@ from backend.core.config import get_settings
 from backend.core.redaction import redact_text
 from backend.database import SessionFactory
 from backend.models import BackgroundJob
+from backend.services.run_event_notifications import notify_run_event
 
 MAX_JOB_JSON_BYTES = 64 * 1024
 MAX_JOB_ATTEMPTS = 5
@@ -433,6 +434,7 @@ class PostgresJobQueue:
                                 },
                             )
                         )
+                        await notify_run_event(session, run.id)
             await session.commit()
             if get_settings().automations_enabled:
                 from backend.services.automations.execution import (
