@@ -2132,3 +2132,13 @@
   Plan04 offline đã triển khai nhưng automation ghi Google thật vẫn cần nghiệm thu connector thật.
 - Không sửa `.env`, không migrate DB đang dùng hoặc bật feature. Google/model thật chưa chạy.
   [Biên bản và thứ tự nghiệm thu](docs/acceptance/2026-11-07-automations-main-merge.md).
+
+### 2026-11-09 — Python runtime thống nhất gộp local main
+
+- User báo nghiệm thu Excel thành công. Theo yêu cầu, fast-forward nhánh runtime từ main
+  `983b985` tới source `e100256`, không conflict; chưa push.
+- Hậu kiểm source trên main: **1.176 passed/215 conditional skips** (75,28 giây), Ruff đạt,
+  JavaScript streaming/final-card **11 passed**. Không dùng database ứng dụng hoặc model trả phí trong hậu kiểm.
+- Tiếp theo nghiệm thu DOCX rồi PDF, Google Connectors và Automations trên runtime thống nhất.
+  Các bước khởi động tại [manual-python-runtime.md](docs/manual-python-runtime.md);
+  [bằng chứng và phạm vi nghiệm thu](docs/acceptance/2026-11-08-unified-python-runtime.md).

@@ -1,7 +1,16 @@
 # Nghiệm thu Python runtime thống nhất — 2026-11-08
 
-Triển khai trên `refactor/unified-python-runtime`, chưa merge hoặc push. Chưa dùng model trả phí,
-Google thật hoặc database ứng dụng để nghiệm thu. `.env` thật được giữ nguyên.
+Triển khai trên `refactor/unified-python-runtime`. Các gate triển khai dưới đây không dùng model trả phí,
+Google thật hoặc database ứng dụng; `.env` thật được giữ nguyên trong lượt triển khai đó.
+
+## Cập nhật 2026-11-09 — gộp local main
+
+- Người dùng báo đã test Excel thành công và yêu cầu gộp vào `main` tại máy.
+- Fast-forward từ `983b985` đến source `e100256`, không conflict. Hậu kiểm trên `main`:
+  **1.176 passed, 215 conditional skips**, 75,28 giây; Ruff và 11 kiểm tra streaming đạt.
+- Nghiệm thu tiếp theo: tạo/đọc/sửa DOCX, rồi PDF văn bản, Google Connectors và Automations.
+- Chưa push. `.env` đã được bổ sung năm biến runtime theo yêu cầu riêng trước lượt gộp;
+  các khóa hiện có được giữ nguyên và file tiếp tục nằm ngoài Git.
 
 ## Bằng chứng kiểm thử
 
