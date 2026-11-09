@@ -531,6 +531,11 @@ async def stream_assistant_response(
             from backend.services.artifacts.legacy import checkpoint_registry
 
             execution_registry = checkpoint_registry(execution_registry, values)
+            from backend.services.google.legacy import (
+                checkpoint_registry as google_checkpoint_registry,
+            )
+
+            execution_registry = google_checkpoint_registry(execution_registry, values)
         base_guard = runtime.context.authorization_guard
 
         async def lease_guard(name):

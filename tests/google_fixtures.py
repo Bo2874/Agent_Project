@@ -86,10 +86,11 @@ class FakeGoogle:
                 )
             identity, metadata = self.upload_sessions[request.url.params["upload_id"]]
             self.binary_files[identity] = request.content
+            version = str(int(self.files.get(identity, {}).get("version", "0")) + 1)
             self.files[identity] = {
                 "id": identity,
                 **metadata,
-                "version": "1",
+                "version": version,
                 "capabilities": {"canEdit": True},
             }
             self.writes.append({"method": request.method, "path": request.url.path})
@@ -306,7 +307,15 @@ class FakeGoogle:
 
             body = json.loads(request.content)
             if body.get("writeControl", {}).get("requiredRevisionId") != str(self.doc_revision):
-                return httpx.Response(400, json={"error": {"status": "FAILED_PRECONDITION"}})
+                return httpx.Response(
+                    400,
+                    json={
+                        "error": {
+                            "status": "INVALID_ARGUMENT",
+                            "message": "The provided revision ID is not the latest revision ID.",
+                        }
+                    },
+                )
             self.writes.append({"method": request.method, "path": request.url.path, "body": body})
             for change in body["requests"]:
                 if "insertText" in change:

@@ -277,6 +277,27 @@ class PythonToolService(ArtifactToolService):
                 staged_inputs = inputs + [StoredArtifact(**item["stored"]) for item in snapshots]
                 if sum(item.size_bytes for item in staged_inputs) > 41943040:
                     raise ValueError("Combined Python inputs exceed 40 MiB")
+                for index, snapshot in enumerate(snapshots):
+                    item = StoredArtifact(**snapshot["stored"])
+                    if item.mime_type != MIME_TYPES["pdf"]:
+                        continue
+                    report = await self.run(
+                        context, job(f"google-input-{index}"), stored=item, action="inspect_file"
+                    )
+                    preview = report.manifest.preview_manifest
+                    coverage.append(
+                        {
+                            "google_input_index": index,
+                            "sha256": item.sha256,
+                            "coverage": preview.get("coverage"),
+                            "omitted_pages": preview.get("omitted_pages", []),
+                        }
+                    )
+                    if request.outputs and preview.get("coverage") != "complete":
+                        raise ValueError(
+                            "Google PDF contains unreadable/image pages; OCR is unavailable. "
+                            "Use a text PDF or upload it locally for text-only clarification."
+                        )
                 generated = await self.run(
                     context,
                     job("execute"),
@@ -376,6 +397,8 @@ class PythonToolService(ArtifactToolService):
                 except GoogleServiceError as error:
                     google_results = getattr(error, "completed", [])
                     google_error = error
+                except ValueError as error:
+                    google_error = GoogleServiceError(422, str(error), "google_invalid_action")
             primary = None
             if refs:
                 path = request.primary_output or next(

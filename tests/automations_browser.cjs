@@ -9,14 +9,15 @@ withBrowser(async send => {
     const until = async fn => { for (let n = 0; n < 200; n++) { if (fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('UI did not settle: ' + root.querySelector('[data-auto-status]').textContent + ' / ' + root.querySelector('[data-form-status]').textContent); };
     check(window.AutomationWorkspace?.mount, 'Automation UI must exist');
     const root = document.createElement('main'); document.body.append(root);
-    let auto = null, run = null, opened = 0, delayPreview = true, releasePreview; const writes = [];
+    let auto = null, run = null, opened = 0, delayPreview = true, releasePreview, googleInputs = false; const writes = [];
     window.confirm = () => true;
     window.ArtifactWorkspace = { onOpen: () => { opened += 1; } };
     window.renderArtifactCards = (parent, refs) => { for (const ref of refs) { const b = document.createElement('button'); b.textContent = ref.name; b.dataset.outputFile = ''; b.onclick = () => window.ArtifactWorkspace.onOpen(ref.version_id); parent.append(b); } };
     const requestJson = async (url, options = {}) => {
       const body = options.body ? JSON.parse(options.body) : null;
       if (options.method) writes.push({ url, body });
-      if (url === '/api/automations/inputs') return { connections: [], google_files: [], artifacts: [] };
+      if (url === '/api/automations/inputs') return { connections: googleInputs ? [{ id: 'g-conn', account_name: 'Google fixture' }] : [], google_files: googleInputs ? [{ connection_id: 'g-conn', file_id: 'sheet-a', name: 'Selected Sheet', mime_type: 'application/vnd.google-apps.spreadsheet' }] : [], artifacts: [] };
+      if (url === '/api/automations/inputs/google/g-conn/sheet-a/tabs') return { items: [] };
       if (url === '/api/automations/schedules/preview') { const preview = { schedule: { kind: 'daily', timezone: body.timezone, local_time: '08:00:00', weekday: null, at: null }, next_run_at: '2026-11-08T01:00:00Z' }; if (delayPreview) return new Promise(resolve => { releasePreview = () => resolve(preview); }); return preview; }
       if (url === '/api/automations' && options.method === 'POST') { auto = { ...body, id: 'auto-1', enabled: false, revision_id: 'rev-1', revision_number: 1, next_run_at: null }; return auto; }
       if (url === '/api/automations/auto-1' && options.method === 'PATCH') { auto = { ...auto, ...body, revision_number: 2 }; return auto; }
@@ -86,6 +87,16 @@ withBrowser(async send => {
     root.querySelector('[data-output-file]').click(); check(opened === 1, 'Click must open selected output');
     root.querySelector('[data-close-unknown]').click();
     await until(() => run.status === 'failed');
+    googleInputs = true; auto.grants = [{ connection_id: 'g-conn', file_id: 'sheet-a', action: 'edit_sheet' }];
+    await app.refresh(); root.querySelector('[data-automation-detail] .automation-heading button').click();
+    await until(() => root.querySelector('[value="edit_sheet"]')?.checked);
+    check(root.querySelector('[aria-label="Tab Google Sheets"]').hidden, 'Native whole-file edit must not require a tab/range');
+    root.querySelector('[data-review-automation]').click();
+    await until(() => !root.querySelector('[data-save-automation]').hidden);
+    root.querySelector('[data-save-automation]').click();
+    await until(() => !root.querySelector('[data-edit-dialog]').open);
+    const native = auto.grants.find(g => g.action === 'edit_sheet');
+    check(native && !('range_a1' in native) && !('sheet_id' in native), 'Whole-file native grant must save without inventing an A1 range');
     app.destroy(); root.remove();
     return 'PASS: draft review, Run now, pause choices, stop, unknown, XSS and explicit file preview';
   }} )()` });

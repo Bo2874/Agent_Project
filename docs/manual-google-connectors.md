@@ -1,9 +1,10 @@
 # Google Connectors — vận hành và nghiệm thu
 
-Plan03 có OAuth, chọn từng file theo chat, Sheets, Docs text và upload Artifact. Bằng chứng
-offline không chứng minh quyền/API Google thật. Chưa có OAuth client của người dùng nên **live NOT RUN**.
-Theo lựa chọn người dùng ngày 2026-11-07, Plan04 đã được triển khai và kiểm thử offline trước.
-Vẫn cần nghiệm thu ba luồng Sheets trên file thử đã chọn trước khi bật automation ghi Google thật.
+Từ thiết kế 2026-11-09, Google Sheets/Docs/Drive dùng chung **`run_python_code`** với file trong ứng dụng.
+Backend giữ OAuth và giao tiếp Google; Python tạo nội dung/file hoặc các lệnh sửa nội dung/bố cục.
+Không còn tool `google_*` cho lượt chạy mới và không cần duyệt từng thay đổi. OAuth chỉ cần kết nối
+ban đầu trong điều kiện bình thường; backend tự refresh. Thu hồi/hết hiệu lực thì phải kết nối lại.
+Kiểm thử offline không thay cho nghiệm thu OAuth/API và chuyển đổi định dạng trên Google thật.
 
 ## Cấu hình
 
@@ -28,9 +29,10 @@ backend hoặc tests. Google auth SDK là dependency ứng dụng; không cài c
    Migration `20261105_0033` nối sau `0032`; thêm năm bảng Google, không sửa plugin credential.
 6. Bật `GOOGLE_CONNECTOR_ENABLED=true`, restart cả web và worker với cùng cấu hình/keyring.
    Compose dùng các biến `DEV_GOOGLE_*` trong `.env.docker.example`; mặc định vẫn tắt.
-   Thêm những tool Google cần dùng từ bảng dưới vào `TOOL_ALLOWLIST`, đồng thời giữ
-   các tool hiện có. Danh sách mặc định chưa chứa tool Google, kể cả khi đã bật connector.
-   Với Compose, đặt `DEV_TOOL_ALLOWLIST` rồi tạo lại cả web và worker.
+   Bật `PYTHON_SANDBOX_ENABLED=true`, giữ `run_python_code` trong `TOOL_ALLOWLIST` nếu có danh sách riêng.
+   Bật `WORKSPACE_ARTIFACTS_ENABLED=true` để tải/lưu file trong ứng dụng. Không thêm tool Google cũ.
+   Build lại image `personal-agent-python-runtime:1`, restart broker/web/worker theo
+   [hướng dẫn Python](manual-python-runtime.md). Compose dùng các biến `DEV_*` tương ứng.
 
 Ứng dụng chỉ xin `https://www.googleapis.com/auth/drive.file`. Không xin quyền tìm toàn bộ Drive.
 OAuth có state dùng một lần, TTL 10 phút, PKCE S256 và offline access; thiếu refresh token thì
@@ -45,42 +47,48 @@ hoặc ngắt kết nối chặn call tiếp theo, kể cả khi run giữ schem
 Mỗi lần reconnect đều thu hồi grant cũ; chọn lại file và bắt đầu lượt chat mới.
 Ngắt kết nối là thu hồi trong ứng dụng; có thể thu hồi consent hoàn toàn tại tài khoản Google.
 
-| Nhóm | Tool và cách dùng |
-| --- | --- |
-| Sheets | `google_sheets_read`; `google_sheets_prepare` tạo đề xuất local; `google_sheets_append` / `google_sheets_update` commit sau duyệt |
-| Docs | `google_docs_read`; `google_docs_prepare` với `kind=edit` hoặc `create`; `google_docs_edit` / `google_docs_create` commit sau duyệt |
-| Drive | `google_drive_prepare` nhận `connection_id`, `version_id`, **mode bắt buộc**; `google_drive_upload` commit sau duyệt |
+Một yêu cầu bình thường có thể là: “Đọc bảng doanh thu này, thêm cột lợi nhuận và sắp xếp lại cho dễ xem”.
+Agent đọc dữ liệu rồi tự xác định ô/phạm vi, công thức và bố cục; người dùng không cần chỉ từng tọa độ.
 
-Tool ghi chỉ nhận nguyên `commit_arguments` từ proposal, không nhận `approved: true` từ model.
-Preview ghim đích, dữ liệu, fingerprint, generation, snapshot và hạn 10 phút; thay đổi thì phải chuẩn bị lại.
-Tất cả ghi Google hiện cần duyệt, kể cả append. Receipt có operation ID, URL đã kiểm tra và số ô/hàng khi phù hợp.
-File mới được đăng ký owner/chat trong cùng transaction lưu receipt và dùng tiếp được ngay trong run đó.
-Receipt ghim cả generation của file mới; thu hồi rồi cấp lại không làm sống lại quyền của run cũ.
-Kết quả đã lưu trước sự cố và kết quả đọc đang chạy cũng bị chặn nếu quyền đã bị thu hồi.
+| Yêu cầu | Luồng thực hiện |
+|---|---|
+| Tạo Sheet/Doc mới | Python tạo XLSX/DOCX → lưu file → backend upload và chuyển thành Google Sheets/Docs → trả URL |
+| Sửa Google Sheets/Docs đang có | Backend lấy bản chụp JSON → Python phân tích và tạo batchUpdate → backend ghi vào đúng file cũ |
+| File XLSX/DOCX/PDF trên Drive | Tải bytes vào Python → đọc/sửa bằng thư viện → upload bản mới hoặc cập nhật đúng file cùng định dạng |
+| Kiểm tra sau khi ghi | Một lần gọi Python tiếp theo đọc lại Google để xác minh dữ liệu thực tế |
 
-Sheets chỉ nhận native Google Sheet. `.xlsx` trên Drive chưa phải Sheet; không tự chuyển đổi.
-Range A1 phải có hàng cụ thể, tối đa 1.000 hàng/50 cột; đọc từng trang tối đa 100 hàng,
-ghi tối đa 100 hàng/lần. Append/update dùng RAW để chuỗi từ web bắt đầu `=` vẫn là text.
-Chỉ `set_formulas` chủ đích mới dùng công thức. Dedup theo cột được chỉ định, không thêm marker/cột ẩn.
-Không hứa exactly-once hoặc transaction xuyên Google/DB; vẫn còn race sau lần kiểm snapshot cuối.
-Đề xuất ghi ghim tab bằng sheetId và tên tab có quote. Range không ghi tên tab được giải quyết
-thành tab hiển thị đầu tiên ngay khi chuẩn bị; đổi thứ tự tab không đổi đích, đổi tên phải duyệt lại.
-Formatting phải có ít nhất một thuộc tính; bản xem trước và snapshot gồm đúng định dạng sẽ thay đổi,
-để phát hiện người khác sửa định dạng trước lúc ghi. Phản hồi Google hỏng không được coi là bảng rỗng
-hay receipt thành công; phản hồi ghi không hợp lệ giữ trạng thái unknown để đối soát.
+Google Sheets/Docs là tài liệu trực tuyến của Google; XLSX/DOCX trên Drive vẫn là file Office.
+Sửa tài liệu trực tuyến không buộc phải xuất ra Office rồi dựng lại toàn bộ. BatchUpdate có thể sửa
+giá trị/công thức, định dạng, thứ tự dữ liệu, biểu đồ, đoạn văn, bảng và kiểu chữ trong phạm vi API hỗ trợ.
+Không xử lý ảnh ở giai đoạn này. Không tự chia sẻ, đổi chủ, xóa file, chạy Apps Script hoặc gọi URL tùy ý.
 
-Docs đọc text runs và tab ID, sửa bằng chỉ số UTF-16 trên revision vừa đọc. Các thao tác không được
-chồng lấn hoặc cắt đôi ký tự Unicode; phải nằm trong một text run, giữ dấu kết thúc đoạn.
-Ảnh/bảng/footnote/suggestion không được sửa hay full-replace ngầm. Văn bản dài đọc tiếp bằng offset.
-Tạo Doc hiện tạo file trắng trước; thêm nội dung bằng một đề xuất sửa riêng. `requiredRevisionId`
-chặn batchUpdate nếu có người sửa Google sau lần kiểm tra cuối.
+Python không có mạng, token Google hoặc kết nối sống tới Google. Mỗi lần chạy dùng container mới.
+Bản chụp nguồn được lưu trước khi chạy code. Kết quả trung gian và lệnh sửa là file; không giữ biến RAM.
+JSON chứa lệnh sửa được đánh dấu `publish=false`, không hiện thành file tải xuống cho người dùng.
+Kết quả Google có URL đã được backend kiểm tra; file local vẫn theo cơ chế một primary output cuối chat.
 
-Upload chỉ lấy bytes của ArtifactVersion đã sở hữu và được chọn/tạo trong chat, kiểm hash/size trước
-khi gửi; không nhận URL/path từ model. Tối đa 20 MiB, một session resumable và một PUT hoàn tất.
-Session URL chỉ ở trusted adapter, không đưa vào tool result; query `upload_id` được che trong log.
-`keep_format` giữ XLSX/DOCX/PDF; `google_native` chỉ chuyển XLSX→Sheet hoặc DOCX→Doc,
-có preview cảnh báo mất format/công thức/biểu đồ/bố cục. File mặc định tạo ở My Drive.
-Chưa chọn folder đích, không tự chia sẻ công khai, đổi chủ, xóa file hoặc chạy Apps Script.
+Giới hạn hiện tại: tối đa 3 input tổng cộng local+Google, 3 output và 3 Google action/lần gọi;
+20 MiB/file, 40 MiB input tổng; JSON nguồn/lệnh Google tối đa 2 MiB, 100 API request/batch.
+Sheets mặc định đọc `A1:AX1000` của tab đầu, có thể chỉ rõ vùng/tab khác để đọc tiếp. Docs giữ JSON
+gốc và chỉ số UTF-16. Đây là giới hạn quan sát của ứng dụng, không phải giới hạn dung lượng file trên Google.
+Không hỗ trợ công thức lấy dữ liệu bên ngoài, ảnh hoặc external data source. Khi cần chuỗi bắt đầu `=`,
+Agent dùng `stringValue`; công thức thật dùng `formulaValue`.
+
+Tạo mới mặc định ở My Drive, chưa chọn thư mục đích. `keep_format` giữ XLSX/DOCX/PDF;
+`google_native` chỉ chuyển XLSX→Sheets, DOCX→Docs. Chuyển đổi có thể mất một số đặc tính và cần xem lại.
+Chỉ thay bytes file cũ nếu nguồn được tải bằng `download`, cùng connection/MIME và mode `keep_format`.
+Không dùng cơ chế upload chuyển đổi để âm thầm thay toàn bộ nội dung tài liệu Google đang có.
+
+**Xung đột:** kiểm phiên bản trước/sau đọc và trước ghi. Docs còn gắn `requiredRevisionId` từ backend.
+Nếu phát hiện người khác sửa nguồn, dừng và báo `google_conflict`; chặn Google trong cùng lượt chạy,
+không tự đọc lại/merge/ghi đè. Người dùng phải gửi yêu cầu mới. Sheets vẫn có khe thời gian giữa kiểm tra
+và ghi; không hứa khóa nguyên tử hay exactly-once xuyên Google và database.
+
+**Automation:** chọn đúng từng file và quyền. `edit_sheet` cho phép đọc/sửa nội dung, công thức và bố cục
+toàn file Sheet; `edit_doc` tương tự cho Doc. `read_file`/`edit_file` dành cho Office/PDF trên Drive.
+`upload_artifact` cho phép tạo file trên connection đã chọn. Quyền vùng cũ như `append_rows` không tự
+nâng thành quyền sửa toàn file; cần lưu revision mới với quyền phù hợp. Đọc vùng cũ vẫn ghim sheetId/tên tab.
+Không xuất hiện bước duyệt từng thay đổi đã được grant cho phép; dừng/thu hồi quyền vẫn chặn thao tác tiếp theo.
 
 ## Credential và sự cố
 
@@ -99,7 +107,7 @@ lưu được receipt, trạng thái là `unknown` (hoặc còn `sent` sau crash
 Mã gọi mới cũng bị chặn trên cùng đích; thao tác tạo file chưa rõ chặn tạo/upload mới ở connection đó.
 Dừng run không hoàn tác request đã gửi Google. Chỉ đọc để đối soát; không yêu cầu Agent thử ghi lại.
 
-Đối soát do người vận hành tin cậy thực hiện: lấy operation ID ở timeline/proposal, xem journal theo
+Đối soát do người vận hành tin cậy thực hiện: lấy operation ID ở timeline/receipt, xem journal theo
 đúng owner/run, kiểm nội dung/range/file mới trực tiếp trong tài khoản Google đã dùng. Giữ bằng chứng.
 Chỉ đánh dấu `completed` kèm receipt đã xác minh hoặc `rejected` khi đã chứng minh chưa áp dụng,
 trong transaction được kiểm tra owner/connection. Không có API/tool cho LLM tự gỡ trạng thái này.
@@ -107,27 +115,34 @@ Nếu vẫn chưa rõ, giữ nguyên và hỏi người dùng; không xóa journ
 
 ## Nghiệm thu
 
-Offline cần dev dependencies, Chrome/Node và PostgreSQL scratch đã migrate, tên DB kết thúc `_test`:
+Sau khi build lại image và restart broker/web/worker, kết nối Google, chọn một Sheet và một Doc thử riêng.
+Không dùng file quan trọng để thử lần đầu.
+
+1. “Đọc file Google đã chọn, tóm tắt nội dung hiện có.” Kiểm dữ liệu thật, không hỏi duyệt thao tác.
+2. “Thêm cột lợi nhuận, công thức và định dạng tiêu đề cho dễ nhìn.” URL và file ID Sheet phải giữ nguyên.
+3. “Sửa báo cáo này thành bản ngắn gọn, có tiêu đề và bảng tổng hợp.” Doc giữ file ID; kiểm Unicode/bảng/kiểu chữ.
+4. “Tạo bảng quản lý chi tiêu rồi lưu thành Google Sheets mới.” Mở URL và đối chiếu file XLSX local.
+5. “Tạo báo cáo và lưu thành Google Docs mới.” Kiểm nội dung và bố cục sau chuyển đổi.
+6. Với file Office trên Drive: yêu cầu đọc/sửa và cập nhật cùng file; kiểm đúng định dạng và file ID.
+7. Yêu cầu Agent đọc lại sau khi sửa. Thử một nguồn lớn để kiểm thông báo giới hạn và đọc theo vùng.
+8. Thử sửa ngoài Google trong lúc Agent đang xử lý. Nếu phát hiện xung đột, Agent phải dừng; không tự gộp lại.
+9. Thu hồi file/kết nối rồi gửi yêu cầu tiếp; quyền cũ không được dùng lại. Kết nối lại và chọn lại file khi cần.
+10. Automation: chọn quyền mới, Run now, tắt lịch/dừng run và kiểm lịch sử/URL kết quả. Chỉ bật lịch sau khi thử đạt.
+
+Nếu lỗi “unknown outcome”, không yêu cầu thử ghi lại: kiểm trực tiếp trên Google và đối soát journal như trên.
+Thao tác thành công trước một lỗi sau đó vẫn được báo lại; không hứa tự hoàn tác các bước đã ghi.
+
+QA offline dùng PostgreSQL scratch có tên kết thúc `_test`; không dùng database production:
 
 ```powershell
 $env:GOOGLE_TEST_DATABASE_URL = 'postgresql+asyncpg://test_user:test_password@127.0.0.1:5432/google_test'
+$env:ARTIFACT_RUNNER_DOCKER = '1'
 python -m scripts.check_google_connector --offline --report reports/google-offline.xml
 ```
 
-Đây là fixture model/Google/web responses; queue, worker, graph, approval, DB và checkpoint chạy thật.
-Các test tự tạo schema riêng rồi dọn schema đó. Không dùng database production. Script không mở
-OAuth thật hoặc gọi model trả phí. JUnit report không phải báo cáo chất lượng model/live conversion.
-
-`python -m scripts.check_google_connector --live --connection-id <id> --file-id <selected-test-file>`
-chỉ in checklist và trả mã 2 (**NOT RUN**); thao tác thật đi qua chat để giữ nguyên xác thực/duyệt.
-Trên Sheet thử riêng: đọc/phân tích A1:B10; tìm nguồn rồi append các dòng mẫu; đọc B2 rồi preview,
-duyệt và update; đọc lại để so dữ liệu. Thử revoke/reconnect trước call tiếp theo. Docs thử sửa Unicode,
-sửa ngoài Google giữa preview/duyệt; upload XLSX/DOCX ở cả hai mode và mở/đọc lại kết quả.
-Mọi conversion giữ đầy đủ nội dung/format phải được đánh giá riêng bằng dữ liệu thật.
-Người dùng quyết định giữ hay xóa file thử cloud; script không xóa Sheet/Doc hoặc dữ liệu không xác định.
-
-Rollback bằng `GOOGLE_CONNECTOR_ENABLED=false` và restart web/worker; không downgrade DB hoặc
-xóa ciphertext/journal để ẩn UI. Giữ backup keyring an toàn cùng DB backup theo quy trình vận hành.
+Google/model/search là fixture; worker/graph/journal/checkpoint và container Python chạy thật ở các gate tương ứng.
+Script `--live` chỉ in checklist và trả mã 2, không tự đổi tài liệu cloud. Người dùng tự quyết định giữ/xóa file thử.
+Rollback bằng tắt connector rồi restart web/worker; không xóa ciphertext, grant hoặc journal để mở khóa.
 
 ## Tài liệu gốc đã đối chiếu
 

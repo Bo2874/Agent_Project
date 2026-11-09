@@ -1,5 +1,15 @@
 # Project Notes
 
+## Google qua Python — 2026-11-09
+
+- Dùng cùng `run_python_code`, không thêm image production: vẫn `personal-agent-python-runtime:1`.
+- OAuth/refresh ở backend; chỉ file được chọn và file tạo trong lượt chạy. Sandbox không mạng/token/RAM lâu dài.
+- Tạo mới: Python tạo XLSX/DOCX rồi upload/chuyển Google. Sửa native: bản chụp JSON → Python sinh batchUpdate → host ghi đúng file cũ.
+- Không duyệt từng thay đổi. Automation phải có grant phù hợp; `edit_sheet` là quyền toàn file mới, không tự nâng quyền vùng cũ.
+- Bản chụp và receipt lưu bền; dừng khi phát hiện conflict, giữ unknown để đối soát, báo phần đã thành công.
+- Đã bỏ đăng ký 10 tool Google và executor Sheets/Docs/Drive cũ; giữ OAuth, Picker, per-file grants, context pins và journal.
+- Hướng dẫn: [manual-google-connectors.md](docs/manual-google-connectors.md). Kiểm thử live Google vẫn cần người dùng thực hiện.
+
 ## Python runtime hợp nhất — 2026-11-08
 
 - Nhánh `refactor/unified-python-runtime`: một tool tổng quát `run_python_code`, một image `personal-agent-python-runtime:1`.

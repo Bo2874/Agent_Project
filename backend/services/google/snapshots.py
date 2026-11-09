@@ -50,7 +50,15 @@ class GoogleSnapshots:
                     "GET",
                     SHEETS_URL + "/" + ref.file_id,
                     token=auth.token,
-                    params={"ranges": bounds, "includeGridData": "true"},
+                    params={
+                        "ranges": bounds,
+                        "includeGridData": "true",
+                        **(
+                            {"fields": "spreadsheetId,properties,sheets(properties,data)"}
+                            if source.range_a1
+                            else {}
+                        ),
+                    },
                 )
                 if body.get("spreadsheetId") != ref.file_id or not isinstance(
                     body.get("sheets"), list

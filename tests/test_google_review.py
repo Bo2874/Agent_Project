@@ -12,4 +12,3 @@ async def test_invalid_google_success_body_is_rejected(body):
     client = GoogleHTTP(httpx.MockTransport(lambda request: httpx.Response(200, content=body)))
     with pytest.raises(GoogleServiceError):
         await client.request("GET", SHEETS_URL + "/sheet-a/values/A1:B10", token="fixture")
-

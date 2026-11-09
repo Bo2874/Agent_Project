@@ -308,13 +308,16 @@ class GoogleMutations:
                 return receipt
             except BaseException as error:
                 await session.rollback()
-                if isinstance(error, GoogleServiceError) and error.code == "google_conflict":
+                if isinstance(error, GoogleServiceError) and error.code in {
+                    "google_conflict",
+                    "google_request_rejected",
+                }:
                     # An explicit revision precondition rejection is a confirmed
                     # no-write response, unlike a lost response or malformed success.
                     await session.execute(
                         update(GoogleMutation)
                         .where(GoogleMutation.id == identity, GoogleMutation.status == "sent")
-                        .values(status="rejected", receipt={"error_code": "google_conflict"})
+                        .values(status="rejected", receipt={"error_code": error.code})
                     )
                     await session.commit()
                     raise

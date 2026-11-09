@@ -191,10 +191,27 @@ class GoogleHTTP:
                             .get("requiredRevisionId")
                             and response.status_code in {400, 409, 412}
                             and isinstance(data.get("error"), dict)
-                            and data["error"].get("status") == "FAILED_PRECONDITION"
+                            and (
+                                data["error"].get("status") == "FAILED_PRECONDITION"
+                                or "revision" in str(data["error"].get("message", "")).lower()
+                            )
                         ):
                             raise GoogleServiceError(
                                 409, "Google source changed; start a new request", "google_conflict"
+                            )
+                        if (
+                            method == "POST"
+                            and url.endswith(":batchUpdate")
+                            and url.startswith((SHEETS_URL + "/", DOCS_URL + "/"))
+                            and response.status_code == 400
+                            and isinstance(data.get("error"), dict)
+                            and data["error"].get("status") == "INVALID_ARGUMENT"
+                        ):
+                            raise GoogleServiceError(
+                                422,
+                                "Google rejected the native batch without applying changes; "
+                                "correct the API requests and try a new call.",
+                                "google_request_rejected",
                             )
                         if url == TOKEN_URL and data.get("error") == "invalid_grant":
                             raise GoogleServiceError(

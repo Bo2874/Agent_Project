@@ -11,9 +11,15 @@
 | Tool cũ | Không đăng ký `artifact_create`, `artifact_edit`, `artifact_inspect`, `run_artifact_python`, `artifact_rebuild_pdf_text_only` cho run mới |
 | Compatibility | Chỉ tải adapter trong run đang resume checkpoint cũ. Python sandbox cũ trả hướng dẫn bắt đầu yêu cầu mới, không tự chạy lại code chưa rõ kết quả |
 | Runtime cũ | Đã bỏ executor/contract Python cũ, script gate cũ và ba bộ Dockerfile/lockfile trùng |
+| Google | Cùng `run_python_code`; backend lấy bản chụp/tải file, Python tạo file hoặc JSON lệnh sửa, backend ghi theo OAuth/quyền từng file |
 
 Các image ứng dụng web/worker, PostgreSQL, Redis hoặc project khác vẫn có vai trò riêng.
 Một image ở đây nói về subsystem thực thi Python và render tài liệu.
+
+Google không cần thêm image, tool riêng hoặc đưa token/mạng vào sandbox. Xem
+[cấu hình và kịch bản Google](manual-google-connectors.md). Tài liệu Google đang có được sửa
+qua API giữ nguyên file ID; tạo mới có thể chuyển từ XLSX/DOCX. Không duyệt từng thay đổi.
+Nếu phát hiện xung đột thì dừng, không tự gộp; kết quả ghi chưa rõ thì chặn retry để đối soát.
 
 ## Chạy trên Windows
 

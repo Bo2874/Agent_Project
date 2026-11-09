@@ -108,4 +108,3 @@ def test_doc_revision_is_host_owned_and_no_remote_image_fetch():
     ]:
         with pytest.raises(ValueError):
             validate_requests(DOC_MIME, body)
-

@@ -149,7 +149,8 @@
         const allowed = sheet ? [["read_sheet", "Chỉ đọc vùng"], ["edit_sheet", "Đọc và sửa nội dung/bố cục toàn file"]] : doc ? [["read_doc", "Chỉ đọc"], ["edit_doc", "Đọc và sửa nội dung/bố cục"]] : [["read_file", "Tải và đọc file"], ["edit_file", "Đọc và cập nhật file cùng định dạng"]];
         if (preset && ["append_rows", "update_range", "set_formulas", "format_range"].includes(preset.action)) allowed.push([preset.action, `Quyền vùng cũ: ${preset.action} (cần chọn quyền toàn file để dùng luồng Python mới)`]);
         for (const [value, title] of allowed) { const label = el("label", title); const input = el("input"); input.type = "checkbox"; input.value = value; input.checked = preset?.action === value; label.prepend(input); actions.append(label); }
-        tabs.hidden = range.hidden = hint.hidden = !sheet;
+        const rangeVisibility = () => { const needsRange = sheet && [...actions.querySelectorAll("input:checked")].some(input => input.value !== "edit_sheet"); tabs.hidden = range.hidden = !needsRange; hint.hidden = !sheet; };
+        actions.onchange = rangeVisibility; rangeVisibility();
         if (sheet) {
           try { const data = await request(`/api/automations/inputs/google/${file.connection_id}/${file.file_id}/tabs`); if (rowState.token !== token || !row.isConnected) return; for (const tab of data.items) { const item = el("option", tab.title); item.value = tab.sheet_id; tabs.append(item); } if (preset?.sheet_id != null) tabs.value = preset.sheet_id; }
           catch (error) { if (rowState.token !== token) return; const item = el("option", preset?.range_a1?.split("!")[0]?.replace(/^'|'$/g, "").replace(/''/g, "'") || "Chọn lại file sau khi kết nối"); item.value = preset?.sheet_id ?? ""; tabs.append(item); $("[data-form-status]").textContent = error.message; }

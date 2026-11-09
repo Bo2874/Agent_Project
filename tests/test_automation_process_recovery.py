@@ -111,7 +111,9 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
             )
             assert run.status == "running"
             assert mutation.status == "completed" if crash_stage == "1" else mutation is None
-        assert len(json.loads(path.read_text())["writes"]) == (1 if crash_stage == "1" else 0)
+        assert len(json.loads(path.read_text()).get("writes", [])) == (
+            1 if crash_stage == "1" else 0
+        )
         # The child is confirmed dead. Expire only its isolated job; keep a
         # production-sized lease for replacement workers on slow Windows hosts.
         async with db.sessions() as session:
@@ -170,4 +172,4 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
                     AgentOperation.status == "started",
                 )
             )
-    assert len(json.loads(path.read_text())["writes"]) == 1
+    assert len(json.loads(path.read_text()).get("writes", [])) == 1

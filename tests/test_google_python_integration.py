@@ -180,6 +180,121 @@ async def test_docs_revision_race_is_confirmed_conflict_not_unknown(google_db, t
         assert row.status == "rejected"
 
 
+@pytest.mark.parametrize("status", ["prepared", "executed"])
+async def test_snapshot_retained_while_python_receipt_can_resume(google_db, tmp_path, status):
+    import os
+    import time
+
+    from backend.services.artifacts.maintenance import reconcile_orphans
+
+    db = google_db
+    bridge, context, ref = await native_bridge(db, tmp_path)
+    args = PythonCodeInput(
+        code="print('read')", google_inputs=[{"ref": ref.model_dump(mode="json")}]
+    )
+    snapshot = await bridge.capture(context, args.google_inputs[0])
+    stored = bridge.storage.path(snapshot["stored"]["key"])
+    old = time.time() - 172800
+    os.utime(stored, (old, old))
+    operation = AgentOperation(
+        agent_run_id=context.run_id,
+        key="python.receipt.retention",
+        fingerprint="a" * 64,
+        status=status,
+        result={"google_snapshots": [snapshot], "files": []},
+    )
+    async with db.sessions() as session:
+        session.add(operation)
+        await session.commit()
+    assert await reconcile_orphans(db.sessions, bridge.storage) == 0
+    assert stored.exists()
+    async with db.sessions() as session:
+        row = await session.get(AgentOperation, operation.id)
+        row.status = "completed"
+        await session.commit()
+    assert await reconcile_orphans(db.sessions, bridge.storage) == 1
+    assert not stored.exists()
+
+
+async def test_partial_success_is_reported_when_second_target_conflicts(google_db, tmp_path):
+    db = google_db
+    bridge, context, sheet = await native_bridge(db, tmp_path)
+    doc = sheet.model_copy(update={"file_id": "doc-a"})
+    async with db.sessions() as session:
+        await bridge.access.set_files(
+            session, db.owner, sheet.connection_id, [sheet.file_id, doc.file_id]
+        )
+        await bridge.access.set_work_files(session, db.owner, db.conversation, [sheet, doc])
+    context = await bridge.scope().pin(context)
+    _, left, left_files = await native_plan(bridge, context, sheet)
+    _, right, right_files = await native_plan(
+        bridge,
+        context,
+        doc,
+        {"requests": [{"insertText": {"location": {"index": 1}, "text": "New"}}]},
+    )
+    args = PythonCodeInput(
+        code="print('two targets')",
+        google_inputs=[{"ref": sheet.model_dump()}, {"ref": doc.model_dump()}],
+        outputs=[{"path": "left.json", "publish": False}, {"path": "right.json", "publish": False}],
+        google_actions=[
+            {"kind": "batch_update", "input_index": 0, "request_path": "left.json"},
+            {"kind": "batch_update", "input_index": 1, "request_path": "right.json"},
+        ],
+    )
+    original = bridge.execute_one
+
+    async def changed(context, plan, kind):
+        if plan["snapshot"]["source"]["ref"]["file_id"] == "doc-a":
+            db.provider.files["doc-a"]["version"] = "2"
+        return await original(context, plan, kind)
+
+    bridge.execute_one = changed
+    with pytest.raises(GoogleServiceError) as error:
+        await bridge.execute(
+            context, args, left + right, left_files + right_files, [], "two-targets"
+        )
+    assert error.value.code == "google_conflict"
+    assert len(error.value.completed) == 1
+    assert error.value.completed[0]["url"].endswith("/sheet-a/edit")
+    assert len(db.provider.writes) == 1
+
+
+@pytest.mark.parametrize("commit_reached_database", [False, True])
+async def test_remote_write_receipt_commit_loss_never_duplicates(
+    google_db, tmp_path, monkeypatch, commit_reached_database
+):
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    db = google_db
+    bridge, context, ref = await native_bridge(db, tmp_path)
+    args, snapshots, files = await native_plan(bridge, context, ref)
+    original = AsyncSession.commit
+    failed = False
+
+    async def commit(session):
+        nonlocal failed
+        if db.provider.writes and not failed:
+            failed = True
+            if commit_reached_database:
+                await original(session)
+            raise OperationalError("receipt commit", {}, RuntimeError("QA lost acknowledgement"))
+        await original(session)
+
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+    if commit_reached_database:
+        first = await bridge.execute(context, args, snapshots, files, [], "receipt-loss")
+        assert await bridge.execute(context, args, snapshots, files, [], "receipt-loss") == first
+    else:
+        with pytest.raises(GoogleServiceError) as error:
+            await bridge.execute(context, args, snapshots, files, [], "receipt-loss")
+        assert error.value.code == "google_outcome_unknown"
+        with pytest.raises(GoogleServiceError):
+            await bridge.execute(context, args, snapshots, files, [], "new-receipt-loss-key")
+    assert failed and len(db.provider.writes) == 1
+
+
 async def test_malformed_native_success_is_unknown_and_not_retried(google_db, tmp_path):  # noqa: F811
     db = google_db
     bridge, context, ref = await native_bridge(db, tmp_path)
@@ -197,6 +312,29 @@ async def test_malformed_native_success_is_unknown_and_not_retried(google_db, tm
     with pytest.raises(GoogleServiceError):
         await bridge.execute(context, args, snapshots, files, [], "malformed")
     assert len(db.provider.writes) == 1
+
+
+async def test_confirmed_invalid_batch_is_rejected_and_can_be_corrected(google_db, tmp_path):
+    import httpx
+
+    db = google_db
+    bridge, context, ref = await native_bridge(db, tmp_path)
+    args, snapshots, files = await native_plan(bridge, context, ref)
+    original = bridge.access.credentials.http.transport
+
+    async def invalid(request):
+        if request.method == "POST":
+            return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
+        return await db.provider.handle(request)
+
+    bridge.access.credentials.http.transport = httpx.MockTransport(invalid)
+    with pytest.raises(GoogleServiceError) as error:
+        await bridge.execute(context, args, snapshots, files, [], "invalid-native")
+    assert error.value.code == "google_request_rejected"
+    assert not db.provider.writes
+    bridge.access.credentials.http.transport = original
+    result = await bridge.execute(context, args, snapshots, files, [], "corrected-native")
+    assert result[0]["status"] == "completed" and len(db.provider.writes) == 1
 
 
 @pytest.mark.parametrize(
@@ -276,4 +414,46 @@ async def test_python_generated_file_uploads_and_grants_created_file(  # noqa: F
     if mode == "google_native":
         assert db.provider.files[receipt["file_ref"]["file_id"]]["mimeType"].startswith(
             "application/vnd.google-apps."
+        )
+    else:
+        from uuid import UUID
+
+        from artifact_runtime.google_types import PythonGoogleInput
+        from backend.models.artifact import ArtifactVersion
+        from backend.schemas.google import GoogleFileRef
+
+        created = GoogleFileRef.model_validate(receipt["file_ref"])
+        downloaded = await bridge.capture(
+            context, PythonGoogleInput(ref=created.model_dump(), mode="download")
+        )
+        replacement = PythonCodeInput(
+            code="print('replacement prepared')",
+            google_inputs=[{"ref": created.model_dump(mode="json"), "mode": "download"}],
+            outputs=[{"path": "replacement.xlsx"}],
+            google_actions=[
+                {
+                    "kind": "upload",
+                    "connection_id": created.connection_id,
+                    "output_path": "replacement.xlsx",
+                    "mode": "keep_format",
+                    "input_index": 0,
+                }
+            ],
+        )
+        local_version = result.data["artifact_refs"][0]
+        async with db.sessions() as session:
+            version = await session.get(ArtifactVersion, UUID(local_version["version_id"]))
+            metadata = {
+                "key": version.storage_key,
+                "size_bytes": version.size_bytes,
+                "sha256": version.sha256,
+                "mime_type": version.mime_type,
+            }
+        update = await bridge.execute(
+            context, replacement, [downloaded], [metadata], [], "replace-binary"
+        )
+        assert update[0]["url"].endswith("/" + created.file_id + "/view")
+        assert len(db.provider.writes) == 2
+        assert any(
+            method == "PATCH" for method, path in db.provider.calls if path.startswith("/upload/")
         )
