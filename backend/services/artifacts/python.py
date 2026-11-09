@@ -23,6 +23,7 @@ from backend.services.artifacts.service import published
 from backend.services.artifacts.storage import MIME_TYPES, ArtifactStorageError, StoredArtifact
 from backend.services.artifacts.tools import ArtifactToolService
 from backend.services.artifacts.validation import ValidatedArtifact, validate_name
+from backend.services.google.errors import GoogleServiceError
 from backend.services.run_events import fence
 
 CONTRACT_VERSION = "unified-python-1"
@@ -36,9 +37,27 @@ def receipt_key(context):
 class PythonToolService(ArtifactToolService):
     input_mime_types = set(MIME_TYPES.values())
 
-    def __init__(self, *, publication_enabled=None, **kwargs):
+    def __init__(self, *, publication_enabled=None, google_bridge=None, **kwargs):
         super().__init__(**kwargs)
         self.publication_enabled = publication_enabled
+        self.google_bridge = google_bridge
+
+    def google_service(self):
+        if self.google_bridge is None:
+            from backend.core.config import get_settings
+            from backend.services.google.access import GoogleAccess
+            from backend.services.google.bridge import GooglePythonBridge
+            from backend.services.google.credentials import GoogleCredentials
+
+            settings = get_settings()
+            if not settings.google_connector_enabled:
+                raise ValueError("Google connector is disabled")
+            self.google_bridge = GooglePythonBridge(
+                GoogleAccess(GoogleCredentials(settings)),
+                self.sessions,
+                self.storage_service().storage,
+            )
+        return self.google_bridge
 
     async def check(self, context, tool="run_python_code"):
         await super().check(context, "run_python_code")
@@ -71,7 +90,9 @@ class PythonToolService(ArtifactToolService):
         enabled = self.publication_enabled
         if enabled is None:
             enabled = get_settings().workspace_artifacts_enabled
-        if not enabled and (request.input_version_ids or request.outputs):
+        if not enabled and (
+            request.input_version_ids or any(item.publish for item in request.outputs)
+        ):
             raise ValueError("File publication is disabled; Python calculations remain available.")
         async with self.sessions() as session:
             from backend.services.automations.authority import resolve_run_authority
@@ -82,7 +103,8 @@ class PythonToolService(ArtifactToolService):
                 if request.input_version_ids:
                     required.add("inspect")
                 for output in request.outputs:
-                    required.add("edit" if output.parent_version_id else "create")
+                    if output.publish:
+                        required.add("edit" if output.parent_version_id else "create")
                 if not required <= set(authority.revision.artifact_actions):
                     raise HTTPException(403, "Automation does not grant these file actions.")
             rows = [
@@ -173,6 +195,11 @@ class PythonToolService(ArtifactToolService):
             if context.run_id is None or not context.operation_key:
                 raise ValueError("Python requires a durable run and operation identity.")
             inputs, parents, identities = await self.allowed(context, request)
+            google = (
+                self.google_service() if request.google_inputs or request.google_actions else None
+            )
+            if google:
+                await google.check(context)
             digest = hashlib.sha256(
                 canonical(
                     {
@@ -194,6 +221,16 @@ class PythonToolService(ArtifactToolService):
                 )
 
             if status == "prepared":
+                snapshots = (saved or {}).get("google_snapshots")
+                if google and snapshots is None:
+                    snapshots = [
+                        await google.capture(context, source) for source in request.google_inputs
+                    ]
+                    # Persist the exact input versions before executing any Python.
+                    await self.save_receipt(
+                        context, key, status="prepared", result={"google_snapshots": snapshots}
+                    )
+                snapshots = snapshots or []
                 coverage = []
                 for index, item in enumerate(inputs):
                     report = await self.run(
@@ -237,11 +274,14 @@ class PythonToolService(ArtifactToolService):
                                     "in text_only_pdf_inputs. Scanned PDFs without text "
                                     "cannot be processed (no OCR)."
                                 )
+                staged_inputs = inputs + [StoredArtifact(**item["stored"]) for item in snapshots]
+                if sum(item.size_bytes for item in staged_inputs) > 41943040:
+                    raise ValueError("Combined Python inputs exceed 40 MiB")
                 generated = await self.run(
                     context,
                     job("execute"),
-                    stored=inputs[0] if inputs else None,
-                    additional=inputs[1:],
+                    stored=staged_inputs[0] if staged_inputs else None,
+                    additional=staged_inputs[1:],
                     operation=ArtifactOperation(kind="python", code=request.code, python=request),
                 )
                 if generated.manifest.execution is None:
@@ -250,13 +290,16 @@ class PythonToolService(ArtifactToolService):
                     "execution": generated.manifest.execution.model_dump(mode="json"),
                     "files": [asdict(item) for item in generated.files],
                     "pdf_inputs": coverage,
+                    "google_snapshots": snapshots,
                 }
                 await self.save_receipt(context, key, status="executed", result=saved)
 
-            refs, warnings = [], []
+            refs, warnings, refs_by_path = [], [], {}
             for index, (declaration, metadata) in enumerate(
                 zip(request.outputs, saved["files"], strict=False)
             ):
+                if not declaration.publish:
+                    continue
                 operation_key = (
                     "python:"
                     + hashlib.sha256(f"{context.run_id}:{key}:{index}".encode()).hexdigest()
@@ -269,7 +312,9 @@ class PythonToolService(ArtifactToolService):
                         )
                     )
                     if existing:
-                        refs.append(published(existing).model_dump(mode="json"))
+                        ref = published(existing).model_dump(mode="json")
+                        refs.append(ref)
+                        refs_by_path[declaration.path] = ref
                         continue
                 current = StoredArtifact(**metadata)
                 inspection = await self.run(
@@ -315,11 +360,28 @@ class PythonToolService(ArtifactToolService):
                         retain_source_on_failure=True,
                     )
                     refs.append(ref.model_dump(mode="json"))
+                    refs_by_path[declaration.path] = refs[-1]
             execution = saved["execution"]
+            google_results, google_error = [], None
+            if google and execution["status"] == "success":
+                try:
+                    google_results = await google.execute(
+                        context,
+                        request,
+                        saved.get("google_snapshots", []),
+                        saved["files"],
+                        refs,
+                        key,
+                    )
+                except GoogleServiceError as error:
+                    google_results = getattr(error, "completed", [])
+                    google_error = error
             primary = None
             if refs:
-                path = request.primary_output or request.outputs[0].path
-                primary = refs[[item.path for item in request.outputs].index(path)]
+                path = request.primary_output or next(
+                    item.path for item in request.outputs if item.publish
+                )
+                primary = refs_by_path[path]
             data = {
                 "execution": execution,
                 "outputs": refs,
@@ -327,20 +389,37 @@ class PythonToolService(ArtifactToolService):
                 "warnings": list(dict.fromkeys(warnings)),
                 "pdf_inputs": saved["pdf_inputs"],
             }
+            if google:
+                data["google_results"] = google_results
+                if google_error:
+                    data["google_error"] = {
+                        "code": google_error.code,
+                        "detail": google_error.detail,
+                    }
             content = json.dumps(
                 {
                     "execution": execution,
                     "outputs": refs,
                     "warnings": data["warnings"],
                     "pdf_inputs": saved["pdf_inputs"],
+                    **(
+                        {
+                            "google_results": google_results,
+                            **({"google_error": data["google_error"]} if google_error else {}),
+                        }
+                        if google
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
             )
             result = ToolResult(
                 content=content,
                 data=data,
-                is_error=execution["status"] != "success",
-                error_code="python_execution_error" if execution["status"] != "success" else None,
+                is_error=execution["status"] != "success" or google_error is not None,
+                error_code=google_error.code
+                if google_error
+                else ("python_execution_error" if execution["status"] != "success" else None),
             )
             await self.save_receipt(
                 context,
@@ -355,5 +434,11 @@ class PythonToolService(ArtifactToolService):
                 primary=primary,
             )
             return result
+        except GoogleServiceError as error:
+            return ToolResult.failure(
+                error.detail,
+                error_code=error.code,
+                data={"google_results": getattr(error, "completed", [])},
+            )
         except (HTTPException, ValueError, ArtifactStorageError, httpx.HTTPError) as error:
             return self.failure(error)

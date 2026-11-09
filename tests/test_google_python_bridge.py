@@ -95,7 +95,7 @@ async def test_docs_write_revision_comes_from_snapshot_without_approval(tmp_path
 
     async def rpc(method, url, **kwargs):
         calls.append((method, url, kwargs["json"]))
-        return {}
+        return {"documentId": "file1"}
 
     bridge = GooglePythonBridge(
         SimpleNamespace(credentials=SimpleNamespace(http=SimpleNamespace(request=rpc))),

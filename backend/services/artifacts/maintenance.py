@@ -148,14 +148,19 @@ async def reconcile_orphans(sessions, storage, *, grace_seconds=86400, limit=100
                     select(AgentOperation.id)
                     .join(AgentRun, AgentRun.id == AgentOperation.agent_run_id)
                     .where(
-                        AgentOperation.status == "executed",
+                        AgentOperation.status.in_(["prepared", "executed"]),
                         AgentRun.status.not_in(["completed", "cancelled"]),
                         or_(
                             AgentRun.status != "failed",
                             func.coalesce(AgentRun.finished_at, AgentRun.created_at)
                             >= failed_cutoff,
                         ),
-                        AgentOperation.result["files"].contains([{"key": key}]),
+                        or_(
+                            AgentOperation.result["files"].contains([{"key": key}]),
+                            AgentOperation.result["google_snapshots"].contains(
+                                [{"stored": {"key": key}}]
+                            ),
+                        ),
                     )
                     .limit(1)
                 )

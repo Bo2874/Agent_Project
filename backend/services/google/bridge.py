@@ -318,23 +318,33 @@ class GooglePythonBridge:
                 if source["mime_type"] == DOC_MIME:
                     body = {**body, "writeControl": {"requiredRevisionId": source["revision_id"]}}
                 endpoint = SHEETS_URL if source["mime_type"] == SHEET_MIME else DOCS_URL
-                await self.access.credentials.http.request(
+                response = await self.access.credentials.http.request(
                     "POST",
                     endpoint + "/" + ref.file_id + ":batchUpdate",
                     token=current.token,
                     json=body,
                 )
+                identity_key = (
+                    "spreadsheetId" if source["mime_type"] == SHEET_MIME else "documentId"
+                )
+                if response.get(identity_key) != ref.file_id:
+                    raise GoogleServiceError(502, "Google mutation response identity unavailable")
                 return {"url": google_url(ref.file_id, source["mime_type"])}
             stored = StoredArtifact(**plan["stored"])
             self.storage.verify(stored, max_bytes=FILE_LIMIT)
             if source:
-                await self.access.credentials.http.upload_bytes(
+                response = await self.access.credentials.http.upload_bytes(
                     token=current.token,
                     metadata=plan["metadata"],
                     content=self.storage.path(stored.key).read_bytes(),
                     source_mime=stored.mime_type,
                     file_id=ref.file_id,
                 )
+                if (
+                    response.get("id") != ref.file_id
+                    or response.get("mimeType") != stored.mime_type
+                ):
+                    raise GoogleServiceError(502, "Google binary update identity unavailable")
                 return {"url": google_url(ref.file_id, source["mime_type"])}
             result = await self.access.credentials.http.upload_bytes(
                 token=current.token,
