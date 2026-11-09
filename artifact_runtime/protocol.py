@@ -17,6 +17,7 @@ from artifact_runtime.document_types import (  # noqa: F401 - shared schema expo
     DocumentOutline,
     PreviewManifest,
 )
+from artifact_runtime.google_types import PythonGoogleAction, PythonGoogleInput
 from artifact_runtime.pdf_types import PdfTextDocument, TextOnlyRebuild  # noqa: F401
 from artifact_runtime.spreadsheet_types import SpreadsheetPlan
 
@@ -43,6 +44,7 @@ class PythonOutput(StrictModel):
     path: str = Field(min_length=1, max_length=240)
     name: str | None = Field(default=None, max_length=255)
     parent_version_id: UUID | None = None
+    publish: bool = Field(default=True, exclude_if=lambda value: value)
 
     @field_validator("path")
     @classmethod
@@ -82,6 +84,12 @@ class PythonCodeInput(StrictModel):
     text_only_pdf_inputs: tuple[TextOnlyPdfInput, ...] = Field(
         default=(), max_length=3, exclude_if=lambda value: not value
     )
+    google_inputs: tuple[PythonGoogleInput, ...] = Field(
+        default=(), max_length=3, exclude_if=lambda value: not value
+    )
+    google_actions: tuple[PythonGoogleAction, ...] = Field(
+        default=(), max_length=3, exclude_if=lambda value: not value
+    )
 
     @model_validator(mode="after")
     def declared_outputs(self):
@@ -90,12 +98,47 @@ class PythonCodeInput(StrictModel):
             raise ValueError("Duplicate output paths")
         if len(self.input_version_ids) != len(set(self.input_version_ids)):
             raise ValueError("Duplicate input versions")
+        if len(self.input_version_ids) + len(self.google_inputs) > 3:
+            raise ValueError("At most three local and Google inputs combined")
+        controls, written = set(), set()
+        by_path = {item.path: item for item in self.outputs}
+        for action in self.google_actions:
+            if action.input_index is not None:
+                if action.input_index >= len(self.google_inputs):
+                    raise ValueError("Google action must reference an explicit Google input")
+                ref = self.google_inputs[action.input_index].ref
+                identity = (ref.connection_id, ref.file_id)
+                if identity in written:
+                    raise ValueError("Combine changes to the same file into one batch")
+                written.add(identity)
+            if action.kind == "batch_update":
+                output = by_path.get(action.request_path)
+                if output is None or output.publish or not output.path.endswith(".json"):
+                    raise ValueError("Google requests require a declared private JSON output")
+                if self.google_inputs[action.input_index].mode != "native":
+                    raise ValueError("Batch updates require native input snapshots")
+                controls.add(action.request_path)
+            else:
+                output = by_path.get(action.output_path)
+                if output is None or not output.publish:
+                    raise ValueError("Upload requires a declared published output")
+                if action.input_index is not None:
+                    source = self.google_inputs[action.input_index]
+                    if (
+                        source.mode != "download"
+                        or source.ref.connection_id != action.connection_id
+                        or action.mode != "keep_format"
+                    ):
+                        raise ValueError("Only an explicit binary download can be replaced")
+        if any(not item.publish and item.path not in controls for item in self.outputs):
+            raise ValueError("Unpublished output must be a referenced Google JSON control")
         pdf_ids = [item.version_id for item in self.text_only_pdf_inputs]
         if len(pdf_ids) != len(set(pdf_ids)) or not set(pdf_ids) <= set(self.input_version_ids):
             raise ValueError("Text-only PDF sources must identify unique explicit input versions")
-        if len(paths) > 1 and self.primary_output is None:
+        public_paths = [item.path for item in self.outputs if item.publish]
+        if len(public_paths) > 1 and self.primary_output is None:
             raise ValueError("Multiple outputs require primary_output")
-        if self.primary_output is not None and self.primary_output not in paths:
+        if self.primary_output is not None and self.primary_output not in public_paths:
             raise ValueError("primary_output must identify a declared output path")
         return self
 
