@@ -360,6 +360,7 @@ class GoogleAccess:
             "read_doc": DOC_MIME,
             "write_doc": DOC_MIME,
             "read_file": "selected_metadata",
+            "write_file": "selected_metadata",
         }.get(action)
         if expected is None or (
             expected != "selected_metadata" and metadata["mimeType"] != expected

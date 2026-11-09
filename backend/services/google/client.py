@@ -54,11 +54,17 @@ class GoogleHTTP:
         except httpx.HTTPError:
             raise GoogleServiceError(502, "Google download unavailable") from None
 
-    async def upload_bytes(self, *, token, metadata, content, source_mime):
+    async def upload_bytes(self, *, token, metadata, content, source_mime, file_id=None):
         """One bounded resumable session; its bearer-like Location never leaves trusted code."""
         if not isinstance(content, bytes) or not 1 <= len(content) <= 20971520:
             raise GoogleServiceError(413, "Google upload exceeds the 20 MiB limit")
         endpoint = "https://www.googleapis.com/upload/drive/v3/files"
+        if file_id is not None:
+            import re
+
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", file_id):
+                raise GoogleServiceError(422, "Invalid Google upload target")
+            endpoint += "/" + file_id
         headers = {"Authorization": "Bearer " + token}
 
         async def consume(response, *, initial=False):
@@ -86,7 +92,7 @@ class GoogleHTTP:
                 timeout=60, trust_env=False, follow_redirects=False, transport=self.transport
             ) as client:
                 async with client.stream(
-                    "POST",
+                    "PATCH" if file_id else "POST",
                     endpoint,
                     params={"uploadType": "resumable", "fields": "id,name,mimeType"},
                     headers={
@@ -105,7 +111,7 @@ class GoogleHTTP:
                     or target.port not in (None, 443)
                     or target.userinfo
                     or target.fragment
-                    or target.path != "/upload/drive/v3/files"
+                    or target.path != httpx.URL(endpoint).path
                     or not target.params.get("upload_id")
                 ):
                     raise GoogleServiceError(502, "Unsupported Google upload session endpoint")

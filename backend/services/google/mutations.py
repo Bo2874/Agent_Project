@@ -201,11 +201,24 @@ class GoogleMutations:
             await session.commit()
 
     async def execute(
-        self, context, *, proposal_id, digest, preview, tool_name, authorize, snapshot, write
+        self,
+        context,
+        *,
+        proposal_id,
+        digest,
+        preview,
+        tool_name,
+        authorize,
+        snapshot,
+        write,
+        automatic=False,
     ):
         preview = GoogleWritePreview.model_validate(preview).model_dump(mode="json")
         arguments = {"proposal_id": str(proposal_id), "digest": digest, "preview": preview}
-        if context.approved_call != (tool_name, approval_fingerprint(tool_name, arguments)):
+        if not automatic and context.approved_call != (
+            tool_name,
+            approval_fingerprint(tool_name, arguments),
+        ):
             raise GoogleServiceError(
                 403,
                 "Host approval required for this exact Google proposal",
