@@ -257,6 +257,14 @@ class GoogleMutations:
                     409, "Google snapshot changed; prepare and approve a new proposal"
                 )
             await self.short_authority(session, context, row)
+            if automatic:
+                from backend.services.automations.authority import resolve_run_authority
+                from backend.services.run_events import fence
+
+                await fence(session)
+                authority = await resolve_run_authority(session, agent_run_id=context.run_id)
+                if authority.owner != context.user_id:
+                    raise GoogleServiceError(403, "Google owner scope changed")
             claimed = await session.scalar(
                 update(GoogleMutation)
                 .where(
@@ -300,6 +308,16 @@ class GoogleMutations:
                 return receipt
             except BaseException as error:
                 await session.rollback()
+                if isinstance(error, GoogleServiceError) and error.code == "google_conflict":
+                    # An explicit revision precondition rejection is a confirmed
+                    # no-write response, unlike a lost response or malformed success.
+                    await session.execute(
+                        update(GoogleMutation)
+                        .where(GoogleMutation.id == identity, GoogleMutation.status == "sent")
+                        .values(status="rejected", receipt={"error_code": "google_conflict"})
+                    )
+                    await session.commit()
+                    raise
                 await asyncio.shield(self.mark_unknown(identity))
                 if isinstance(error, asyncio.CancelledError):
                     raise

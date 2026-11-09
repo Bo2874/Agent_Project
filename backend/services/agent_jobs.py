@@ -62,9 +62,9 @@ async def enqueue_run(arguments):
             )
             payload["artifact_version_ids"] = [str(row.id) for row in selected]
     if get_settings().google_connector_enabled:
-        from backend.services.agent_context import google_tool_service
+        from backend.services.agent_context import google_context_service
 
-        pinned = await google_tool_service().pin(
+        pinned = await google_context_service().pin(
             ToolContext(
                 user_id=arguments["user_id"],
                 conversation_id=arguments["conversation_id"],

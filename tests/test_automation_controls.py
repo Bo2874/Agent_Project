@@ -135,27 +135,19 @@ async def test_reenable_schedules_future_instead_of_backfilling(google_db, monke
 async def test_close_unknown_releases_slot_without_replaying_google(google_db, monkeypatch):  # noqa: F811
     from sqlalchemy import select
     from test_automation_authority import setup
-    from test_google_docs import approved
+    from test_google_python_integration import write_fixture
 
     from backend.models import GoogleMutation
     from backend.models.automation import AutomationRun
-    from backend.schemas.google import SheetChange
     from backend.services.automations.execution import sync_automation_run
     from backend.services.automations.service import close_unknown_run
     from backend.services.google.errors import GoogleServiceError
 
     db = google_db
     service, context, ref = await setup(db, monkeypatch)
-    proposal = await service.sheets.prepare(
-        context,
-        ref,
-        SheetChange(kind="append_rows", range_a1="Sheet1!A1:B100", rows=[["url", "topic"]]),
-    )
     db.provider.lose_write_response = True
     with pytest.raises(GoogleServiceError):
-        await service.sheets.execute(
-            approved(context, proposal, "google_sheets_append"), **proposal.commit_arguments()
-        )
+        await write_fixture(service, context, ref)
     async with db.sessions() as session:
         row = await session.scalar(
             select(AutomationRun).where(AutomationRun.agent_run_id == context.run_id)
@@ -167,7 +159,9 @@ async def test_close_unknown_releases_slot_without_replaying_google(google_db, m
         assert error.value.status_code == 404
         result = await close_unknown_run(session, db.owner, row.id)
         assert result.status == "failed" and result.stop_reason == "closed_without_replay"
-        mutation = await session.get(GoogleMutation, proposal.id)
+        mutation = await session.scalar(
+            select(GoogleMutation).where(GoogleMutation.run_id == context.run_id)
+        )
         assert mutation.status == "unknown" and result.result["usage_unknown"]
     assert len(db.provider.writes) == 1
 
@@ -219,30 +213,26 @@ async def test_late_approval_and_chat_resume_do_not_revive_stopped_run(google_db
 async def test_completed_google_write_remains_visible_after_stop(google_db, monkeypatch):  # noqa: F811
     from sqlalchemy import select
     from test_automation_authority import setup
-    from test_google_docs import approved
+    from test_google_python_integration import write_fixture
 
     from backend.models import GoogleMutation
     from backend.models.automation import AutomationRun
-    from backend.schemas.google import SheetChange
     from backend.services.automations.execution import sync_automation_run
     from backend.services.automations.service import request_run_stop
 
     db = google_db
     service, context, ref = await setup(db, monkeypatch)
-    proposal = await service.sheets.prepare(
-        context,
-        ref,
-        SheetChange(kind="append_rows", range_a1="Sheet1!A1:B100", rows=[["url", "topic"]]),
-    )
-    receipt = await service.sheets.execute(
-        approved(context, proposal, "google_sheets_append"), **proposal.commit_arguments()
-    )
+    receipt = await write_fixture(service, context, ref)
     async with db.sessions() as session:
         row = await session.scalar(
             select(AutomationRun).where(AutomationRun.agent_run_id == context.run_id)
         )
         await request_run_stop(session, db.owner, row.id)
         await sync_automation_run(session, row.id, drained=True)
-        assert row.result["google_results"][0]["url"] == receipt.url
-        assert (await session.get(GoogleMutation, proposal.id)).status == "completed"
+        assert row.result["google_results"][0]["url"] == receipt[0]["url"]
+        assert (
+            await session.scalar(
+                select(GoogleMutation).where(GoogleMutation.run_id == context.run_id)
+            )
+        ).status == "completed"
     assert len(db.provider.writes) == 1

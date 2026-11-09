@@ -55,9 +55,47 @@ class FakeGoogle:
                 "capabilities": {"canEdit": True},
             },
         }
+        for item in self.files.values():
+            item["version"] = "1"
+        self.doc_text = "Original report\n"
+        self.doc_revision = 1
+        self.upload_sessions = {}
+        self.binary_files = {}
 
     async def handle(self, request):
         self.calls.append((request.method, request.url.path))
+        if request.url.path.startswith("/upload/drive/v3/files"):
+            import json
+
+            if request.method in {"POST", "PATCH"}:
+                identity = (
+                    request.url.path.removeprefix("/upload/drive/v3/files/")
+                    if request.method == "PATCH"
+                    else "created-" + str(len(self.upload_sessions) + 1)
+                )
+                session_id = str(len(self.upload_sessions) + 1)
+                self.upload_sessions[session_id] = (identity, json.loads(request.content))
+                return httpx.Response(
+                    200,
+                    headers={
+                        "Location": "https://www.googleapis.com"
+                        + request.url.path
+                        + "?upload_id="
+                        + session_id
+                    },
+                )
+            identity, metadata = self.upload_sessions[request.url.params["upload_id"]]
+            self.binary_files[identity] = request.content
+            self.files[identity] = {
+                "id": identity,
+                **metadata,
+                "version": "1",
+                "capabilities": {"canEdit": True},
+            }
+            self.writes.append({"method": request.method, "path": request.url.path})
+            if self.lose_write_response:
+                raise httpx.ReadTimeout("Synthetic lost upload", request=request)
+            return httpx.Response(200, json={"id": identity, **metadata})
         if str(request.url) == "https://oauth2.googleapis.com/token":
             form = parse_qs(request.content.decode())
             if form["grant_type"] == ["refresh_token"]:
@@ -93,6 +131,8 @@ class FakeGoogle:
             )
         if request.method == "GET" and request.url.path.startswith("/drive/v3/files/"):
             item = self.files.get(request.url.path.rsplit("/", 1)[1])
+            if item and request.url.params.get("alt") == "media":
+                return httpx.Response(200, content=self.binary_files[item["id"]])
             return (
                 httpx.Response(200, json=item)
                 if item
@@ -107,15 +147,42 @@ class FakeGoogle:
                 return httpx.Response(
                     200,
                     json={
+                        "spreadsheetId": "sheet-a",
                         "sheets": [
                             {
                                 "properties": {
                                     "sheetId": 0,
                                     "title": "Sheet1",
                                     "gridProperties": {"rowCount": 1000, "columnCount": 26},
-                                }
+                                },
+                                **(
+                                    {
+                                        "data": [
+                                            {
+                                                "startRow": 0,
+                                                "startColumn": 0,
+                                                "rowData": [
+                                                    {
+                                                        "values": [
+                                                            {
+                                                                "userEnteredValue": {
+                                                                    "stringValue": str(cell)
+                                                                },
+                                                                "formattedValue": str(cell),
+                                                            }
+                                                            for cell in row
+                                                        ]
+                                                    }
+                                                    for row in self.sheet_values
+                                                ],
+                                            }
+                                        ]
+                                    }
+                                    if request.url.params.get("includeGridData") == "true"
+                                    else {}
+                                ),
                             }
-                        ]
+                        ],
                     },
                 )
             a1 = (
@@ -167,6 +234,36 @@ class FakeGoogle:
             if self.lose_write_response:
                 raise httpx.ReadTimeout("Synthetic lost response", request=request)
             if request.url.path.endswith(":batchUpdate"):
+                for change in payload.get("requests", []):
+                    if "appendCells" in change:
+                        rows = change["appendCells"].get("rows", [])
+                        self.sheet_values.extend(
+                            [
+                                [
+                                    next(iter(cell.get("userEnteredValue", {}).values()), "")
+                                    for cell in row.get("values", [])
+                                ]
+                                for row in rows
+                            ]
+                        )
+                    if "updateCells" in change:
+                        update = change["updateCells"]
+                        start = update.get("start", {})
+                        for index, row in enumerate(
+                            update.get("rows", []), start.get("rowIndex", 0)
+                        ):
+                            while len(self.sheet_values) <= index:
+                                self.sheet_values.append([])
+                            values = [
+                                next(iter(cell.get("userEnteredValue", {}).values()), "")
+                                for cell in row.get("values", [])
+                            ]
+                            first = start.get("columnIndex", 0)
+                            self.sheet_values[index].extend(
+                                [""] * max(0, first + len(values) - len(self.sheet_values[index]))
+                            )
+                            self.sheet_values[index][first : first + len(values)] = values
+                self.files["sheet-a"]["version"] = str(int(self.files["sheet-a"]["version"]) + 1)
                 return httpx.Response(200, json={"spreadsheetId": "sheet-a", "replies": [{}]})
             receipt = {
                 "updatedRange": a1,
@@ -176,6 +273,49 @@ class FakeGoogle:
             return httpx.Response(
                 200, json={"updates": receipt} if request.url.path.endswith(":append") else receipt
             )
+        if request.url.path == "/v1/documents/doc-a" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "documentId": "doc-a",
+                    "revisionId": str(self.doc_revision),
+                    "tabs": [
+                        {
+                            "documentTab": {
+                                "body": {
+                                    "content": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": 1
+                                            + len(self.doc_text.encode("utf-16-le")) // 2,
+                                            "paragraph": {
+                                                "elements": [
+                                                    {"textRun": {"content": self.doc_text}}
+                                                ]
+                                            },
+                                        }
+                                    ]
+                                }
+                            }
+                        }
+                    ],
+                },
+            )
+        if request.url.path == "/v1/documents/doc-a:batchUpdate":
+            import json
+
+            body = json.loads(request.content)
+            if body.get("writeControl", {}).get("requiredRevisionId") != str(self.doc_revision):
+                return httpx.Response(400, json={"error": {"status": "FAILED_PRECONDITION"}})
+            self.writes.append({"method": request.method, "path": request.url.path, "body": body})
+            for change in body["requests"]:
+                if "insertText" in change:
+                    self.doc_text = change["insertText"]["text"] + self.doc_text
+            self.doc_revision += 1
+            self.files["doc-a"]["version"] = str(self.doc_revision)
+            if self.lose_write_response:
+                raise httpx.ReadTimeout("Synthetic lost response", request=request)
+            return httpx.Response(200, json={"documentId": "doc-a", "replies": [{}]})
         raise AssertionError(f"Unexpected fixture endpoint {request.method} {request.url.path}")
 
 

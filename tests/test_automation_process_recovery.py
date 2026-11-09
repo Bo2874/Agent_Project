@@ -48,6 +48,8 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
     lost_response,  # noqa: F811
     crash_stage,
 ):
+    if os.environ.get("ARTIFACT_RUNNER_DOCKER") != "1":
+        pytest.skip("Requires Docker for Python process recovery")
     from backend.models import AgentOperation, BackgroundJob, GoogleMutation
     from backend.models.automation import Automation, AutomationRun
     from backend.models.notification import UserNotification as Notification
@@ -62,9 +64,7 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
             {
                 "connection_id": str(ref.connection_id),
                 "file_id": ref.file_id,
-                "action": "append_rows",
-                "range_a1": "Sheet1!A1:B100",
-                "sheet_id": 0,
+                "action": "edit_sheet",
             }
         ]
     )
@@ -135,8 +135,8 @@ async def test_scheduled_process_recovery_preserves_single_google_write(
         assert job.attempt_count == (1 if lost_response else 2)
         assert state["model_calls"] == [
             "search_web",
-            "google_sheets_prepare",
-            "google_sheets_append",
+            "run_python_code",
+            "run_python_code",
         ] + ([] if lost_response else ["final"])
         assert run.result["total_tokens"] == (40_000 if lost_response else 50_000)
         spent = await session.scalar(

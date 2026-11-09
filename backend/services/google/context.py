@@ -5,7 +5,6 @@ from dataclasses import replace
 
 from sqlalchemy import select
 
-from agent_core.tools import ToolResult
 from agent_core.tools.authorization import check_authorization_once
 from agent_core.tools.types import ToolAuthorizationError
 from backend.core.config import get_settings
@@ -20,19 +19,13 @@ from backend.models import (
 )
 from backend.services.google.access import GoogleAccess, grant_view
 from backend.services.google.credentials import GoogleCredentials
-from backend.services.google.docs import GoogleDocs
-from backend.services.google.drive import GoogleDrive
 from backend.services.google.errors import GoogleServiceError
-from backend.services.google.sheets import GoogleSheets
 
 
-class GoogleToolService:
+class GoogleContextService:
     def __init__(self, *, access=None, sessions=None):
         self.access = access or GoogleAccess(GoogleCredentials(get_settings()))
         self.sessions = sessions or SessionFactory
-        self.sheets = GoogleSheets(self.access, self.sessions)
-        self.docs = GoogleDocs(self.access, self.sessions)
-        self.drive = GoogleDrive(self.access, self.sessions)
 
     async def check_run(self, session, context):
         run = await session.scalar(
@@ -174,96 +167,3 @@ class GoogleToolService:
             for row in created
         ):
             raise GoogleServiceError(404, "Google file is outside this run's pinned scope")
-
-    async def invoke(self, context, name, arguments):
-        from agent_core.tools.google import (
-            DocPrepareInput,
-            DocReadInput,
-            DrivePrepareInput,
-            SheetPrepareInput,
-            SheetReadInput,
-        )
-        from backend.schemas.google import GoogleCommitInput
-
-        try:
-            await self.guard(context, name)
-            async with self.sessions() as session:
-                await self.check_run(session, context)
-            if name == "google_drive_prepare":
-                args = DrivePrepareInput.model_validate(arguments)
-                proposal = await self.drive.prepare(
-                    context, args.connection_id, args.version_id, mode=args.mode
-                )
-                data = {
-                    "proposal": proposal.model_dump(mode="json"),
-                    "commit_arguments": proposal.commit_arguments(),
-                }
-                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
-            if name == "google_drive_upload":
-                args = GoogleCommitInput.model_validate(arguments)
-                receipt = await self.drive.execute(context, **args.model_dump())
-                data = receipt.model_dump(mode="json")
-                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
-            if name == "google_docs_read":
-                args = DocReadInput.model_validate(arguments)
-                async with self.sessions() as session:
-                    await self.require_ref(session, context, args.ref)
-                result = await self.docs.read(
-                    context, args.ref, offset=args.offset, limit=args.limit
-                )
-                return ToolResult.success(
-                    result.model_dump_json(), data={"snapshot": result.model_dump(mode="json")}
-                )
-            if name == "google_docs_prepare":
-                args = DocPrepareInput.model_validate(arguments)
-                if args.kind == "edit":
-                    async with self.sessions() as session:
-                        await self.require_ref(session, context, args.ref)
-                    proposal = await self.docs.prepare(context, args.ref, args.edit)
-                else:
-                    proposal = await self.docs.prepare_create(
-                        context, args.connection_id, title=args.title
-                    )
-                data = {
-                    "proposal": proposal.model_dump(mode="json"),
-                    "commit_arguments": proposal.commit_arguments(),
-                }
-                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
-            if name in {"google_docs_edit", "google_docs_create"}:
-                args = GoogleCommitInput.model_validate(arguments)
-                method = self.docs.execute if name == "google_docs_edit" else self.docs.create
-                receipt = await method(context, **args.model_dump())
-                data = receipt.model_dump(mode="json")
-                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
-            if name == "google_sheets_read":
-                args = SheetReadInput.model_validate(arguments)
-                async with self.sessions() as session:
-                    await self.require_ref(session, context, args.ref)
-                result = await self.sheets.read(
-                    context, args.ref, range_a1=args.range_a1, offset=args.offset, limit=args.limit
-                )
-                return ToolResult.success(
-                    result.model_dump_json(), data={"snapshot": result.model_dump(mode="json")}
-                )
-            if name == "google_sheets_prepare":
-                args = SheetPrepareInput.model_validate(arguments)
-                async with self.sessions() as session:
-                    await self.require_ref(session, context, args.ref)
-                proposal = await self.sheets.prepare(context, args.ref, args.change)
-                data = {
-                    "proposal": proposal.model_dump(mode="json"),
-                    "commit_arguments": proposal.commit_arguments(),
-                }
-                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
-            if name in {"google_sheets_append", "google_sheets_update"}:
-                args = GoogleCommitInput.model_validate(arguments)
-                if (args.preview.operation == "append_rows") != (name == "google_sheets_append"):
-                    raise GoogleServiceError(422, "Sheets commit tool does not match proposal")
-                receipt = await self.sheets.execute(context, **args.model_dump())
-                data = receipt.model_dump(mode="json")
-                return ToolResult.success(json.dumps(data, ensure_ascii=False), data=data)
-            raise GoogleServiceError(422, "Unsupported Google operation")
-        except ToolAuthorizationError as error:
-            return ToolResult.failure(str(error), error_code=error.code)
-        except GoogleServiceError as error:
-            return ToolResult.failure(error.detail, error_code=error.code)

@@ -124,12 +124,18 @@ async def validate_draft(session, owner, draft):
             )
             if grant is None:
                 raise HTTPException(404, "Selected Google file not found")
-            if proposed.action not in {"read_sheet", "read_doc"} and not grant.can_edit:
+            if (
+                proposed.action not in {"read_sheet", "read_doc", "read_file"}
+                and not grant.can_edit
+            ):
                 raise HTTPException(409, "Google file is read-only")
             from backend.schemas.google import DOC_MIME, SHEET_MIME
 
             expected = DOC_MIME if proposed.action in {"read_doc", "edit_doc"} else SHEET_MIME
-            if grant.mime_type != expected:
+            if proposed.action in {"read_file", "edit_file"}:
+                if grant.mime_type in {DOC_MIME, SHEET_MIME}:
+                    raise HTTPException(422, "Binary file action requires an Office/PDF file")
+            elif grant.mime_type != expected:
                 raise HTTPException(422, "Action does not match Google file type")
             generation = grant.generation
         pinned.append(

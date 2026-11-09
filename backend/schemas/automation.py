@@ -47,6 +47,9 @@ class ScheduleSpec(AutomationModel):
 
 GoogleAction = Literal[
     "read_sheet",
+    "edit_sheet",
+    "read_file",
+    "edit_file",
     "append_rows",
     "update_range",
     "set_formulas",

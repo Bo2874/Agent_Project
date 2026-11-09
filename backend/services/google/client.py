@@ -182,6 +182,20 @@ class GoogleHTTP:
                     if not isinstance(data, dict):
                         raise GoogleServiceError(502, "Invalid Google response")
                     if response.status_code >= 300:
+                        if (
+                            method == "POST"
+                            and url.startswith(DOCS_URL + "/")
+                            and url.endswith(":batchUpdate")
+                            and kwargs.get("json", {})
+                            .get("writeControl", {})
+                            .get("requiredRevisionId")
+                            and response.status_code in {400, 409, 412}
+                            and isinstance(data.get("error"), dict)
+                            and data["error"].get("status") == "FAILED_PRECONDITION"
+                        ):
+                            raise GoogleServiceError(
+                                409, "Google source changed; start a new request", "google_conflict"
+                            )
                         if url == TOKEN_URL and data.get("error") == "invalid_grant":
                             raise GoogleServiceError(
                                 409, "Google reconnect required", "google_reconnect_required"

@@ -30,6 +30,8 @@ def main():
         agent_react_enabled=True,
         memory_extraction_enabled=False,
         google_connector_enabled=True,
+        python_sandbox_enabled=True,
+        workspace_artifacts_enabled=True,
         google_client_id="fixture-client.apps.googleusercontent.com",
         google_client_secret="client-secret-canary",
         google_credential_encryption_keys=os.environ["AUTOMATION_QA_KEY"],
@@ -63,11 +65,11 @@ def main():
         from agent_core.llm.types import LLMChunk, LLMToolCallDelta, TokenUsage
         from agent_core.skills import SkillRegistry
         from agent_core.tools import ToolRegistry, ToolResult, create_context_tool
-        from agent_core.tools.google import register_google_tools
+        from agent_core.tools.python import register_python_tool
         from backend.services import agent_context, langgraph_checkpoints
         from backend.services.google.access import GoogleAccess
+        from backend.services.google.context import GoogleContextService
         from backend.services.google.credentials import GoogleCredentials
-        from backend.services.google.tools import GoogleToolService
 
         provider = FakeGoogle()
 
@@ -84,17 +86,22 @@ def main():
             provider.writes = state.get("writes", [])
             provider.sheet_values = state.get("sheet_values", provider.sheet_values)
             provider.lose_write_response = state.get("lose_response", False)
+            provider.files["sheet-a"]["version"] = state.get("version", "1")
             try:
                 return await provider.handle(request)
             finally:
-                state.update(writes=provider.writes, sheet_values=provider.sheet_values)
+                state.update(
+                    writes=provider.writes,
+                    sheet_values=provider.sheet_values,
+                    version=provider.files["sheet-a"]["version"],
+                )
                 save_state(state)
 
-        service = GoogleToolService(
+        service = GoogleContextService(
             access=GoogleAccess(GoogleCredentials(settings, transport=httpx.MockTransport(handle))),
             sessions=database.SessionFactory,
         )
-        agent_context.google_tool_service = lambda: service
+        agent_context.google_context_service = lambda: service
 
         async def search(context, arguments):
             return ToolResult.success(
@@ -106,9 +113,46 @@ def main():
                 usage=TokenUsage(total_tokens=10_000),
             )
 
+        import artifact_runtime.containers as containers
+        from artifact_runtime.app import create_app
+        from backend.services.artifacts.python import PythonToolService
+        from backend.services.artifacts.runner_client import ArtifactRunnerClient
+        from backend.services.artifacts.service import ArtifactService
+        from backend.services.artifacts.storage import ArtifactStorage
+        from backend.services.google.bridge import GooglePythonBridge
+
+        if os.environ.get("GOOGLE_PYTHON_QA_IMAGE"):
+            containers.RUNTIME_IMAGE = os.environ["GOOGLE_PYTHON_QA_IMAGE"]
+        root = state_path.parent / "python"
+        artifact_service = ArtifactService(ArtifactStorage(root / "private"))
+        broker = create_app(
+            containers.DockerBroker(
+                root / "broker", docker=os.environ.get("ARTIFACT_DOCKER", "docker")
+            ),
+            key="k" * 32,
+        )
+        python = PythonToolService(
+            service=artifact_service,
+            sessions=database.SessionFactory,
+            publication_enabled=True,
+            google_bridge=GooglePythonBridge(
+                service.access,
+                database.SessionFactory,
+                artifact_service.storage,
+                context_service=service,
+            ),
+            runner_factory=lambda owner: ArtifactRunnerClient(
+                "http://runner",
+                key="k" * 32,
+                storage=artifact_service.storage,
+                owner=owner,
+                transport=httpx.ASGITransport(app=broker),
+            ),
+        )
+
         def registry():
             result = ToolRegistry()
-            register_google_tools(result, service)
+            register_python_tool(result, python)
             result.register(
                 create_context_tool(
                     name="search_web",
@@ -158,21 +202,57 @@ def main():
                     assert refs, "Model must receive selected file context"
                     ref = {k: refs[0][k] for k in ("connection_id", "file_id", "context_id")}
                     name, args = (
-                        "google_sheets_prepare",
+                        "run_python_code",
                         {
-                            "ref": ref,
-                            "change": {
-                                "kind": "append_rows",
-                                "range_a1": "Sheet1!A1:B100",
-                                "rows": observations[0]["data"]["rows"],
-                                "dedup_column": 0,
-                            },
+                            "code": "from pathlib import Path; "
+                            "print(Path('/input/input-0.json').read_text())",
+                            "google_inputs": [{"ref": ref}],
                         },
                     )
                 elif len(observations) == 2:
+                    # This deterministic fixture reuses the persisted selected context,
+                    # never data invented by the model.
+                    # The ref already parsed during the previous model call is reloaded
+                    # from the exact prior tool-call arguments in message history.
+                    previous = [
+                        m for m in messages if m.get("role") == "assistant" and m.get("tool_calls")
+                    ]
+                    args_before = json.loads(previous[-1]["tool_calls"][0]["function"]["arguments"])
+                    ref = args_before["google_inputs"][0]["ref"]
+                    payload = {
+                        "requests": [
+                            {
+                                "appendCells": {
+                                    "sheetId": 0,
+                                    "rows": [
+                                        {
+                                            "values": [
+                                                {"userEnteredValue": {"stringValue": cell}}
+                                                for cell in observations[0]["data"]["rows"][0]
+                                            ]
+                                        }
+                                    ],
+                                    "fields": "userEnteredValue",
+                                }
+                            }
+                        ]
+                    }
                     name, args = (
-                        "google_sheets_append",
-                        observations[-1]["data"]["commit_arguments"],
+                        "run_python_code",
+                        {
+                            "code": "from pathlib import Path; Path('changes.json').write_text("
+                            + repr(json.dumps(payload))
+                            + ")",
+                            "google_inputs": [{"ref": ref}],
+                            "outputs": [{"path": "changes.json", "publish": False}],
+                            "google_actions": [
+                                {
+                                    "kind": "batch_update",
+                                    "input_index": 0,
+                                    "request_path": "changes.json",
+                                }
+                            ],
+                        },
                     )
                 else:
                     name, args = None, {}

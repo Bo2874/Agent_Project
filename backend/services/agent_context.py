@@ -100,13 +100,13 @@ async def selected_google_files(session, owner, conversation_id):
     )
 
 
-def google_tool_service():
+def google_context_service():
     from backend.core.config import get_settings
     from backend.services.google.access import GoogleAccess
+    from backend.services.google.context import GoogleContextService
     from backend.services.google.credentials import GoogleCredentials
-    from backend.services.google.tools import GoogleToolService
 
-    return GoogleToolService(
+    return GoogleContextService(
         access=GoogleAccess(GoogleCredentials(get_settings())), sessions=SessionFactory
     )
 

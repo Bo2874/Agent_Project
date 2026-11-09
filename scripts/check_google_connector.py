@@ -29,12 +29,12 @@ def main():
                     "plan": [
                         "Select only this test file in a test conversation",
                         "Read and analyze A1:B10",
-                        "Research and append fixture rows after reviewing exact preview",
-                        "Read B2, prepare update, approve, then read it again",
+                        "Research and append rows through run_python_code",
+                        "Read, edit native content/layout, then read it again",
                         "Revoke/reconnect and check old run cannot use old grants",
                     ],
-                    "reason": "Use authenticated chat approvals; see the Google manual. "
-                    "This command never bypasses approval or changes a cloud document.",
+                    "reason": "Use authenticated chat with individually selected test files. "
+                    "This command does not change a cloud document.",
                 },
                 indent=2,
             )
@@ -50,16 +50,18 @@ def main():
         "tests/test_google_oauth.py",
         "tests/test_google_credentials.py",
         "tests/test_google_file_access.py",
-        "tests/test_google_sheets.py",
-        "tests/test_google_mutations.py",
-        "tests/test_google_tools.py",
+        "tests/test_google_python_protocol.py",
+        "tests/test_google_python_snapshots.py",
+        "tests/test_google_python_requests.py",
+        "tests/test_google_python_bridge.py",
+        "tests/test_google_python_service.py",
+        "tests/test_google_python_registry.py",
+        "tests/test_google_python_integration.py",
+        "tests/test_google_python_graph.py",
         "tests/test_google_ui.py",
         "tests/test_google_review.py",
     ]
     root = Path(__file__).resolve().parents[1]
-    for optional in ("tests/test_google_docs.py", "tests/test_google_drive_artifacts.py"):
-        if (root / optional).is_file():
-            tests.append(optional)
     command = [sys.executable, "-m", "pytest", *tests, "-q", "-ra"]
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

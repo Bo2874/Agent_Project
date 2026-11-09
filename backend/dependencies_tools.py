@@ -19,11 +19,6 @@ if settings.python_sandbox_enabled:
     register_python_tool(tool_registry, PythonToolService())
 if (email_config := settings.email_config) is not None:
     register_email_tool(tool_registry, email_config)
-if settings.google_connector_enabled:
-    from agent_core.tools.google import register_google_tools
-    from backend.services.google.tools import GoogleToolService
-
-    register_google_tools(tool_registry, GoogleToolService())
 if (web_search_config := settings.web_search_config) is not None:
     register_web_search_tool(tool_registry, web_search_config)
 _plugin_manager: PluginManager | None = None

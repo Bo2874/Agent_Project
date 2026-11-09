@@ -24,7 +24,7 @@ def runtime(db, monkeypatch, model):
         "backend.services.history_compression",
         "backend.services.plugin_runtime",
         "backend.services.plugin_credentials",
-        "backend.services.google.tools",
+        "backend.services.google.context",
         "backend.services.artifacts.tools",
         "backend.services.routing",
         "backend.services.automations.execution",

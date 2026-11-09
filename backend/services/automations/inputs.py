@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from backend.models import ArtifactVersion, GoogleConnection, GoogleFileGrant
-from backend.schemas.google import DOC_MIME, SHEET_MIME, ConnectionView
+from backend.schemas.google import SHEET_MIME, ConnectionView
 from backend.services.artifacts.service import published
 from backend.services.google.access import grant_view
 from backend.services.google.client import SHEETS_URL
@@ -34,7 +34,6 @@ async def available_inputs(session, owner, settings):
                         GoogleFileGrant.owner_id == owner,
                         GoogleFileGrant.connection_id.in_([row.id for row in connections]),
                         GoogleFileGrant.revoked.is_(False),
-                        GoogleFileGrant.mime_type.in_([SHEET_MIME, DOC_MIME]),
                         GoogleFileGrant.connection_generation == GoogleConnection.generation,
                     )
                     .order_by(GoogleFileGrant.name, GoogleFileGrant.id)

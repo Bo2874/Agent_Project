@@ -33,9 +33,9 @@ class GooglePythonBridge:
 
     def scope(self):
         if self.context_service is None:
-            from backend.services.google.tools import GoogleToolService
+            from backend.services.google.context import GoogleContextService
 
-            self.context_service = GoogleToolService(access=self.access, sessions=self.sessions)
+            self.context_service = GoogleContextService(access=self.access, sessions=self.sessions)
         return self.context_service
 
     async def check(self, context):
@@ -49,6 +49,17 @@ class GooglePythonBridge:
                 )
             )
             if marker:
+                raise conflict()
+            rejected = await session.scalar(
+                select(GoogleMutation.id)
+                .where(
+                    GoogleMutation.run_id == context.run_id,
+                    GoogleMutation.status == "rejected",
+                    GoogleMutation.receipt["error_code"].astext == "google_conflict",
+                )
+                .limit(1)
+            )
+            if rejected:
                 raise conflict()
         await self.scope().validate_authority(context)
 
@@ -78,7 +89,8 @@ class GooglePythonBridge:
 
     async def authority(self, context, *, ref=None, connection_id=None, action, source=None):
         """Do not broaden saved ranged grants into whole-file native editing."""
-        from backend.services.automations.authority import covers, resolve_run_authority
+        from backend.services.automations.authority import covers, resolve_run_authority, tab_title
+        from backend.services.google.ranges import parse_range
 
         async with self.sessions() as session:
             await fence(session)
@@ -97,7 +109,9 @@ class GooglePythonBridge:
                 if grant.file_id == (ref.file_id if ref else None):
                     if (
                         grant.action == action
+                        or (action == "create_doc" and grant.action == "upload_artifact")
                         or (action == "read_doc" and grant.action == "edit_doc")
+                        or (action == "read_file" and grant.action == "edit_file")
                         or (action == "read_sheet" and grant.action == "edit_sheet")
                     ):
                         if action == "read_sheet" and grant.action == "read_sheet":
@@ -108,8 +122,29 @@ class GooglePythonBridge:
                                 or not covers(grant, source.range_a1)
                             ):
                                 continue
+                            auth = await self.access.authorize(session, context, ref, "read_sheet")
+                            metadata = await self.access.credentials.http.request(
+                                "GET",
+                                SHEETS_URL + "/" + ref.file_id,
+                                token=auth.token,
+                                params={"fields": "sheets(properties(sheetId,title))"},
+                            )
+                            title = tab_title(parse_range(grant.range_a1))
+                            if not any(
+                                item.get("properties", {}).get("sheetId") == grant.sheet_id
+                                and item.get("properties", {}).get("title") == title
+                                for item in metadata.get("sheets", [])
+                            ):
+                                continue
                         return
-                if ref and grant.file_id is None and grant.action == "upload_artifact":
+                if (
+                    ref
+                    and grant.file_id is None
+                    and (
+                        grant.action == "upload_artifact"
+                        or (grant.action == "create_doc" and action in {"read_doc", "edit_doc"})
+                    )
+                ):
                     created = await session.scalars(
                         select(GoogleMutation).where(
                             GoogleMutation.run_id == context.run_id,
@@ -226,6 +261,8 @@ class GooglePythonBridge:
                         )
                     )
                     if row and row.status == "completed":
+                        if row.payload.get("request") != plan:
+                            raise GoogleServiceError(409, "Google operation key payload changed")
                         completed.append({"action_index": index, **row.receipt})
                         continue
                 pending.append((index, plan, operation, kind))
@@ -273,7 +310,11 @@ class GooglePythonBridge:
                     else "write_file",
                 )
         connection_id = request_connection(plan)
-        await self.authority(context, connection_id=connection_id, action="upload_artifact")
+        await self.authority(
+            context,
+            connection_id=connection_id,
+            action="create_doc" if plan["metadata"]["mimeType"] == DOC_MIME else "upload_artifact",
+        )
         async with self.sessions() as session:
             return await self.access.authorize_connection(session, context, connection_id)
 
@@ -304,7 +345,8 @@ class GooglePythonBridge:
         )
 
         async def authorize(session, row):
-            await fence(session)
+            # plan_authority uses a short, separate fenced session. Holding this
+            # session's job lock across that call would wait on our own lock.
             return await self.plan_authority(context, plan)
 
         async def snapshot(row, current):

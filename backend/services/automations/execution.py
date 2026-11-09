@@ -440,10 +440,13 @@ async def sync_automation_run(session, run_id, *, drained=False, claimed=None):
                 "operation": operation.kind,
                 "url": google_url(
                     operation.file_id,
-                    SHEET_MIME
-                    if operation.kind
-                    in {"append_rows", "update_range", "set_formulas", "format_range"}
-                    else DOC_MIME,
+                    (operation.payload.get("request", {}).get("snapshot") or {}).get("mime_type")
+                    or (
+                        SHEET_MIME
+                        if operation.kind
+                        in {"append_rows", "update_range", "set_formulas", "format_range"}
+                        else DOC_MIME
+                    ),
                 )
                 if operation.file_id
                 else None,

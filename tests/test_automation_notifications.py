@@ -209,7 +209,7 @@ async def test_inputs_and_tab_metadata_are_selected_file_only(google_db, monkeyp
     ) as client:
         inputs = await client.get("/api/automations/inputs")
         assert inputs.status_code == 200, inputs.text
-        assert [f["file_id"] for f in inputs.json()["google_files"]] == ["sheet-a"]
+        assert [f["file_id"] for f in inputs.json()["google_files"]] == ["office-a", "sheet-a"]
         tabs = await client.get(f"/api/automations/inputs/google/{ref.connection_id}/sheet-a/tabs")
         assert tabs.status_code == 200 and tabs.json()["items"] == [
             {"sheet_id": 0, "title": "Sheet1"}
@@ -243,25 +243,17 @@ async def test_missed_tick_is_in_inbox_without_duplicate_dispatch(google_db):  #
 async def test_unknown_target_survives_reload_for_manual_reconciliation(google_db, monkeypatch):  # noqa: F811
     import pytest
     from test_automation_authority import setup
-    from test_google_docs import approved
+    from test_google_python_integration import write_fixture
 
     from backend.models.automation import AutomationRun
-    from backend.schemas.google import SheetChange
     from backend.services.automations.execution import sync_automation_run
     from backend.services.google.errors import GoogleServiceError
 
     db = google_db
     service, context, ref = await setup(db, monkeypatch)
-    proposal = await service.sheets.prepare(
-        context,
-        ref,
-        SheetChange(kind="append_rows", range_a1="Sheet1!A1:B100", rows=[["url", "topic"]]),
-    )
     db.provider.lose_write_response = True
     with pytest.raises(GoogleServiceError):
-        await service.sheets.execute(
-            approved(context, proposal, "google_sheets_append"), **proposal.commit_arguments()
-        )
+        await write_fixture(service, context, ref)
     async with db.sessions() as session:
         row = await session.scalar(
             select(AutomationRun).where(AutomationRun.agent_run_id == context.run_id)

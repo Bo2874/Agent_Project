@@ -139,13 +139,15 @@
       for (const file of files) { const item = el("option", file.name); item.value = key(file); choose.append(item); }
       if (preset) choose.value = key(preset);
       const tabs = el("select"), range = el("input"), actions = el("div", null, "automation-checks"); tabs.setAttribute("aria-label", "Tab Google Sheets"); range.setAttribute("aria-label", "Vùng ô hoặc vùng dò bảng để thêm hàng"); range.placeholder = "A1:D100"; range.value = preset?.range_a1?.split("!").at(-1) || "A1:D100";
-      const hint = el("p", "Append thêm sau bảng tìm thấy trong vùng dò, có thể mở rộng số hàng. Update chỉ sửa vùng được cấp.", "document-hint");
+      const hint = el("p", "Quyền đọc dùng tab/vùng đã chọn. Quyền đọc và sửa toàn file cho phép Agent tự xác định ô, công thức và bố cục cần sửa. Quyền vùng cũ không tự nâng thành quyền toàn file.", "document-hint");
       const rowState = { value: null, token: 0 };
       async function load() {
         const token = ++rowState.token; const file = files.find(item => key(item) === choose.value); rowState.value = file;
         actions.replaceChildren(); tabs.replaceChildren(); if (!file) return;
         const sheet = file.mime_type === "application/vnd.google-apps.spreadsheet";
-        const allowed = sheet ? [["read_sheet", "Đọc"], ["append_rows", "Thêm hàng"], ["update_range", "Sửa ô"], ["set_formulas", "Ghi công thức"], ["format_range", "Định dạng"]] : [["read_doc", "Đọc"], ["edit_doc", "Sửa văn bản"]];
+        const doc = file.mime_type === "application/vnd.google-apps.document";
+        const allowed = sheet ? [["read_sheet", "Chỉ đọc vùng"], ["edit_sheet", "Đọc và sửa nội dung/bố cục toàn file"]] : doc ? [["read_doc", "Chỉ đọc"], ["edit_doc", "Đọc và sửa nội dung/bố cục"]] : [["read_file", "Tải và đọc file"], ["edit_file", "Đọc và cập nhật file cùng định dạng"]];
+        if (preset && ["append_rows", "update_range", "set_formulas", "format_range"].includes(preset.action)) allowed.push([preset.action, `Quyền vùng cũ: ${preset.action} (cần chọn quyền toàn file để dùng luồng Python mới)`]);
         for (const [value, title] of allowed) { const label = el("label", title); const input = el("input"); input.type = "checkbox"; input.value = value; input.checked = preset?.action === value; label.prepend(input); actions.append(label); }
         tabs.hidden = range.hidden = hint.hidden = !sheet;
         if (sheet) {
@@ -155,7 +157,7 @@
       }
       choose.onchange = () => { preset = null; invalidateReview(); void load(); };
       row.append(choose, tabs, range, actions, hint, button("Bỏ file này", () => { rowState.token += 1; row.remove(); invalidateReview(); }));
-      row.collect = () => { const file = rowState.value; if (!file) return []; const sheet = file.mime_type === "application/vnd.google-apps.spreadsheet"; return [...actions.querySelectorAll("input:checked")].map(input => { const grant = { connection_id: file.connection_id, file_id: file.file_id, action: input.value }; if (sheet) { if (!tabs.value) throw new Error("Hãy chọn tab của Google Sheet."); grant.sheet_id = Number(tabs.value); grant.range_a1 = `'${tabs.selectedOptions[0].textContent.replace(/'/g, "''")}'!${range.value.trim()}`; } return grant; }); };
+      row.collect = () => { const file = rowState.value; if (!file) return []; const sheet = file.mime_type === "application/vnd.google-apps.spreadsheet"; return [...actions.querySelectorAll("input:checked")].map(input => { const grant = { connection_id: file.connection_id, file_id: file.file_id, action: input.value }; if (sheet && input.value !== "edit_sheet") { if (!tabs.value) throw new Error("Hãy chọn tab của Google Sheet."); grant.sheet_id = Number(tabs.value); grant.range_a1 = `'${tabs.selectedOptions[0].textContent.replace(/'/g, "''")}'!${range.value.trim()}`; } return grant; }); };
       $("[data-google-grants]").append(row); void load();
     }
     async function openEditor(auto = null) {

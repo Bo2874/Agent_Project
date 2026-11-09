@@ -407,9 +407,9 @@ async def stream_assistant_response(
     try:
         artifact_context = ()
         if settings.google_connector_enabled:
-            from backend.services.agent_context import google_tool_service
+            from backend.services.agent_context import google_context_service
 
-            google_tools = google_tool_service()
+            google_tools = google_context_service()
             if operation_journal is None:
                 tool_context = await google_tools.pin(tool_context)
             history_summary_context = fit_context_blocks(
