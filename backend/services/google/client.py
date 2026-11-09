@@ -17,6 +17,43 @@ class GoogleHTTP:
     def __init__(self, transport=None):
         self.transport = transport
 
+    async def download_bytes(self, url, *, token, max_bytes, params=None):
+        """Only selected Drive media/export endpoints; never follow a redirect."""
+        import re
+
+        parsed = httpx.URL(url)
+        if (
+            parsed.scheme != "https"
+            or parsed.host != "www.googleapis.com"
+            or parsed.port not in (None, 443)
+            or parsed.userinfo
+            or parsed.query
+            or parsed.fragment
+            or not re.fullmatch(r"/drive/v3/files/[A-Za-z0-9_-]+(?:/export)?", parsed.path)
+            or type(max_bytes) is not int
+            or not 1 <= max_bytes <= 20971520
+        ):
+            raise GoogleServiceError(422, "Unsupported Google download endpoint or limit")
+        try:
+            async with httpx.AsyncClient(
+                timeout=60, trust_env=False, follow_redirects=False, transport=self.transport
+            ) as client:
+                async with client.stream(
+                    "GET", url, params=params, headers={"Authorization": "Bearer " + token}
+                ) as response:
+                    if response.status_code != 200:
+                        raise GoogleServiceError(502, "Google download unavailable")
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data.extend(chunk)
+                        if len(data) > max_bytes:
+                            raise GoogleServiceError(413, "Google download exceeds file limit")
+                    if not data:
+                        raise GoogleServiceError(422, "Empty Google download")
+                    return bytes(data)
+        except httpx.HTTPError:
+            raise GoogleServiceError(502, "Google download unavailable") from None
+
     async def upload_bytes(self, *, token, metadata, content, source_mime):
         """One bounded resumable session; its bearer-like Location never leaves trusted code."""
         if not isinstance(content, bytes) or not 1 <= len(content) <= 20971520:

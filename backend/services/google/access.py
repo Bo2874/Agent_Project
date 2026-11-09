@@ -179,7 +179,7 @@ class GoogleAccess:
             DRIVE_URL + "/files/" + quote(file_id, safe=""),
             token=token,
             params={
-                "fields": "id,name,mimeType,trashed,capabilities(canEdit)",
+                "fields": "id,name,mimeType,version,modifiedTime,trashed,capabilities(canEdit)",
                 "supportsAllDrives": "true",
             },
         )
