@@ -1,5 +1,15 @@
 # Nghiệm thu Google qua Python — 2026-11-09
 
+## Bổ sung khi nghiệm thu Picker thật — 2026-11-13
+
+Người dùng báo Picker “The API developer key is invalid” dù đã cấu hình website restrictions.
+Phát hiện trang `/connectors` đặt `no-referrer`, không tương thích với key cần xác minh website.
+Chrome headless qua hai server cục bộ tái hiện RED: request iframe không có Referer.
+Sửa riêng trang này thành `strict-origin`: GREEN nhận đúng origin, không lộ path/query;
+callback OAuth vẫn `no-referrer` và không phản chiếu code/state. Nhóm regression UI/HTTP/header:
+**18 passed**. Chưa xác nhận Picker Google thật sau sửa; cần restart web, tải lại trang và thử lại.
+Không đổi `.env`, không gọi API Google, không build image hoặc restart dịch vụ người dùng.
+
 Nhánh `feat/google-python-bridge`, worktree `.worktrees/google-python`, base `dd1f3c1`.
 Không sửa `.env` thật, không dùng Google/model trả phí hoặc database ứng dụng; chưa merge/push.
 

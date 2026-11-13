@@ -105,6 +105,12 @@ Không xuất hiện bước duyệt từng thay đổi đã được grant cho 
 
 ## Credential và sự cố
 
+Nếu Picker báo “The API developer key is invalid”, kiểm API đã bật, key/project và
+Website restrictions phải có origin của ứng dụng cùng `https://docs.google.com/*`.
+Trang `/connectors` cần `Referrer-Policy: strict-origin` để Google nhận origin khi kiểm key;
+không đặt `no-referrer` cho trang này qua reverse proxy hoặc extension. Callback OAuth/API credential
+vẫn dùng `no-referrer`. Sau khi cập nhật code, restart web và tải lại trang; không cần build Python image.
+
 Access/refresh token được mã hóa theo owner + connection; refresh tuần tự bằng row lock, giữ refresh
 token cũ nếu provider không trả bản mới. `invalid_grant` chuyển reconnect. Token không vào LLM,
 sandbox, journal payload hoặc tool result. Browser Picker chỉ nhận access token trong bộ nhớ,

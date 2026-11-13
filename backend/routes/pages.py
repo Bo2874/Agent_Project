@@ -91,7 +91,9 @@ async def connectors_page(request: Request, user: OptionalUser) -> Response:
         request=request,
         name="connectors.html",
         context={"user": user},
-        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
+        # Website-restricted Picker keys need the requesting origin. Never send
+        # the page path/query; OAuth callback and credential API remain no-referrer.
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "strict-origin"},
     )
 
 
