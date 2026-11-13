@@ -9,6 +9,11 @@
 - Bản chụp và receipt lưu bền; dừng khi phát hiện conflict, giữ unknown để đối soát, báo phần đã thành công.
 - Đã bỏ đăng ký 10 tool Google và executor Sheets/Docs/Drive cũ; giữ OAuth, Picker, per-file grants, context pins và journal.
 - Hướng dẫn: [manual-google-connectors.md](docs/manual-google-connectors.md). Kiểm thử live Google vẫn cần người dùng thực hiện.
+- Hoàn tất sửa 7 Important từ review độc lập ngày 2026-11-13: kiểm công thức Google/XLSX trong container,
+  ghim đúng tab/đầu vào, đọc Doc chỉ có quyền xem và giữ receipt/unknown khi phục hồi sau lỗi.
+- Gate cuối: offline **1.238 passed/188 skipped**, tích hợp Docker/PostgreSQL **50 passed**,
+  streaming **11 passed**; Ruff/format/Compose đạt. Chưa merge/push hoặc đổi `.env` thật.
+  [Biên bản nghiệm thu](docs/acceptance/2026-11-09-google-python-bridge.md).
 
 ## Python runtime hợp nhất — 2026-11-08
 

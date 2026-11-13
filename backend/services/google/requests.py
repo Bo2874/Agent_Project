@@ -1,9 +1,8 @@
 """Content/layout Google batch bodies; target, credentials and revision are host-owned."""
 
 import json
-import re
 
-from artifact_runtime.file_inspection import safe_formula
+from artifact_runtime.google_formulas import validate_formula
 from backend.schemas.google import DOC_MIME, SHEET_MIME
 
 SHEET_REQUESTS = frozenset(
@@ -12,8 +11,8 @@ updateSpreadsheetProperties updateSheetProperties updateDimensionProperties
 updateNamedRange repeatCell addNamedRange deleteNamedRange addSheet deleteSheet
 autoFill cutPaste copyPaste mergeCells unmergeCells updateBorders updateCells
 addFilterView appendCells clearBasicFilter deleteDimension deleteEmbeddedObject
-deleteFilterView duplicateFilterView duplicateSheet findReplace insertDimension
-insertRange moveDimension updateEmbeddedObjectPosition pasteData textToColumns
+deleteFilterView duplicateFilterView duplicateSheet insertDimension
+insertRange moveDimension updateEmbeddedObjectPosition
 updateFilterView setBasicFilter addConditionalFormatRule updateConditionalFormatRule
 deleteConditionalFormatRule sortRange setDataValidation addChart updateChartSpec
 autoResizeDimensions addBanding updateBanding deleteBanding createDeveloperMetadata
@@ -56,9 +55,6 @@ FORBIDDEN_KEYS = frozenset(
         "contentUri",
     }
 )
-EXTERNAL_FORMULA = re.compile(
-    r"\b(?:IMPORTRANGE|IMPORTDATA|IMPORTXML|IMPORTHTML|IMPORTFEED|GOOGLEFINANCE|IMAGE)\s*\(", re.I
-)
 
 
 def validate_requests(mime, body):
@@ -81,27 +77,10 @@ def validate_requests(mime, body):
             if FORBIDDEN_KEYS.intersection(value):
                 raise ValueError("Google request includes an external target or credential field")
             for key, item in value.items():
-                if key == "formulaValue":
-                    if not isinstance(item, str) or EXTERNAL_FORMULA.search(item):
-                        raise ValueError("External data formulas are not permitted")
-                    safe_formula(item)
-                # pasteData(USER_ENTERED) can conceal active formulas in CSV/HTML;
-                # use explicit updateCells values for formulas instead.
-                if key == "pasteData" and isinstance(item, dict):
-                    if item.get("type") != "PASTE_VALUES":
-                        raise ValueError(
-                            "pasteData requires PASTE_VALUES; use explicit cell values"
-                        )
-                    if isinstance(item.get("data"), str) and re.search(
-                        r"(^|[\t,;\n])\s*=", item["data"]
-                    ):
-                        raise ValueError("Use explicit formulaValue for formula writes")
-                if key == "findReplace" and isinstance(item, dict):
-                    replacement = item.get("replacement", "")
-                    if isinstance(replacement, str) and replacement.startswith("="):
-                        if EXTERNAL_FORMULA.search(replacement):
-                            raise ValueError("External data formulas are not permitted")
-                        safe_formula(replacement)
+                if not isinstance(key, str) or "_" in key:
+                    raise ValueError("Use canonical Google JSON field names, not alternate aliases")
+                if key == "formulaValue" or (key == "userEnteredValue" and isinstance(item, str)):
+                    validate_formula(item)
                 walk(item, depth + 1)
         elif isinstance(value, list):
             for item in value:

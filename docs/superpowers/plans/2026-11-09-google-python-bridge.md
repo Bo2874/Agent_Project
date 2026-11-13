@@ -34,10 +34,10 @@
 
 **Interfaces:** `GoogleFileRef(connection_id,file_id,context_id)`, `PythonGoogleInput(ref,mode,range_a1=None,export_mime=None)`, `PythonGoogleUpload(kind='upload',connection_id,output_path,mode,input_index=None)`, `PythonGoogleUpdate(kind='batch_update',input_index,request_path)`. `PythonCodeInput.google_inputs/google_actions=()`, `PythonOutput.publish=True` omit defaults. Ref ở backend tái sử dụng shape runtime, không import backend vào image.
 
-- [ ] RED: test khai báo native input, upload, request control publish=false, primary tính trên file public; từ chối control không tham chiếu, sai index/path, quá trần, mixed input>3 và output trùng; wire call cũ giữ nguyên.
-- [ ] Chạy `python -m pytest tests/test_google_python_protocol.py tests/test_unified_python_runtime.py -q`, xác nhận FAIL ở schema thiếu.
-- [ ] Cài schema/validator và runtime collection tương thích; không Google network trong runtime.
-- [ ] GREEN cùng lệnh; commit `feat: extend Python contract with scoped Google inputs and actions`.
+- [x] RED: test khai báo native input, upload, request control publish=false, primary tính trên file public; từ chối control không tham chiếu, sai index/path, quá trần, mixed input>3 và output trùng; wire call cũ giữ nguyên.
+- [x] Chạy `python -m pytest tests/test_google_python_protocol.py tests/test_unified_python_runtime.py -q`, xác nhận FAIL ở schema thiếu.
+- [x] Cài schema/validator và runtime collection tương thích; không Google network trong runtime.
+- [x] GREEN cùng lệnh; commit `feat: extend Python contract with scoped Google inputs and actions`.
 
 ### Task 2: Google snapshots và truyền file
 
@@ -45,10 +45,10 @@
 
 **Interfaces:** `GoogleSnapshots(access,sessions,storage).capture(context,source)->dict` trả StoredArtifact metadata, ref, version/revision, snapshot hash, mode; `.validate(context,snapshot)` kiểm nguồn vẫn đúng. `.stage` hoặc capture tạo JSON/binary trong ArtifactStorage với owner key. `.http.download_bytes(url,token,max_bytes,params)` không redirect, không đưa header/token vào result.
 
-- [ ] RED: fake HTTP kiểm selected refs, owner, Google native metadata+range/full Doc, UTF-16 indices, binary download/export; version đổi giữa đọc → conflict; sai MIME/JSON lớn/revoke → fail; không trả token.
-- [ ] Chạy file test, xác nhận FAIL thiếu snapshots.
-- [ ] Cài native capture bounded, metadata version trước/sau, store snapshot và request snapshot authority do host ghim. Google file metadata dùng Drive version. Không nhầm JSON lỗi là snapshot rỗng.
-- [ ] GREEN; commit `feat: stage immutable selected Google sources for Python`.
+- [x] RED: fake HTTP kiểm selected refs, owner, Google native metadata+range/full Doc, UTF-16 indices, binary download/export; version đổi giữa đọc → conflict; sai MIME/JSON lớn/revoke → fail; không trả token.
+- [x] Chạy file test, xác nhận FAIL thiếu snapshots.
+- [x] Cài native capture bounded, metadata version trước/sau, store snapshot và request snapshot authority do host ghim. Google file metadata dùng Drive version. Không nhầm JSON lỗi là snapshot rỗng.
+- [x] GREEN; commit `feat: stage immutable selected Google sources for Python`.
 
 ### Task 3: Native Google API requests và automatic journal
 
@@ -56,10 +56,10 @@
 
 **Interfaces:** `validate_requests(mime,body)->dict` bounded Google batch body; `GooglePythonBridge(access,sessions,storage).validate_actions(context,request,snapshots,files)` parse control; `.execute(context,request,snapshots,files,published,job_key)->list[dict]`; `.check_conflict` ghi marker `google.conflict` khi cần. Journal automatic là host-only flag, không là model arg; replay old compact receipts được chuẩn hóa.
 
-- [ ] RED: Sheets giá trị/công thức, format, sort/chart và Docs text/style/table/paragraph request hợp lệ; chặn HTTP passthrough/file ngoài phạm vi, external formula/data source, auth keys, target thay đổi, invalid/mixed action trước write.
-- [ ] RED: auto write không AgentApproval, same action replay một RPC, sent/unknown chặn, callback commit lỗi giữ unknown, Docs requiredRevisionId host-owned, conflict marker chặn Google call tiếp theo.
-- [ ] Chạy tests mới, xác nhận fail; cài native action validation, preflight toàn bộ nguồn, immutable operation key/payload và upload create/convert/binary update. Dùng lại GoogleMutations unresolved/receipt thay vì journal thứ hai.
-- [ ] GREEN toàn nhóm snapshots/requests/bridge; commit `feat: execute scoped Google changes from Python outputs without approval`.
+- [x] RED: Sheets giá trị/công thức, format, sort/chart và Docs text/style/table/paragraph request hợp lệ; chặn HTTP passthrough/file ngoài phạm vi, external formula/data source, auth keys, target thay đổi, invalid/mixed action trước write.
+- [x] RED: auto write không AgentApproval, same action replay một RPC, sent/unknown chặn, callback commit lỗi giữ unknown, Docs requiredRevisionId host-owned, conflict marker chặn Google call tiếp theo.
+- [x] Chạy tests mới, xác nhận fail; cài native action validation, preflight toàn bộ nguồn, immutable operation key/payload và upload create/convert/binary update. Dùng lại GoogleMutations unresolved/receipt thay vì journal thứ hai.
+- [x] GREEN toàn nhóm snapshots/requests/bridge; commit `feat: execute scoped Google changes from Python outputs without approval`.
 
 ### Task 4: Python orchestration, receipt và kết quả
 
@@ -67,9 +67,9 @@
 
 **Interfaces:** `PythonToolService(...,google_bridge=None)`. Prepared receipt lưu snapshot metadata trước execute; executed receipt giữ files+snapshots+report. Native input stage sau local input. JSON control không publish; `data.google_results` là list receipt đã kiểm, giữ artifact_refs/primary cũ. Completed receipt replay không gọi API/code nữa.
 
-- [ ] RED: calculation thường không chạm Google; native read chỉ stdout; update không file public; create file+convert, mixed local/native input, readback, partial remote success, crash trước execute/sau remote/receipt recovery, sources không bị orphan sweep khi còn resume.
-- [ ] Chạy file test và unified service regression, xác nhận fail; cài orchestration/fingerprint/staged state và error code rõ `google_conflict`/`google_unknown`.
-- [ ] GREEN unit/DB/fake runner; Docker gate thật test protocol qua broker; commit `feat: orchestrate Google work through the unified Python tool`.
+- [x] RED: calculation thường không chạm Google; native read chỉ stdout; update không file public; create file+convert, mixed local/native input, readback, partial remote success, crash trước execute/sau remote/receipt recovery, sources không bị orphan sweep khi còn resume.
+- [x] Chạy file test và unified service regression, xác nhận fail; cài orchestration/fingerprint/staged state và error code rõ `google_conflict`/`google_unknown`.
+- [x] GREEN unit/DB/fake runner; Docker gate thật test protocol qua broker; commit `feat: orchestrate Google work through the unified Python tool`.
 
 ### Task 5: Registry, Automation, UI và nghỉ tool cũ
 
@@ -77,17 +77,17 @@
 
 **Interfaces:** registry run mới chỉ có Python cho Google work; metadata selected_google_files/google_connections vẫn đưa cho LLM. Context pinning/authority nằm trong reusable Google context service, không mất do xóa invoke cũ. Thêm action revision `edit_sheet` cho native edit cả file; grant range cũ không tự broaden. `edit_doc`/`upload_artifact` vẫn exact target/connection. Backend vẫn nhận DTO cũ để đọc lịch sử.
 
-- [ ] RED: registry không google_* khi connector bật; old checkpoint chưa ghi không thực thi và không đợi approval mới; completed journal replay được; remove forced Google approvals cho đường Python.
-- [ ] RED: Automation chỉ đọc/ghi với revision grant, tạo file mới đúng connection, revoke/pause thắng trước commit, old range grant không thành file-wide edit; UI có lựa chọn quyền mới và vẫn thể hiện grant cũ đúng nghĩa.
-- [ ] Inventory toàn repo import/tool names trước xóa. Cài wiring/compatibility, cập nhật context/prompt để phân biệt local file, JSON snapshot và control action. Dọn code/tests chỉ thuộc tool cũ, giữ parsers cần cho compatibility/fixtures nếu còn hoạt động.
-- [ ] GREEN registry/automation/legacy/stream/UI gates; commit `refactor: retire Google-specific tools in favor of Python execution`.
+- [x] RED: registry không google_* khi connector bật; old checkpoint chưa ghi không thực thi và không đợi approval mới; completed journal replay được; remove forced Google approvals cho đường Python.
+- [x] RED: Automation chỉ đọc/ghi với revision grant, tạo file mới đúng connection, revoke/pause thắng trước commit, old range grant không thành file-wide edit; UI có lựa chọn quyền mới và vẫn thể hiện grant cũ đúng nghĩa.
+- [x] Inventory toàn repo import/tool names trước xóa. Cài wiring/compatibility, cập nhật context/prompt để phân biệt local file, JSON snapshot và control action. Dọn code/tests chỉ thuộc tool cũ, giữ parsers cần cho compatibility/fixtures nếu còn hoạt động.
+- [x] GREEN registry/automation/legacy/stream/UI gates; commit `refactor: retire Google-specific tools in favor of Python execution`.
 
 ### Task 6: Nghiệm thu và bàn giao
 
 **Files:** `docs/manual-google-connectors.md`, `manual-python-runtime.md`, `PROJECT_NOTES.md`, acceptance mới, script/check fixtures hiện có và tests Docker/PG fake Google.
 
-- [ ] Chuyển fixture/model/script sang Python request files và native snapshots; không giữ test tool cũ đang chạy bằng đường công khai khác.
-- [ ] Full pytest env giả, Ruff, format file thay đổi, Node streaming/browser, Compose config, real Docker image QA riêng và PostgreSQL test riêng. Ghi rõ skip, lỗi/lượt chạy lại và giới hạn live.
-- [ ] Một review toàn nhánh độc lập theo executing-plans; tự xác minh và sửa Critical/Important bằng RED→GREEN trong một lượt rồi chạy lại suite, không re-review.
-- [ ] Ghi inventory xóa/giữ, quy trình OAuth một lần/refresh, conflict/unknown, tạo/sửa/readback và caveat conversion/concurrency. Không tự đổi user env hoặc bật dịch vụ.
-- [ ] Commit, cleanup đúng QA resources; bàn giao branch/worktree và các phần user cần test live. Không tự merge/push.
+- [x] Chuyển fixture/model/script sang Python request files và native snapshots; không giữ test tool cũ đang chạy bằng đường công khai khác.
+- [x] Full pytest env giả, Ruff, format file thay đổi, Node streaming/browser, Compose config, real Docker image QA riêng và PostgreSQL test riêng. Ghi rõ skip, lỗi/lượt chạy lại và giới hạn live.
+- [x] Một review toàn nhánh độc lập theo executing-plans; tự xác minh và sửa Critical/Important bằng RED→GREEN trong một lượt rồi chạy lại suite, không re-review.
+- [x] Ghi inventory xóa/giữ, quy trình OAuth một lần/refresh, conflict/unknown, tạo/sửa/readback và caveat conversion/concurrency. Không tự đổi user env hoặc bật dịch vụ.
+- [x] Commit, cleanup đúng QA resources; bàn giao branch/worktree và các phần user cần test live. Không tự merge/push.

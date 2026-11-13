@@ -74,6 +74,19 @@ gốc và chỉ số UTF-16. Đây là giới hạn quan sát của ứng dụng
 Không hỗ trợ công thức lấy dữ liệu bên ngoài, ảnh hoặc external data source. Khi cần chuỗi bắt đầu `=`,
 Agent dùng `stringValue`; công thức thật dùng `formulaValue`.
 
+Công thức mới chỉ dùng hàm Google có trong danh mục đã kiểm tra; hàm tùy chỉnh, named function,
+Apps Script và hàm truy cập mạng không được gửi lên. Nếu cần, Python tính kết quả rồi ghi giá trị.
+Khi chuyển XLSX thành Sheets, inspector trong container kiểm cả công thức ô, named range,
+validation, conditional formatting và bảng; kết quả kiểm được ghim theo hash của file.
+Image cũ thiếu kết quả kiểm sẽ yêu cầu build lại trước khi chuyển đổi.
+Không dùng `findReplace`, `pasteData` hoặc `textToColumns` để sinh công thức gián tiếp;
+Python có thể xử lý dữ liệu và tạo `updateCells`/`appendCells` rõ ràng thay thế.
+File Google đang có vẫn có thể chứa công thức hoặc script từ trước; ứng dụng không cách ly
+cách Google tính lại chúng sau khi sửa. Chỉ dùng file đã chọn mà người dùng tin cậy.
+
+Doc chỉ có quyền xem vẫn đọc được nếu Google không trả revision ID; để sửa, backend cần revision
+hợp lệ và quyền ghi. Bản chụp từng đầu vào được lưu riêng, nên phục hồi không đọc lại nguồn đã ghim.
+
 Tạo mới mặc định ở My Drive, chưa chọn thư mục đích. `keep_format` giữ XLSX/DOCX/PDF;
 `google_native` chỉ chuyển XLSX→Sheets, DOCX→Docs. Chuyển đổi có thể mất một số đặc tính và cần xem lại.
 Chỉ thay bytes file cũ nếu nguồn được tải bằng `download`, cùng connection/MIME và mode `keep_format`.
@@ -155,3 +168,7 @@ Rollback bằng tắt connector rồi restart web/worker; không xóa ciphertext
 - [Sheets A1, sheetId và tab hiển thị](https://developers.google.com/workspace/sheets/api/guides/concepts)
 - [Sheets bounded grid data](https://developers.google.com/workspace/sheets/api/reference/rest/v4/spreadsheets/get)
 - [Drive resumable upload/import](https://developers.google.com/workspace/drive/api/guides/manage-uploads)
+- [Danh mục hàm Google Sheets](https://support.google.com/docs/table/25273?hl=en)
+- [Apps Script custom functions](https://developers.google.com/apps-script/guides/sheets/functions)
+- [Drive files.get và shared drives](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/get)
+- [Drive files.update và resumable upload](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update)

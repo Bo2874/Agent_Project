@@ -108,3 +108,71 @@ def test_doc_revision_is_host_owned_and_no_remote_image_fetch():
     ]:
         with pytest.raises(ValueError):
             validate_requests(DOC_MIME, body)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "updateCells": {
+                "rows": [
+                    {
+                        "values": [
+                            {
+                                "user_entered_value": {
+                                    "formula_value": '=IMPORTXML("https://outside.test", "//x")'
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {"updateCells": {"data_source_id": "outside-scope"}},
+        {
+            "addConditionalFormatRule": {
+                "rule": {
+                    "booleanRule": {
+                        "condition": {
+                            "type": "CUSTOM_FORMULA",
+                            "values": [{"userEnteredValue": '=IMPORTRANGE("outside-file", "A1")'}],
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "pasteData": {
+                "coordinate": {"sheetId": 0},
+                "type": "PASTE_VALUES",
+                "delimiter": ",",
+                "data": '"=IMPORTXML(""https://outside.test"", ""//x"")"',
+            }
+        },
+        {
+            "findReplace": {
+                "find": "SUM",
+                "replacement": "IMPORTXML",
+                "includeFormulas": True,
+                "allSheets": True,
+            }
+        },
+        {"textToColumns": {"source": {"sheetId": 0}, "delimiter": ","}},
+    ],
+)
+def test_indirect_and_alternate_formula_inputs_cannot_bypass_policy(payload):
+    with pytest.raises(ValueError):
+        validate_requests(SHEET_MIME, {"requests": [payload]})
+
+
+@pytest.mark.parametrize("formula", ["=MY_APPS_SCRIPT(A1)", '=GOOGLETRANSLATE(A1,"en","vi")'])
+def test_unverified_custom_and_network_functions_are_not_native_formulas(formula):
+    with pytest.raises(ValueError):
+        validate_requests(
+            SHEET_MIME,
+            {
+                "requests": [
+                    {"repeatCell": {"cell": {"userEnteredValue": {"formulaValue": formula}}}}
+                ]
+            },
+        )

@@ -94,7 +94,11 @@ class GoogleHTTP:
                 async with client.stream(
                     "PATCH" if file_id else "POST",
                     endpoint,
-                    params={"uploadType": "resumable", "fields": "id,name,mimeType"},
+                    params={
+                        "uploadType": "resumable",
+                        "fields": "id,name,mimeType",
+                        "supportsAllDrives": "true",
+                    },
                     headers={
                         **headers,
                         "X-Upload-Content-Type": source_mime,

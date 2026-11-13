@@ -232,7 +232,7 @@ class FakeGoogle:
                     row = self.sheet_values[index]
                     row.extend([None] * max(0, first + len(cells) - len(row)))
                     row[first : first + len(cells)] = cells
-            if self.lose_write_response:
+            if self.lose_write_response and not request.url.path.endswith(":batchUpdate"):
                 raise httpx.ReadTimeout("Synthetic lost response", request=request)
             if request.url.path.endswith(":batchUpdate"):
                 for change in payload.get("requests", []):
@@ -265,6 +265,8 @@ class FakeGoogle:
                             )
                             self.sheet_values[index][first : first + len(values)] = values
                 self.files["sheet-a"]["version"] = str(int(self.files["sheet-a"]["version"]) + 1)
+                if self.lose_write_response:
+                    raise httpx.ReadTimeout("Synthetic lost response after commit", request=request)
                 return httpx.Response(200, json={"spreadsheetId": "sheet-a", "replies": [{}]})
             receipt = {
                 "updatedRange": a1,

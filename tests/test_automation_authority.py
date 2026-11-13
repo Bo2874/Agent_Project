@@ -126,3 +126,28 @@ async def test_read_range_does_not_follow_reused_tab_title(google_db, monkeypatc
         await bridge.capture(
             context, PythonGoogleInput(ref=ref.model_dump(), range_a1="Sheet1!A1:B10")
         )
+
+
+async def test_range_snapshot_binds_returned_data_to_granted_tab(google_db, monkeypatch):  # noqa: F811
+    from artifact_runtime.google_types import PythonGoogleInput
+    from backend.services.google.bridge import GooglePythonBridge
+    from backend.services.google.errors import GoogleServiceError
+
+    scope, context, ref = await setup(google_db, monkeypatch, action="read_sheet")
+    bridge = GooglePythonBridge(
+        scope.access, scope.sessions, scope.test_storage, context_service=scope
+    )
+    original = scope.access.credentials.http.request
+
+    async def swapped_after_precheck(method, url, **kwargs):
+        result = await original(method, url, **kwargs)
+        if kwargs.get("params", {}).get("includeGridData") == "true":
+            result["sheets"][0]["properties"]["sheetId"] = 99
+        return result
+
+    scope.access.credentials.http.request = swapped_after_precheck
+    with pytest.raises(GoogleServiceError):
+        await bridge.capture(
+            context, PythonGoogleInput(ref=ref.model_dump(), range_a1="Sheet1!A1:B10")
+        )
+    assert not list(scope.test_storage.root.rglob("content.json"))

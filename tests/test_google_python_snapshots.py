@@ -120,11 +120,17 @@ async def test_version_changes_during_capture_are_rejected(tmp_path):
 )
 async def test_binary_sources_are_staged_without_native_reconstruction(tmp_path, mode, mime, extra):
     storage = ArtifactStorage(tmp_path)
-    captured = await GoogleSnapshots(Access(mime), sessions, storage).capture(
+    access = Access(mime)
+    captured = await GoogleSnapshots(access, sessions, storage).capture(
         SimpleNamespace(user_id=uuid4()), source(mode, **extra)
     )
     assert storage.path(captured["stored"]["key"]).read_bytes() == b"binary file"
     assert captured["stored"]["mime_type"] == "application/pdf"
+    if mode == "download":
+        assert next(call[1] for call in access.calls if isinstance(call, tuple)) == {
+            "alt": "media",
+            "supportsAllDrives": "true",
+        }
 
 
 @pytest.mark.asyncio
@@ -197,3 +203,20 @@ async def test_revocation_after_read_prevents_staging(tmp_path):
             SimpleNamespace(user_id=uuid4()), source()
         )
     assert not list(tmp_path.rglob("content.*"))
+
+
+@pytest.mark.asyncio
+async def test_view_only_doc_without_revision_can_be_read(tmp_path):
+    access = Access()
+    original = access.request
+
+    async def viewer(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        result.pop("revisionId", None)
+        return result
+
+    access.request = viewer
+    service = GoogleSnapshots(access, sessions, ArtifactStorage(tmp_path))
+    snapshot = await service.capture(SimpleNamespace(user_id=uuid4()), source())
+    assert snapshot["revision_id"] is None
+    await service.validate(SimpleNamespace(user_id=uuid4()), snapshot)

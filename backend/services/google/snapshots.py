@@ -31,7 +31,7 @@ class GoogleSnapshots:
     def __init__(self, access, sessions, storage):
         self.access, self.sessions, self.storage = access, sessions, storage
 
-    async def observe(self, context, source):
+    async def observe(self, context, source, *, sheet_id=None):
         ref = GoogleFileRef.model_validate(source.ref.model_dump())
         async with self.sessions() as session:
             auth = await self.access.authorize(session, context, ref, "read_file")
@@ -45,7 +45,7 @@ class GoogleSnapshots:
         if source.mode == "native":
             if mime == SHEET_MIME:
                 bounds = source.range_a1 or "A1:AX1000"
-                parse_range(bounds)
+                parsed = parse_range(bounds)
                 body = await http.request(
                     "GET",
                     SHEETS_URL + "/" + ref.file_id,
@@ -64,6 +64,26 @@ class GoogleSnapshots:
                     body.get("sheets"), list
                 ):
                     raise GoogleServiceError(502, "Invalid native Sheets snapshot")
+                if sheet_id is not None:
+                    title = (
+                        parsed.tab[1:-1].replace("''", "'")
+                        if parsed.tab.startswith("'")
+                        else parsed.tab
+                    )
+                    selected = [
+                        item
+                        for item in body["sheets"]
+                        if (
+                            item.get("properties", {}).get("sheetId") == sheet_id
+                            and item.get("properties", {}).get("title") == title
+                        )
+                    ]
+                    if len(selected) != 1 or any(
+                        item.get("data") and item.get("properties", {}).get("sheetId") != sheet_id
+                        for item in body["sheets"]
+                    ):
+                        raise conflict()
+                    body = {**body, "sheets": selected}
             elif mime == DOC_MIME:
                 if source.range_a1 is not None:
                     raise GoogleServiceError(422, "Only Sheets accepts a range")
@@ -74,10 +94,8 @@ class GoogleSnapshots:
                     params={"includeTabsContent": "true"},
                 )
                 revision = body.get("revisionId")
-                if (
-                    body.get("documentId") != ref.file_id
-                    or not isinstance(revision, str)
-                    or not revision
+                if body.get("documentId") != ref.file_id or (
+                    revision is not None and (not isinstance(revision, str) or not revision)
                 ):
                     raise GoogleServiceError(502, "Invalid native Docs snapshot")
             else:
@@ -94,7 +112,7 @@ class GoogleSnapshots:
                     )
                 endpoint, params, stored_mime = (
                     DRIVE_URL + "/files/" + ref.file_id,
-                    {"alt": "media"},
+                    {"alt": "media", "supportsAllDrives": "true"},
                     mime,
                 )
             else:
@@ -130,12 +148,13 @@ class GoogleSnapshots:
                 "sha256": hashlib.sha256(content).hexdigest(),
                 "connection_generation": auth.connection_generation,
                 "grant_generation": auth.grant_generation,
+                "sheet_id": sheet_id,
             },
             stored_mime,
         )
 
-    async def capture(self, context, source):
-        content, snapshot, mime = await self.observe(context, source)
+    async def capture(self, context, source, *, sheet_id=None):
+        content, snapshot, mime = await self.observe(context, source, sheet_id=sheet_id)
         extension = next((key for key, value in MIME_TYPES.items() if value == mime), None)
         if extension is None:
             raise GoogleServiceError(422, "Unsupported Google input format")
@@ -145,7 +164,7 @@ class GoogleSnapshots:
 
     async def validate(self, context, snapshot):
         source = PythonGoogleInput.model_validate(snapshot["source"])
-        _, current, _ = await self.observe(context, source)
+        _, current, _ = await self.observe(context, source, sheet_id=snapshot.get("sheet_id"))
         if any(
             current[key] != snapshot[key]
             for key in (

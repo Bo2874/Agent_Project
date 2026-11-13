@@ -6,13 +6,14 @@ from pathlib import PurePosixPath
 
 from sqlalchemy import select
 
+from artifact_runtime.google_formulas import POLICY_VERSION
 from backend.models import AgentOperation, AgentRun, GoogleMutation
 from backend.schemas.google import DOC_MIME, SHEET_MIME, GoogleFileRef, GoogleWritePreview
 from backend.services.artifacts.storage import MIME_TYPES, StoredArtifact
 from backend.services.google.access import google_url
 from backend.services.google.client import DOCS_URL, SHEETS_URL
 from backend.services.google.errors import GoogleServiceError
-from backend.services.google.mutations import GoogleMutations, fingerprint
+from backend.services.google.mutations import GoogleMutations, fingerprint, unknown
 from backend.services.google.requests import validate_requests
 from backend.services.google.snapshots import FILE_LIMIT, JSON_LIMIT, GoogleSnapshots, conflict
 from backend.services.run_events import fence
@@ -38,7 +39,7 @@ class GooglePythonBridge:
             self.context_service = GoogleContextService(access=self.access, sessions=self.sessions)
         return self.context_service
 
-    async def check(self, context):
+    async def check(self, context, *, allow_conflict=False):
         async with self.sessions() as session:
             await fence(session)
             await self.scope().check_run(session, context)
@@ -48,7 +49,7 @@ class GooglePythonBridge:
                     AgentOperation.key == "google.conflict",
                 )
             )
-            if marker:
+            if marker and not allow_conflict:
                 raise conflict()
             rejected = await session.scalar(
                 select(GoogleMutation.id)
@@ -59,7 +60,7 @@ class GooglePythonBridge:
                 )
                 .limit(1)
             )
-            if rejected:
+            if rejected and not allow_conflict:
                 raise conflict()
         await self.scope().validate_authority(context)
 
@@ -89,8 +90,7 @@ class GooglePythonBridge:
 
     async def authority(self, context, *, ref=None, connection_id=None, action, source=None):
         """Do not broaden saved ranged grants into whole-file native editing."""
-        from backend.services.automations.authority import covers, resolve_run_authority, tab_title
-        from backend.services.google.ranges import parse_range
+        from backend.services.automations.authority import covers, resolve_run_authority
 
         async with self.sessions() as session:
             await fence(session)
@@ -122,20 +122,7 @@ class GooglePythonBridge:
                                 or not covers(grant, source.range_a1)
                             ):
                                 continue
-                            auth = await self.access.authorize(session, context, ref, "read_sheet")
-                            metadata = await self.access.credentials.http.request(
-                                "GET",
-                                SHEETS_URL + "/" + ref.file_id,
-                                token=auth.token,
-                                params={"fields": "sheets(properties(sheetId,title))"},
-                            )
-                            title = tab_title(parse_range(grant.range_a1))
-                            if not any(
-                                item.get("properties", {}).get("sheetId") == grant.sheet_id
-                                and item.get("properties", {}).get("title") == title
-                                for item in metadata.get("sheets", [])
-                            ):
-                                continue
+                            return grant.sheet_id
                         return
                 if (
                     ref
@@ -173,15 +160,15 @@ class GooglePythonBridge:
             if auth.mime_type == DOC_MIME
             else "read_file"
         )
-        await self.authority(context, ref=ref, action=action, source=source)
+        sheet_id = await self.authority(context, ref=ref, action=action, source=source)
         try:
-            return await self.snapshots.capture(context, source)
+            return await self.snapshots.capture(context, source, sheet_id=sheet_id)
         except GoogleServiceError as error:
             if error.code == "google_conflict":
                 await self.mark_conflict(context)
             raise
 
-    async def validate_actions(self, context, request, snapshots, files):
+    async def validate_actions(self, context, request, snapshots, files, native_checks=None):
         if len(files) != len(request.outputs):
             raise ValueError("Python output bundle does not match Google declarations")
         by_path = {
@@ -201,6 +188,8 @@ class GooglePythonBridge:
                 except (ValueError, UnicodeError):
                     raise ValueError("Invalid Google control JSON") from None
                 body = validate_requests(snapshot["mime_type"], body)
+                if snapshot["mime_type"] == DOC_MIME and not snapshot.get("revision_id"):
+                    raise ValueError("Docs editing requires an editable source with a revision ID")
                 plans.append(
                     {"action": action.model_dump(mode="json"), "snapshot": snapshot, "body": body}
                 )
@@ -216,6 +205,21 @@ class GooglePythonBridge:
                 conversion = {MIME_TYPES["xlsx"]: SHEET_MIME, MIME_TYPES["docx"]: DOC_MIME}
                 if action.mode == "google_native" and stored.mime_type not in conversion:
                     raise ValueError("Only XLSX/DOCX can convert to native Google documents")
+                if action.mode == "google_native" and stored.mime_type == MIME_TYPES["xlsx"]:
+                    check = (native_checks or {}).get(action.output_path, {})
+                    if (
+                        check.get("sha256") != stored.sha256
+                        or check.get("policy") != POLICY_VERSION
+                    ):
+                        raise ValueError(
+                            "Google conversion requires trusted runtime formula inspection; "
+                            "rebuild the runtime image"
+                        )
+                    if check.get("status") != "safe":
+                        raise ValueError(
+                            "Google conversion formula inspection failed: "
+                            + check.get("reason", "unsupported formulas")
+                        )
                 if snapshot and stored.mime_type != snapshot["mime_type"]:
                     raise ValueError("Binary replacement must keep the original MIME type")
                 name = declaration.name or PurePosixPath(declaration.path).name
@@ -236,11 +240,14 @@ class GooglePythonBridge:
                 )
         return plans
 
-    async def execute(self, context, request, snapshots, files, published, job_key):
-        await self.check(context)
-        plans = await self.validate_actions(context, request, snapshots, files)
+    async def execute(
+        self, context, request, snapshots, files, published, job_key, *, native_checks=None
+    ):
+        await self.check(context, allow_conflict=True)
+        plans = await self.validate_actions(context, request, snapshots, files, native_checks)
         completed, pending = [], []
         try:
+            ambiguous = False
             # Read completed receipts before source validation: our own previous writes
             # have legitimately changed those sources on crash recovery.
             for index, plan in enumerate(plans):
@@ -265,7 +272,24 @@ class GooglePythonBridge:
                             raise GoogleServiceError(409, "Google operation key payload changed")
                         completed.append({"action_index": index, **row.receipt})
                         continue
+                    if row and row.status in {"sent", "unknown"}:
+                        ambiguous = True
                 pending.append((index, plan, operation, kind))
+            if ambiguous:
+                raise unknown()
+            for _, plan, _, _ in pending:
+                source = plan["snapshot"]
+                ref = GoogleFileRef.model_validate(source["source"]["ref"]) if source else None
+                async with self.sessions() as session:
+                    await self.journal.unresolved(
+                        session,
+                        context.user_id,
+                        ref.connection_id if ref else request_connection(plan),
+                        ref.file_id if ref else None,
+                    )
+            if not pending:
+                return sorted(completed, key=lambda item: item["action_index"])
+            await self.check(context)
             completed_targets = {
                 plans[item["action_index"]]["action"].get("input_index") for item in completed
             }

@@ -199,7 +199,7 @@ class PythonToolService(ArtifactToolService):
                 self.google_service() if request.google_inputs or request.google_actions else None
             )
             if google:
-                await google.check(context)
+                await google.check(context, allow_conflict=True)
             digest = hashlib.sha256(
                 canonical(
                     {
@@ -221,16 +221,17 @@ class PythonToolService(ArtifactToolService):
                 )
 
             if status == "prepared":
-                snapshots = (saved or {}).get("google_snapshots")
-                if google and snapshots is None:
-                    snapshots = [
-                        await google.capture(context, source) for source in request.google_inputs
-                    ]
-                    # Persist the exact input versions before executing any Python.
-                    await self.save_receipt(
-                        context, key, status="prepared", result={"google_snapshots": snapshots}
-                    )
-                snapshots = snapshots or []
+                snapshots = list((saved or {}).get("google_snapshots", []))
+                if google:
+                    await google.check(context)
+                    if len(snapshots) > len(request.google_inputs):
+                        raise ValueError("Saved Google inputs differ from this operation")
+                    for source in request.google_inputs[len(snapshots) :]:
+                        snapshots.append(await google.capture(context, source))
+                        # Pin each input before starting another remote capture.
+                        await self.save_receipt(
+                            context, key, status="prepared", result={"google_snapshots": snapshots}
+                        )
                 coverage = []
                 for index, item in enumerate(inputs):
                     report = await self.run(
@@ -315,6 +316,31 @@ class PythonToolService(ArtifactToolService):
                 }
                 await self.save_receipt(context, key, status="executed", result=saved)
 
+            if google and saved["execution"]["status"] == "success":
+                checks = saved.setdefault("google_native_checks", {})
+                for index, action in enumerate(request.google_actions):
+                    if getattr(action, "mode", None) != "google_native":
+                        continue
+                    output_index = next(
+                        i
+                        for i, item in enumerate(request.outputs)
+                        if item.path == action.output_path
+                    )
+                    stored = StoredArtifact(**saved["files"][output_index])
+                    if stored.mime_type != MIME_TYPES["xlsx"] or action.output_path in checks:
+                        continue
+                    report = await self.run(
+                        context,
+                        job(f"google-formulas-{index}"),
+                        stored=stored,
+                        action="inspect_file",
+                    )
+                    checks[action.output_path] = {
+                        **report.manifest.preview_manifest.get("google_native_formulas", {}),
+                        "sha256": stored.sha256,
+                    }
+                    await self.save_receipt(context, key, status="executed", result=saved)
+
             refs, warnings, refs_by_path = [], [], {}
             for index, (declaration, metadata) in enumerate(
                 zip(request.outputs, saved["files"], strict=False)
@@ -393,6 +419,11 @@ class PythonToolService(ArtifactToolService):
                         saved["files"],
                         refs,
                         key,
+                        **(
+                            {"native_checks": saved["google_native_checks"]}
+                            if saved.get("google_native_checks")
+                            else {}
+                        ),
                     )
                 except GoogleServiceError as error:
                     google_results = getattr(error, "completed", [])

@@ -168,7 +168,22 @@ def inspect_file(path, *, request=None):
     if suffix in {".xlsx", ".docx"}:
         safe_office(path)
     if suffix == ".xlsx":
-        return spreadsheet_preview(path, request=request)
+        from artifact_runtime.google_formulas import POLICY_VERSION, validate_native_xlsx
+
+        report = spreadsheet_preview(path, request=request)
+        try:
+            validate_native_xlsx(path)
+            google = {"policy": POLICY_VERSION, "status": "safe"}
+        except ValueError as error:
+            google = {"policy": POLICY_VERSION, "status": "unsupported", "reason": str(error)[:500]}
+        return report.model_copy(
+            update={
+                "preview_manifest": {
+                    **report.preview_manifest,
+                    "google_native_formulas": google,
+                }
+            }
+        )
     if suffix == ".docx":
         from docx import Document
 

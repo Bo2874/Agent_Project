@@ -258,6 +258,13 @@ async def test_partial_success_is_reported_when_second_target_conflicts(google_d
     assert len(error.value.completed) == 1
     assert error.value.completed[0]["url"].endswith("/sheet-a/edit")
     assert len(db.provider.writes) == 1
+    with pytest.raises(GoogleServiceError) as replay:
+        await bridge.execute(
+            context, args, left + right, left_files + right_files, [], "two-targets"
+        )
+    assert replay.value.code == "google_conflict"
+    assert replay.value.completed == error.value.completed
+    assert len(db.provider.writes) == 1
 
 
 @pytest.mark.parametrize("commit_reached_database", [False, True])
@@ -338,14 +345,20 @@ async def test_confirmed_invalid_batch_is_rejected_and_can_be_corrected(google_d
 
 
 @pytest.mark.parametrize(
-    "extension,mode",
-    [("xlsx", "keep_format"), ("xlsx", "google_native"), ("docx", "google_native")],
+    "extension,mode,unsafe",
+    [
+        ("xlsx", "keep_format", False),
+        ("xlsx", "google_native", False),
+        ("docx", "google_native", False),
+        ("xlsx", "google_native", True),
+    ],
 )
 async def test_python_generated_file_uploads_and_grants_created_file(  # noqa: F811
     google_db,
     tmp_path,
     extension,
     mode,  # noqa: F811
+    unsafe,
 ):  # noqa: F811
     import os
 
@@ -386,6 +399,12 @@ async def test_python_generated_file_uploads_and_grants_created_file(  # noqa: F
         else "from docx import Document; d=Document(); "
         "d.add_paragraph('Report'); d.save('report.docx')"
     )
+    if unsafe:
+        code = (
+            "from openpyxl import Workbook; w=Workbook(); "
+            "w.active['A1']='=IMPORTDATA(\"https://outside.example/data.csv\")'; "
+            "w.save('report.xlsx')"
+        )
     request = PythonCodeInput(
         code=code,
         outputs=[{"path": "report." + extension}],
@@ -399,6 +418,14 @@ async def test_python_generated_file_uploads_and_grants_created_file(  # noqa: F
         ],
     )
     result = await service.execute(context, request)
+    if unsafe:
+        assert result.is_error, result
+        assert result.error_code == "google_invalid_action"
+        assert len(result.data["artifact_refs"]) == 1
+        assert result.data["google_results"] == []
+        assert db.provider.writes == []
+        assert await service.execute(context, request) == result
+        return
     assert not result.is_error, result
     receipt = result.data["google_results"][0]
     assert receipt["file_ref"]["file_id"] in db.provider.files

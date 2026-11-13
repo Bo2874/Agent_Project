@@ -13,6 +13,36 @@ from backend.services.google.bridge import GooglePythonBridge
 from backend.services.google.errors import GoogleServiceError
 
 
+@pytest.mark.asyncio
+async def test_xlsx_conversion_requires_trusted_inspection_bound_to_output(tmp_path):
+    from openpyxl import Workbook
+
+    storage = ArtifactStorage(tmp_path)
+    path = tmp_path / "source.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = '=IMPORTDATA("https://outside.test/data.csv")'
+    workbook.save(path)
+    with path.open("rb") as stream:
+        stored = storage.put(
+            stream, f"{uuid4()}/{uuid4()}/{uuid4()}/content.xlsx", max_bytes=20971520
+        )
+    request = PythonCodeInput(
+        code="print('generated')",
+        outputs=[{"path": "report.xlsx"}],
+        google_actions=[
+            {
+                "kind": "upload",
+                "connection_id": uuid4(),
+                "output_path": "report.xlsx",
+                "mode": "google_native",
+            }
+        ],
+    )
+    bridge = GooglePythonBridge(SimpleNamespace(), None, storage)
+    with pytest.raises(ValueError, match="inspection"):
+        await bridge.validate_actions(None, request, [], [asdict(stored)])
+
+
 def update_request():
     return PythonCodeInput(
         code="print('ok')",
@@ -149,11 +179,25 @@ async def test_all_sources_preflight_before_any_remote_change(tmp_path):
     bridge = GooglePythonBridge(SimpleNamespace(), sessions, ArtifactStorage(tmp_path))
     events = []
 
-    async def checked(*args):
+    async def checked(*args, **kwargs):
         pass
 
     async def plans(*args):
-        return [{"snapshot": {"id": 0}, "action": {"kind": "batch_update"}}]
+        return [
+            {
+                "snapshot": {
+                    "id": 0,
+                    "source": {
+                        "ref": {
+                            "connection_id": uuid4(),
+                            "context_id": uuid4(),
+                            "file_id": "sheet-a",
+                        }
+                    },
+                },
+                "action": {"kind": "batch_update"},
+            }
+        ]
 
     async def validate(context, snapshot):
         events.append("check" + str(snapshot["id"]))

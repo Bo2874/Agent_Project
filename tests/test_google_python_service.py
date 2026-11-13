@@ -36,7 +36,7 @@ async def test_native_control_not_published_and_snapshots_saved_before_code(tmp_
     snapshot = {"stored": asdict(source)}
 
     class Bridge:
-        async def check(self, context):
+        async def check(self, context, *, allow_conflict=False):
             pass
 
         async def capture(self, context, source):
