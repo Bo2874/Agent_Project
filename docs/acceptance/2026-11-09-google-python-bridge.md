@@ -1,5 +1,28 @@
 # Nghiệm thu Google qua Python — 2026-11-09
 
+## Sửa xung đột giả khi sửa Docs nhiều bước
+
+Người dùng gặp `google_conflict` hai lần trong case 6 dù không sửa song song.
+Đọc journal bằng transaction read-only cho thấy đã có các bước ghi thành công trước lỗi;
+một bước sau dùng Doc revision mới nhưng Drive version chưa cập nhật. GET-only đối chiếu Doc
+ở lượt lỗi hai lần: revision và hash JSON đều giống snapshot, chỉ Drive version khác.
+Không ghi Google, không refresh token hay thay journal/dữ liệu người dùng trong chẩn đoán.
+
+Sửa native Docs dùng revision/hash/quyền để kiểm nguồn thay vì so Drive version;
+giữ `requiredRevisionId` tại RPC, không tự rebase hoặc bỏ qua thay đổi thật. Sheets và file bytes/export
+vẫn kiểm Drive version. Hai regression về metadata catch-up đã RED trước sửa.
+Test bổ sung kiểm nội dung/revision thật thay đổi dù Drive version còn cũ và không thay snapshot đã ghim.
+Gate sau sửa: **39 passed, 4 skipped** (60,20 giây) trên PostgreSQL QA riêng và Google giả lập;
+bao gồm hai lần ghi Doc nối tiếp khi metadata Drive catch-up, true revision race, partial success,
+receipt replay và các kiểm tra snapshot. Bốn ca cần runtime Docker không chạy lại vì không đổi runtime.
+Full offline: **1.247 passed, 189 skipped** (117,05 giây), hai warning pytest import rewrite.
+Ruff, format ba file Python thay đổi và whitespace đạt.
+
+Lượt QA đầu thiếu extension vector trong DB scratch; đã tạo extension rồi chạy lại.
+Một test partial-conflict cũ chỉ đổi Drive version được cập nhật để đổi revision/nội dung Docs thật.
+Lượt full đầu có assertion UI đạt nhưng cleanup profile Chrome bị Windows EBUSY; lần full sau đạt.
+Người dùng cần restart web/worker và gửi yêu cầu mới. Không cần rebuild image hay thay `.env`.
+
 ## Bổ sung khi nghiệm thu Picker thật — 2026-11-13
 
 Người dùng báo Picker “The API developer key is invalid” dù đã cấu hình website restrictions.

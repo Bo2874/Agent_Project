@@ -128,7 +128,12 @@ class GoogleSnapshots:
                 endpoint, token=auth.token, max_bytes=FILE_LIMIT, params=params
             )
         after = await self.access.metadata(ref.file_id, auth.token)
-        if after.get("version") != version or after.get("mimeType") != mime:
+        # Docs revision/content and Drive metadata are not updated atomically.
+        # A Drive version may catch up after our own successful Docs write while
+        # the pinned Docs revision and JSON remain identical. Native Docs use
+        # their own revision/hash; requiredRevisionId still fences the write RPC.
+        native_doc = source.mode == "native" and mime == DOC_MIME
+        if after.get("mimeType") != mime or (not native_doc and after.get("version") != version):
             raise conflict()
         # Recheck revocation and generations after network operations.
         async with self.sessions() as session:
@@ -168,12 +173,16 @@ class GoogleSnapshots:
         if any(
             current[key] != snapshot[key]
             for key in (
-                "version",
                 "revision_id",
                 "sha256",
                 "connection_generation",
                 "grant_generation",
                 "mime_type",
+            )
+            + (
+                ()
+                if source.mode == "native" and snapshot["mime_type"] == DOC_MIME
+                else ("version",)
             )
         ):
             raise conflict()

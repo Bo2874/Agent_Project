@@ -137,6 +137,30 @@ async def test_native_doc_revision_and_target_identity(google_db, tmp_path):  # 
     assert result[0]["url"].endswith("/doc-a/edit")
 
 
+async def test_docs_own_write_drive_metadata_catchup_is_not_external_conflict(google_db, tmp_path):  # noqa: F811
+    db = google_db
+    bridge, context, ref = await native_bridge(db, tmp_path, "doc-a")
+    body = {"requests": [{"insertText": {"location": {"index": 1}, "text": "Update\n"}}]}
+    args, snapshots, files = await native_plan(bridge, context, ref, body)
+    await bridge.execute(context, args, snapshots, files, [], "doc-first-write")
+    args, snapshots, files = await native_plan(bridge, context, ref, body)
+    revision = db.provider.doc_revision
+    original = bridge.access.credentials.http.request
+
+    async def delayed_drive_metadata(method, url, **kwargs):
+        if method == "GET" and url.startswith("https://docs.googleapis.com/"):
+            # The previous write is already reflected in Docs. Drive metadata
+            # catches up during preflight without another Docs revision/change.
+            db.provider.files["doc-a"]["version"] = "50"
+        return await original(method, url, **kwargs)
+
+    bridge.access.credentials.http.request = delayed_drive_metadata
+    result = await bridge.execute(context, args, snapshots, files, [], "doc-next-write")
+    assert result[0]["status"] == "completed"
+    assert len(db.provider.writes) == 2
+    assert db.provider.writes[1]["body"]["writeControl"] == {"requiredRevisionId": str(revision)}
+
+
 async def test_revocation_and_foreign_owner_cannot_read_snapshots(google_db, tmp_path):  # noqa: F811
     db = google_db
     bridge, context, ref = await native_bridge(db, tmp_path)
@@ -247,6 +271,8 @@ async def test_partial_success_is_reported_when_second_target_conflicts(google_d
     async def changed(context, plan, kind):
         if plan["snapshot"]["source"]["ref"]["file_id"] == "doc-a":
             db.provider.files["doc-a"]["version"] = "2"
+            db.provider.doc_revision += 1
+            db.provider.doc_text = "External edit while the first target was being written\n"
         return await original(context, plan, kind)
 
     bridge.execute_one = changed

@@ -92,7 +92,10 @@ Tạo mới mặc định ở My Drive, chưa chọn thư mục đích. `keep_fo
 Chỉ thay bytes file cũ nếu nguồn được tải bằng `download`, cùng connection/MIME và mode `keep_format`.
 Không dùng cơ chế upload chuyển đổi để âm thầm thay toàn bộ nội dung tài liệu Google đang có.
 
-**Xung đột:** kiểm phiên bản trước/sau đọc và trước ghi. Docs còn gắn `requiredRevisionId` từ backend.
+**Xung đột:** Google Docs trực tuyến kiểm revision và hash JSON nguồn, gắn `requiredRevisionId`
+từ backend khi ghi. Không coi Drive version tăng riêng lẻ là xung đột Docs: metadata Drive có thể
+cập nhật chậm sau chính lần ghi của Agent. Sheets và file download/export vẫn kiểm Drive version
+trước/sau đọc và trước ghi. Revision/nội dung Docs thay đổi thật hoặc quyền thay đổi vẫn bị chặn.
 Nếu phát hiện người khác sửa nguồn, dừng và báo `google_conflict`; chặn Google trong cùng lượt chạy,
 không tự đọc lại/merge/ghi đè. Người dùng phải gửi yêu cầu mới. Sheets vẫn có khe thời gian giữa kiểm tra
 và ghi; không hứa khóa nguyên tử hay exactly-once xuyên Google và database.

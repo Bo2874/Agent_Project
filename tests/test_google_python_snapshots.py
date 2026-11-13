@@ -23,6 +23,7 @@ class Access:
     def __init__(self, mime=DOC_MIME):
         self.mime = mime
         self.version = "7"
+        self.doc_revision = "rev7"
         self.change_during_read = False
         self.calls = []
         self.credentials = SimpleNamespace(http=self)
@@ -52,7 +53,7 @@ class Access:
         if self.mime == DOC_MIME:
             return {
                 "documentId": "file1",
-                "revisionId": "rev7",
+                "revisionId": self.doc_revision,
                 "body": {
                     "content": [
                         {
@@ -95,19 +96,87 @@ async def test_doc_snapshot_preserves_native_indices_and_no_credentials(tmp_path
     assert "private-token" not in json.dumps(captured)
     await service.validate(SimpleNamespace(user_id=uuid4()), captured)
     access.version = "8"
+    access.doc_revision = "rev8"
     with pytest.raises(GoogleServiceError, match="changed"):
         await service.validate(SimpleNamespace(user_id=uuid4()), captured)
 
 
 @pytest.mark.asyncio
-async def test_version_changes_during_capture_are_rejected(tmp_path):
-    access = Access()
+async def test_version_changes_during_sheet_capture_are_rejected(tmp_path):
+    access = Access(SHEET_MIME)
     access.change_during_read = True
     with pytest.raises(GoogleServiceError, match="changed"):
         await GoogleSnapshots(access, sessions, ArtifactStorage(tmp_path)).capture(
             SimpleNamespace(user_id=uuid4()), source()
         )
     assert not list(tmp_path.rglob("content.*"))
+
+
+@pytest.mark.asyncio
+async def test_doc_capture_accepts_drive_version_catchup_with_stable_revision(tmp_path):
+    access = Access()
+    access.change_during_read = True
+    service = GoogleSnapshots(access, sessions, ArtifactStorage(tmp_path))
+    captured = await service.capture(SimpleNamespace(user_id=uuid4()), source())
+    assert captured["revision_id"] == "rev7"
+    await service.validate(SimpleNamespace(user_id=uuid4()), captured)
+
+
+@pytest.mark.asyncio
+async def test_doc_validation_accepts_metadata_catchup_without_changing_pinned_source(tmp_path):
+    access = Access()
+    service = GoogleSnapshots(access, sessions, ArtifactStorage(tmp_path))
+    current = SimpleNamespace(user_id=uuid4())
+    captured = await service.capture(current, source())
+    original = dict(captured)
+    access.version = "8"
+    await service.validate(current, captured)
+    assert captured == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["revision", "content"])
+async def test_docs_real_changes_conflict_even_when_drive_version_is_stale(tmp_path, change):
+    access = Access()
+    service = GoogleSnapshots(access, sessions, ArtifactStorage(tmp_path))
+    current = SimpleNamespace(user_id=uuid4())
+    captured = await service.capture(current, source())
+    if change == "revision":
+        access.doc_revision = "rev8"
+    else:
+        original = access.request
+
+        async def changed(*args, **kwargs):
+            result = await original(*args, **kwargs)
+            result["title"] = "Changed content without a new Drive version"
+            return result
+
+        access.request = changed
+    with pytest.raises(GoogleServiceError) as error:
+        await service.validate(current, captured)
+    assert error.value.code == "google_conflict"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode,mime,extra",
+    [
+        ("native", SHEET_MIME, {}),
+        ("download", "application/pdf", {}),
+        ("export", DOC_MIME, {"export_mime": "application/pdf"}),
+    ],
+)
+async def test_non_native_doc_inputs_still_require_matching_drive_version(
+    tmp_path, mode, mime, extra
+):
+    access = Access(mime)
+    service = GoogleSnapshots(access, sessions, ArtifactStorage(tmp_path))
+    current = SimpleNamespace(user_id=uuid4())
+    captured = await service.capture(current, source(mode, **extra))
+    access.version = "8"
+    with pytest.raises(GoogleServiceError) as error:
+        await service.validate(current, captured)
+    assert error.value.code == "google_conflict"
 
 
 @pytest.mark.asyncio
